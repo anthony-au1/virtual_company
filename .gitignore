@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Ruff
+.ruff_cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Docker
+docker-compose.override.yml
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# uv
+.uv/
+
+# Logs
+*.log
+logs/
