@@ -1,0 +1,34 @@
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: virtual_company_app
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://virtual_company:virtual_company@postgres:5432/virtual_company
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    container_name: virtual_company_postgres
+    environment:
+      POSTGRES_DB: virtual_company
+      POSTGRES_USER: virtual_company
+      POSTGRES_PASSWORD: virtual_company
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U virtual_company -d virtual_company"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
