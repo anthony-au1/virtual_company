@@ -1,16 +1,17 @@
 [project]
 name = "virtual-company"
 version = "0.1.0"
-description = "Add your description here"
+description = "ai-driven virtual company"
 readme = "README.md"
 authors = [
-    { name = "Anton Anokhin", email = "anton.anokhin@cube.global" }
+    { name = "Anton Anokhin", email = "anton.anokhin@gmail.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.19.2",
     "asyncpg>=0.31.0",
     "fastapi>=0.141.1",
+    "greenlet>=3.0",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "sqlalchemy>=2.0.52",
