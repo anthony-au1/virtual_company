@@ -1,4 +1,3 @@
 ## Run
 
-docker compose up --build \
-uv run alembic upgrade head
+docker compose up --build uv run alembic upgrade head
