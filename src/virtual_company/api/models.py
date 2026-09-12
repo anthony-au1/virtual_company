@@ -69,6 +69,14 @@ class CampaignResponse(BaseModel):
     updated_at: datetime
 
 
+class ResearchWorkflowResponse(BaseModel):
+    """Concise result from a completed campaign research workflow."""
+
+    research_run_id: UUID
+    status: str
+    companies_found: int
+
+
 class CompanyResponse(BaseModel):
     """Company data returned by the API."""
 

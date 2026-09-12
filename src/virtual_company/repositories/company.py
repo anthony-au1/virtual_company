@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from virtual_company.db.models import CampaignTarget, Company
 from virtual_company.repositories._helpers import apply_updates, create_values
 from virtual_company.repositories.dtos import CompanyCreate, CompanyUpdate
+from virtual_company.research.normalization import normalize_domain
 
 
 class CompanyRepository:
@@ -27,6 +28,16 @@ class CompanyRepository:
 
     async def get_by_id(self, company_id: UUID) -> Company | None:
         return await self._session.get(Company, company_id)
+
+    async def get_by_normalized_domain(self, domain: str) -> Company | None:
+        """Return the company whose stored domain normalizes to ``domain``."""
+        companies = await self._session.scalars(
+            select(Company).where(Company.domain.is_not(None))
+        )
+        return next(
+            (company for company in companies if normalize_domain(company.domain) == domain),
+            None,
+        )
 
     async def list(self) -> list[Company]:
         return list(await self._session.scalars(select(Company)))

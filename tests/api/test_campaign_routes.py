@@ -8,10 +8,13 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from virtual_company.api.dependencies import get_campaign_service
+from virtual_company.api.dependencies import get_campaign_service, get_research_workflow
 from virtual_company.db.models import Campaign
 from virtual_company.main import app
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
+from virtual_company.tools import WebSearchNotConfiguredError
+from virtual_company.workflows.research.models import ResearchWorkflowResult
+from virtual_company.workflows.research.nodes import CampaignNotFoundError
 
 
 class CampaignServiceStub:
@@ -40,6 +43,18 @@ class CampaignServiceStub:
 
     async def list_companies(self, _campaign_id: object) -> list[object] | None:
         return [] if self.campaign is not None else None
+
+
+class ResearchWorkflowStub:
+    """Research workflow substitute for route tests."""
+
+    def __init__(self, result: ResearchWorkflowResult | Exception) -> None:
+        self.result = result
+
+    async def run(self, _campaign_id: object) -> ResearchWorkflowResult:
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
 
 
 @pytest.fixture(autouse=True)
@@ -105,3 +120,38 @@ def test_campaign_status_validation_and_missing_campaign_return_errors() -> None
     app.dependency_overrides[get_campaign_service] = lambda: CampaignServiceStub(None)
     missing = TestClient(app).get(f"/api/v1/campaigns/{uuid4()}")
     assert missing.status_code == 404
+
+
+def test_research_campaign_returns_workflow_result() -> None:
+    run_id = uuid4()
+    app.dependency_overrides[get_research_workflow] = lambda: ResearchWorkflowStub(
+        ResearchWorkflowResult(
+            research_run_id=run_id, status="COMPLETED", companies_found=2
+        )
+    )
+
+    response = TestClient(app).post(f"/api/v1/campaigns/{uuid4()}/research")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "research_run_id": str(run_id),
+        "status": "COMPLETED",
+        "companies_found": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code"),
+    [
+        (CampaignNotFoundError("Campaign not found"), 404),
+        (WebSearchNotConfiguredError("Web search is not configured"), 503),
+    ],
+)
+def test_research_campaign_maps_expected_workflow_errors(
+    error: Exception, status_code: int
+) -> None:
+    app.dependency_overrides[get_research_workflow] = lambda: ResearchWorkflowStub(error)
+
+    response = TestClient(app).post(f"/api/v1/campaigns/{uuid4()}/research")
+
+    assert response.status_code == status_code
