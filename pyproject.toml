@@ -12,6 +12,7 @@ dependencies = [
     "asyncpg>=0.31.0",
     "fastapi>=0.141.1",
     "greenlet>=3.0",
+    "openai>=3.13.0",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "sqlalchemy>=2.0.52",

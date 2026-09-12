@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://virtual_company:virtual_company@localhost:5432/virtual_company",
-)
+from virtual_company.config import get_settings
 
-engine = create_async_engine(DATABASE_URL)
+engine = create_async_engine(get_settings().database_url)
 session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
 
