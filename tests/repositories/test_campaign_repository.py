@@ -39,7 +39,12 @@ async def test_create_flushes_and_refreshes_without_committing() -> None:
 @pytest.mark.asyncio
 async def test_get_list_and_partial_update() -> None:
     session = session_mock()
-    campaign = Campaign(name="Original", target_count=10, status="DRAFT")
+    campaign = Campaign(
+        name="Original",
+        description="Original description",
+        target_count=10,
+        status="DRAFT",
+    )
     campaign_id = uuid4()
     session.get.return_value = campaign
     session.scalars.return_value = [campaign]
@@ -49,11 +54,12 @@ async def test_get_list_and_partial_update() -> None:
     assert await repository.list() == [campaign]
 
     updated = await repository.update(
-        campaign_id, CampaignUpdate(name="Renamed", target_count=None)
+        campaign_id, CampaignUpdate(name="Renamed", description=None)
     )
 
     assert updated is campaign
     assert campaign.name == "Renamed"
+    assert campaign.description is None
     assert campaign.target_count == 10
     session.flush.assert_awaited_once()
     session.refresh.assert_awaited_once_with(campaign)

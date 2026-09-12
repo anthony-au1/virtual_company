@@ -31,6 +31,10 @@ class EvidenceRepository:
     async def list(self) -> list[Evidence]:
         return list(await self._session.scalars(select(Evidence)))
 
+    async def list_by_company_id(self, company_id: UUID) -> list[Evidence]:
+        statement = select(Evidence).where(Evidence.company_id == company_id)
+        return list(await self._session.scalars(statement))
+
     async def update(self, evidence_id: UUID, data: EvidenceUpdate) -> Evidence | None:
         evidence = await self.get_by_id(evidence_id)
         if evidence is None:

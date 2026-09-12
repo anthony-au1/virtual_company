@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from pydantic import BaseModel
 
-@dataclass(slots=True)
-class CampaignCreate:
+
+class CampaignCreate(BaseModel):
     name: str
     target_count: int
     status: str
@@ -22,8 +22,7 @@ class CampaignCreate:
     company_size_max: int | None = None
 
 
-@dataclass(slots=True)
-class CampaignUpdate:
+class CampaignUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     target_market: str | None = None
@@ -35,8 +34,7 @@ class CampaignUpdate:
     status: str | None = None
 
 
-@dataclass(slots=True)
-class CompanyCreate:
+class CompanyCreate(BaseModel):
     name: str
     website: str | None = None
     domain: str | None = None
@@ -47,8 +45,7 @@ class CompanyCreate:
     employee_number: int | None = None
 
 
-@dataclass(slots=True)
-class CompanyUpdate:
+class CompanyUpdate(BaseModel):
     name: str | None = None
     website: str | None = None
     domain: str | None = None
@@ -59,22 +56,19 @@ class CompanyUpdate:
     employee_number: int | None = None
 
 
-@dataclass(slots=True)
-class CampaignTargetCreate:
+class CampaignTargetCreate(BaseModel):
     campaign_id: UUID
     company_id: UUID
     score: Decimal | None = None
     status: str | None = None
 
 
-@dataclass(slots=True)
-class CampaignTargetUpdate:
+class CampaignTargetUpdate(BaseModel):
     score: Decimal | None = None
     status: str | None = None
 
 
-@dataclass(slots=True)
-class EvidenceCreate:
+class EvidenceCreate(BaseModel):
     company_id: UUID
     claim: str
     evidence_text: str
@@ -85,8 +79,7 @@ class EvidenceCreate:
     observed_at: datetime | None = None
 
 
-@dataclass(slots=True)
-class EvidenceUpdate:
+class EvidenceUpdate(BaseModel):
     claim: str | None = None
     evidence_text: str | None = None
     source_url: str | None = None
@@ -96,8 +89,7 @@ class EvidenceUpdate:
     observed_at: datetime | None = None
 
 
-@dataclass(slots=True)
-class ResearchRunCreate:
+class ResearchRunCreate(BaseModel):
     campaign_id: UUID
     status: str
     companies_found: int
@@ -106,8 +98,7 @@ class ResearchRunCreate:
     error: str | None = None
 
 
-@dataclass(slots=True)
-class ResearchRunUpdate:
+class ResearchRunUpdate(BaseModel):
     status: str | None = None
     completed_at: datetime | None = None
     error: str | None = None

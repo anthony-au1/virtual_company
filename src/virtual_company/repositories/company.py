@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.db.models import Company
+from virtual_company.db.models import CampaignTarget, Company
 from virtual_company.repositories._helpers import apply_updates, create_values
 from virtual_company.repositories.dtos import CompanyCreate, CompanyUpdate
 
@@ -30,6 +30,14 @@ class CompanyRepository:
 
     async def list(self) -> list[Company]:
         return list(await self._session.scalars(select(Company)))
+
+    async def list_by_campaign_id(self, campaign_id: UUID) -> list[Company]:
+        statement = (
+            select(Company)
+            .join(CampaignTarget)
+            .where(CampaignTarget.campaign_id == campaign_id)
+        )
+        return list(await self._session.scalars(statement))
 
     async def update(self, company_id: UUID, data: CompanyUpdate) -> Company | None:
         company = await self.get_by_id(company_id)

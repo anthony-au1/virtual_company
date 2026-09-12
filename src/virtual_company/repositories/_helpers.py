@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any
 
+from pydantic import BaseModel
 
-def create_values(data: object) -> dict[str, Any]:
+
+def create_values(data: BaseModel) -> dict[str, Any]:
     """Convert a create DTO to model keyword arguments, omitting unset defaults."""
-    return {name: value for name, value in asdict(data).items() if value is not None}
+    return data.model_dump(exclude_none=True)
 
 
-def apply_updates(model: object, data: object) -> None:
+def apply_updates(model: object, data: BaseModel) -> None:
     """Apply explicitly supplied update DTO values to a mapped model."""
-    for name, value in asdict(data).items():
-        if value is not None:
-            setattr(model, name, value)
+    for field_name in data.model_fields_set:
+        setattr(model, field_name, getattr(data, field_name))
