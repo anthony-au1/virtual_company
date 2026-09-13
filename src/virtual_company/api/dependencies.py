@@ -6,7 +6,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.session import get_session
-from virtual_company.llm import OpenAIProvider
+from virtual_company.llm import LLMProvider, LLMRegistry, LLMRole
 from virtual_company.services import (
     CampaignService,
     CompanyService,
@@ -39,9 +39,9 @@ def get_research_service(session: SessionDependency) -> ResearchService:
     return ResearchService(session)
 
 
-def get_llm_provider() -> OpenAIProvider:
-    """Build the configured LLM provider."""
-    return OpenAIProvider()
+def get_llm_provider() -> LLMProvider:
+    """Build the configured research-role LLM provider."""
+    return LLMRegistry().for_role(LLMRole.RESEARCH)
 
 
 def get_web_search_tool() -> WebSearchTool:

@@ -18,8 +18,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
     database_url: str = DEFAULT_DATABASE_URL
+    llm_provider: str = "openai"
+    llm_research_provider: str | None = None
+    llm_extraction_provider: str | None = None
     openai_api_key: SecretStr | None = None
-    openai_model: str | None = None
+    openai_research_model: str = "gpt-5.6-terra"
+    openai_extraction_model: str = "gpt-5.6-luna"
+    anthropic_api_key: SecretStr | None = None
+    anthropic_model: str = "claude-sonnet-5"
 
 
 @lru_cache

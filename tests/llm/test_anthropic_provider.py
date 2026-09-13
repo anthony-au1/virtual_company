@@ -1,4 +1,4 @@
-"""Tests for the OpenAI LLM provider boundary."""
+"""Tests for the Anthropic LLM provider boundary."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import pytest
 from pydantic import BaseModel, SecretStr
 
 from virtual_company.llm import (
+    AnthropicProvider,
     LLMConfigurationError,
     LLMStructuredOutputError,
-    OpenAIProvider,
 )
 
 
@@ -22,10 +22,10 @@ class CompanyName(BaseModel):
 
 
 def client_with_response(parsed: CompanyName | None) -> MagicMock:
-    """Build a mock OpenAI client with a structured response."""
+    """Build a mock Anthropic client with a structured response."""
     client = MagicMock()
-    client.responses.parse = AsyncMock(
-        return_value=SimpleNamespace(output_parsed=parsed)
+    client.messages.parse = AsyncMock(
+        return_value=SimpleNamespace(parsed_output=parsed)
     )
     return client
 
@@ -34,8 +34,8 @@ def client_with_response(parsed: CompanyName | None) -> MagicMock:
 async def test_generate_structured_returns_parsed_pydantic_model() -> None:
     parsed = CompanyName(name="Example Inc.")
     client = client_with_response(parsed)
-    provider = OpenAIProvider(
-        api_key=SecretStr("test-key"), model="gpt-5.6-terra", client=client
+    provider = AnthropicProvider(
+        api_key=SecretStr("test-key"), model="claude-sonnet-5", client=client
     )
 
     result = await provider.generate_structured(
@@ -45,30 +45,31 @@ async def test_generate_structured_returns_parsed_pydantic_model() -> None:
     )
 
     assert result is parsed
-    client.responses.parse.assert_awaited_once_with(
-        model="gpt-5.6-terra",
-        instructions="Extract a company name.",
-        input="Example Inc.",
-        text_format=CompanyName,
+    client.messages.parse.assert_awaited_once_with(
+        model="claude-sonnet-5",
+        max_tokens=4096,
+        system="Extract a company name.",
+        messages=[{"role": "user", "content": "Example Inc."}],
+        output_format=CompanyName,
     )
 
 
 @pytest.mark.parametrize(
     ("api_key", "model"),
-    [(None, "gpt-5.6-terra"), (SecretStr("test-key"), None)],
+    [(None, "claude-sonnet-5"), (SecretStr("test-key"), None)],
 )
-def test_provider_requires_openai_configuration(
+def test_provider_requires_anthropic_configuration(
     api_key: SecretStr | None, model: str | None
 ) -> None:
-    with pytest.raises(LLMConfigurationError, match="OPENAI_API_KEY"):
-        OpenAIProvider(api_key=api_key, model=model)
+    with pytest.raises(LLMConfigurationError, match="ANTHROPIC_API_KEY"):
+        AnthropicProvider(api_key=api_key, model=model)
 
 
 @pytest.mark.asyncio
 async def test_generate_structured_raises_when_response_is_not_parsed() -> None:
-    provider = OpenAIProvider(
+    provider = AnthropicProvider(
         api_key="test-key",
-        model="gpt-5.6-terra",
+        model="claude-sonnet-5",
         client=client_with_response(None),
     )
 
@@ -83,12 +84,12 @@ async def test_generate_structured_raises_when_response_is_not_parsed() -> None:
 @pytest.mark.asyncio
 async def test_generate_structured_propagates_unexpected_sdk_errors() -> None:
     client = client_with_response(CompanyName(name="Unused"))
-    client.responses.parse.side_effect = RuntimeError("OpenAI unavailable")
-    provider = OpenAIProvider(
-        api_key="test-key", model="gpt-5.6-terra", client=client
+    client.messages.parse.side_effect = RuntimeError("Anthropic unavailable")
+    provider = AnthropicProvider(
+        api_key=SecretStr("test-key"), model="claude-sonnet-5", client=client
     )
 
-    with pytest.raises(RuntimeError, match="OpenAI unavailable"):
+    with pytest.raises(RuntimeError, match="Anthropic unavailable"):
         await provider.generate_structured(
             system_prompt="System prompt",
             user_prompt="User prompt",
