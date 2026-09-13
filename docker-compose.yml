@@ -7,6 +7,8 @@ services:
     container_name: virtual_company_app
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://virtual_company:virtual_company@postgres:5432/virtual_company
     depends_on:
