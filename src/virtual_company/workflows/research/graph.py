@@ -8,6 +8,7 @@ from uuid import UUID
 
 from langgraph.graph import END, START, StateGraph
 
+from virtual_company.config import Settings, get_settings
 from virtual_company.llm.base import LLMProvider
 from virtual_company.observability import get_observability
 from virtual_company.services import CampaignService, ResearchService
@@ -29,12 +30,17 @@ class ResearchWorkflow:
         research: ResearchService,
         llm: LLMProvider,
         web_search: WebSearchTool,
+        settings: Settings | None = None,
     ) -> None:
+        resolved_settings = settings or get_settings()
         self._nodes = ResearchNodes(
             campaigns=campaigns,
             research=research,
             llm=llm,
             web_search=web_search,
+            web_search_max_results=resolved_settings.web_search_max_results,
+            web_search_max_total_results=resolved_settings.web_search_max_total_results,
+            web_search_concurrency=resolved_settings.web_search_concurrency,
         )
         self._research = research
         self._graph = build_research_graph(self._nodes, research)

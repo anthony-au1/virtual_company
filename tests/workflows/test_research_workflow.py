@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from virtual_company.config import Settings
 from virtual_company.db.models import Campaign
 from virtual_company.research.models import DiscoveredCompany, SearchResult
 from virtual_company.workflows.research.graph import ResearchWorkflow
@@ -83,9 +84,11 @@ class LLMFake:
         self.companies = companies or []
         self.error = error
         self.response_models: list[type[object]] = []
+        self.user_prompts: list[str] = []
 
     async def generate_structured(self, **kwargs: object) -> object:
         self.response_models.append(kwargs["response_model"])
+        self.user_prompts.append(kwargs["user_prompt"])
         if self.error is not None:
             raise self.error
         if kwargs["response_model"] is GeneratedSearchQueries:
@@ -109,6 +112,29 @@ class WebSearchFake:
         if self.error is not None:
             raise self.error
         return self.results
+
+
+class QueryResultsWebSearchFake:
+    """Search fake that makes result ordering and call concurrency observable."""
+
+    def __init__(self, results_by_query: dict[str, list[SearchResult]]) -> None:
+        self.results_by_query = results_by_query
+        self.queries: list[str] = []
+        self.active = 0
+        self.max_active = 0
+
+    async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+        assert limit == 2
+        self.queries.append(query)
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            import asyncio
+
+            await asyncio.sleep(0)
+            return self.results_by_query[query]
+        finally:
+            self.active -= 1
 
 
 def campaign() -> Campaign:
@@ -215,3 +241,44 @@ async def test_unknown_campaign_does_not_create_research_run() -> None:
         await workflow.run(uuid4())
 
     assert research.created_runs == 0
+
+
+@pytest.mark.asyncio
+async def test_multiple_queries_are_concurrent_deduplicated_and_bounded() -> None:
+    model = campaign()
+    research = ResearchServiceFake()
+    search = QueryResultsWebSearchFake(
+        {
+            "first": [
+                SearchResult(title="Acme", url="https://acme.example/jobs"),
+                SearchResult(title="Beta", url="https://beta.example"),
+            ],
+            "second": [
+                SearchResult(title="Acme duplicate", url="https://ACME.example/jobs/"),
+                SearchResult(title="Gamma", url="https://gamma.example"),
+            ],
+            "third": [SearchResult(title="Delta", url="https://delta.example")],
+        }
+    )
+    llm = LLMFake(queries=["first", "second", "third"])
+    workflow = ResearchWorkflow(
+        campaigns=CampaignServiceFake(model),
+        research=research,
+        llm=llm,
+        web_search=search,
+        settings=Settings(
+            web_search_max_results=2,
+            web_search_max_total_results=3,
+            web_search_concurrency=2,
+        ),
+    )
+
+    await workflow.run(model.id)
+
+    assert search.queries == ["first", "second", "third"]
+    assert search.max_active == 2
+    discovery_prompt = llm.user_prompts[-1]
+    assert "https://acme.example/jobs" in discovery_prompt
+    assert "https://beta.example" in discovery_prompt
+    assert "https://gamma.example" in discovery_prompt
+    assert "https://delta.example" not in discovery_prompt

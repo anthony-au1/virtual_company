@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 
 def normalize_domain(value: str | None) -> str | None:
@@ -25,5 +25,11 @@ def normalize_url(value: str) -> str:
     parsed = urlsplit(value.strip())
     hostname = parsed.hostname.lower() if parsed.hostname else ""
     scheme = parsed.scheme.lower()
+    if not hostname:
+        return value.strip()
+    port = parsed.port
+    netloc = hostname
+    if port is not None and (scheme, port) not in {("http", 80), ("https", 443)}:
+        netloc = f"{hostname}:{port}"
     path = parsed.path.rstrip("/")
-    return f"{scheme}://{hostname}{path}" if hostname else value.strip()
+    return urlunsplit((scheme, netloc, path, parsed.query, ""))

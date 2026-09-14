@@ -18,7 +18,7 @@ from virtual_company.services import (
     EvidenceService,
     ResearchService,
 )
-from virtual_company.tools import UnavailableWebSearchTool, WebSearchTool
+from virtual_company.tools import WebSearchTool, create_web_search_tool
 from virtual_company.workflows.research import ResearchWorkflow
 
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
@@ -50,8 +50,8 @@ def get_llm_provider() -> LLMProvider:
 
 
 def get_web_search_tool() -> WebSearchTool:
-    """Return the configured web search tool placeholder for this first slice."""
-    return UnavailableWebSearchTool()
+    """Build the single web-search provider selected by application configuration."""
+    return create_web_search_tool()
 
 
 def get_research_workflow(session: SessionDependency) -> ResearchWorkflow:

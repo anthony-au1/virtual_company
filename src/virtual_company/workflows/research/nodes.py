@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from virtual_company.llm.base import LLMProvider
 from virtual_company.observability import get_observability
 from virtual_company.research.models import DiscoveredCompany, SearchResult
@@ -23,8 +25,6 @@ from virtual_company.workflows.research.prompts import (
 )
 from virtual_company.workflows.research.state import ResearchWorkflowState
 
-SEARCH_RESULTS_PER_QUERY = 10
-
 
 class CampaignNotFoundError(LookupError):
     """Raised when a requested campaign does not exist."""
@@ -40,11 +40,17 @@ class ResearchNodes:
         research: ResearchService,
         llm: LLMProvider,
         web_search: WebSearchTool,
+        web_search_max_results: int = 10,
+        web_search_max_total_results: int = 30,
+        web_search_concurrency: int = 3,
     ) -> None:
         self._campaigns = campaigns
         self._research = research
         self._llm = llm
         self._web_search = web_search
+        self._web_search_max_results = web_search_max_results
+        self._web_search_max_total_results = web_search_max_total_results
+        self._web_search_concurrency = web_search_concurrency
 
     async def load_campaign(
         self, state: ResearchWorkflowState
@@ -82,17 +88,24 @@ class ResearchNodes:
     async def search_web(
         self, state: ResearchWorkflowState
     ) -> dict[str, list[SearchResult]]:
-        """Search every query sequentially and deduplicate by URL."""
+        """Search queries with bounded concurrency, then deduplicate by URL."""
+        semaphore = asyncio.Semaphore(self._web_search_concurrency)
+
+        async def search_query(query: str) -> list[SearchResult]:
+            async with semaphore:
+                return await self._web_search.search(query, limit=self._web_search_max_results)
+
+        result_groups = await asyncio.gather(*(search_query(query) for query in state["queries"]))
         seen_urls: set[str] = set()
-        results = []
-        for query in state["queries"]:
-            for result in await self._web_search.search(
-                query, limit=SEARCH_RESULTS_PER_QUERY
-            ):
+        results: list[SearchResult] = []
+        for result_group in result_groups:
+            for result in result_group:
                 normalized_url = normalize_url(result.url)
                 if normalized_url not in seen_urls:
                     seen_urls.add(normalized_url)
                     results.append(result)
+                    if len(results) == self._web_search_max_total_results:
+                        return {"search_results": results}
         return {"search_results": results}
 
     async def discover_companies(

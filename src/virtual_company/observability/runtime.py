@@ -138,6 +138,14 @@ class Observability:
             "llm_input_tokens_total": self._meter.create_counter("llm_input_tokens_total"),
             "llm_output_tokens_total": self._meter.create_counter("llm_output_tokens_total"),
             "companies_discovered_total": self._meter.create_counter("companies_discovered_total"),
+            "web_search_requests_total": self._meter.create_counter("web_search_requests_total"),
+            "web_search_request_failures_total": self._meter.create_counter(
+                "web_search_request_failures_total"
+            ),
+            "web_search_request_duration_seconds": self._meter.create_histogram(
+                "web_search_request_duration_seconds"
+            ),
+            "web_search_results_total": self._meter.create_counter("web_search_results_total"),
         }
 
 

@@ -7,8 +7,28 @@ from typing import Protocol
 from virtual_company.research.models import SearchResult
 
 
-class WebSearchNotConfiguredError(RuntimeError):
+class WebSearchError(Exception):
+    """Base class for provider-neutral web-search failures."""
+
+
+class WebSearchConfigurationError(ValueError, WebSearchError):
+    """Raised when the selected web-search provider is not configured."""
+
+
+class WebSearchNotConfiguredError(WebSearchConfigurationError):
     """Raised when no concrete web-search provider is configured."""
+
+
+class WebSearchAuthenticationError(WebSearchError):
+    """Raised when a provider rejects configured credentials."""
+
+
+class WebSearchRateLimitError(WebSearchError):
+    """Raised when a provider rate limits a search request."""
+
+
+class WebSearchTimeoutError(WebSearchError):
+    """Raised when a provider search request times out."""
 
 
 class WebSearchTool(Protocol):

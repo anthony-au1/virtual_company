@@ -16,7 +16,7 @@ from virtual_company.api.models import (
     ResearchWorkflowResponse,
 )
 from virtual_company.services import CampaignService
-from virtual_company.tools import WebSearchNotConfiguredError
+from virtual_company.tools import WebSearchConfigurationError
 from virtual_company.workflows.research import ResearchWorkflow
 from virtual_company.workflows.research.nodes import CampaignNotFoundError
 
@@ -84,6 +84,6 @@ async def research_campaign(
         result = await workflow.run(campaign_id)
     except CampaignNotFoundError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-    except WebSearchNotConfiguredError as error:
+    except WebSearchConfigurationError as error:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
     return ResearchWorkflowResponse.model_validate(result.model_dump())

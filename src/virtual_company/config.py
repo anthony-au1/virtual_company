@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DATABASE_URL = (
@@ -36,6 +37,13 @@ class Settings(BaseSettings):
     openai_extraction_model: str = "gpt-5.6-luna"
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-sonnet-5"
+    web_search_provider: Literal["tavily", "exa"] = "tavily"
+    web_search_max_results: int = Field(default=10, ge=1, le=10)
+    web_search_max_total_results: int = Field(default=30, ge=1)
+    web_search_concurrency: int = Field(default=3, ge=1, le=10)
+    tavily_api_key: SecretStr | None = None
+    tavily_search_depth: Literal["basic", "advanced"] = "basic"
+    exa_api_key: SecretStr | None = None
 
 
 @lru_cache
