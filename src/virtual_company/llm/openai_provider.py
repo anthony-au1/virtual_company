@@ -42,6 +42,21 @@ class OpenAIProvider:
         self._role = role
         self._client = client or AsyncOpenAI(api_key=resolved_api_key)
 
+    @property
+    def provider(self) -> str:
+        """Return the provider identifier used for observability."""
+        return "openai"
+
+    @property
+    def model(self) -> str:
+        """Return the configured provider model."""
+        return self._model
+
+    @property
+    def role(self) -> str | None:
+        """Return the configured application role."""
+        return self._role
+
     async def generate_structured(
         self,
         *,

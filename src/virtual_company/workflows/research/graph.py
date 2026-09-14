@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from time import perf_counter
 from uuid import UUID
 
 from langgraph.graph import END, START, StateGraph
 
 from virtual_company.llm.base import LLMProvider
+from virtual_company.observability import get_observability
 from virtual_company.services import CampaignService, ResearchService
 from virtual_company.tools.web_search import WebSearchTool
 from virtual_company.workflows.research.models import ResearchWorkflowResult
@@ -39,21 +41,39 @@ class ResearchWorkflow:
 
     async def run(self, campaign_id: UUID) -> ResearchWorkflowResult:
         """Execute research and return its concise application result."""
-        state = await self._graph.ainvoke(
-            {
-                "campaign_id": campaign_id,
-                "campaign": None,
-                "research_run_id": None,
-                "queries": [],
-                "search_results": [],
-                "discovered_companies": [],
-                "companies_found": 0,
-                "error": None,
-            }
-        )
+        observability = get_observability()
+        observability.bind(campaign_id=str(campaign_id), workflow="company_research")
+        observability.event("research_run_started")
+        observability.record("research_runs_total", status="started", workflow="company_research")
+        started = perf_counter()
+        try:
+            with observability.span("research_workflow", workflow="company_research"):
+                state = await self._graph.ainvoke(
+                    {
+                        "campaign_id": campaign_id,
+                        "campaign": None,
+                        "research_run_id": None,
+                        "queries": [],
+                        "search_results": [],
+                        "discovered_companies": [],
+                        "companies_found": 0,
+                        "error": None,
+                    }
+                )
+        except Exception as error:
+            observability.record("research_runs_total", status="failed", workflow="company_research")
+            observability.record("research_run_failures_total", workflow="company_research")
+            observability.event("research_run_failed", error_type=type(error).__name__)
+            raise
         research_run_id = state["research_run_id"]
         if research_run_id is None:
             raise ValueError("Research workflow completed without a research run")
+        observability.bind(research_run_id=str(research_run_id))
+        observability.record("research_runs_total", status="completed", workflow="company_research")
+        observability.record(
+            "research_run_duration_seconds", perf_counter() - started, workflow="company_research"
+        )
+        observability.event("research_run_completed", companies_found=state["companies_found"])
         return ResearchWorkflowResult(
             research_run_id=research_run_id,
             status="COMPLETED",
@@ -98,8 +118,21 @@ def _with_failure_handling(node: Node, node_name: str, research: ResearchService
     """Mark an already-created run failed before propagating a node exception."""
 
     async def wrapped(state: ResearchWorkflowState) -> dict[str, object]:
+        observability = get_observability()
+        observability.event("workflow_node_started", workflow_node=node_name)
+        started = perf_counter()
         try:
-            return await node(state)
+            with observability.span(node_name, workflow_node=node_name):
+                result = await node(state)
+            research_run_id = result.get("research_run_id")
+            if research_run_id is not None:
+                observability.bind(research_run_id=str(research_run_id))
+            observability.event(
+                "workflow_node_completed",
+                workflow_node=node_name,
+                duration_ms=int((perf_counter() - started) * 1000),
+            )
+            return result
         except Exception as error:
             research_run_id = state["research_run_id"]
             if research_run_id is not None:
@@ -107,6 +140,12 @@ def _with_failure_handling(node: Node, node_name: str, research: ResearchService
                     research_run_id,
                     f"Research workflow failed in {node_name}: {type(error).__name__}",
                 )
+            observability.event(
+                "workflow_node_failed",
+                workflow_node=node_name,
+                duration_ms=int((perf_counter() - started) * 1000),
+                error_type=type(error).__name__,
+            )
             raise
 
     return wrapped

@@ -18,6 +18,16 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
     database_url: str = DEFAULT_DATABASE_URL
+    environment: str = "local"
+    log_level: str = "INFO"
+    log_format: str = "console"
+    otel_enabled: bool = True
+    otel_service_name: str = "virtual-company"
+    langfuse_enabled: bool = False
+    langfuse_public_key: SecretStr | None = None
+    langfuse_secret_key: SecretStr | None = None
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+    langfuse_capture_io: bool = False
     llm_provider: str = "openai"
     llm_research_provider: str | None = None
     llm_extraction_provider: str | None = None

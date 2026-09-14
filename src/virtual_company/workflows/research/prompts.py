@@ -3,9 +3,22 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from virtual_company.research.models import SearchResult
 from virtual_company.workflows.research.models import CampaignCriteria
+
+
+@dataclass(frozen=True)
+class PromptIdentity:
+    """Stable metadata for a locally managed prompt."""
+
+    name: str
+    version: str
+
+
+SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v1")
+COMPANY_DISCOVERY_PROMPT = PromptIdentity("discover_companies", "v1")
 
 
 def search_query_system_prompt() -> str:

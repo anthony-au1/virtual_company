@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from virtual_company.llm.base import LLMProvider
+from virtual_company.observability import get_observability
 from virtual_company.research.models import DiscoveredCompany, SearchResult
 from virtual_company.research.normalization import normalize_domain, normalize_url
 from virtual_company.services import CampaignService, ResearchService
@@ -13,6 +14,8 @@ from virtual_company.workflows.research.models import (
     GeneratedSearchQueries,
 )
 from virtual_company.workflows.research.prompts import (
+    COMPANY_DISCOVERY_PROMPT,
+    SEARCH_QUERY_PROMPT,
     company_discovery_system_prompt,
     company_discovery_user_prompt,
     search_query_system_prompt,
@@ -64,11 +67,16 @@ class ResearchNodes:
     ) -> dict[str, list[str]]:
         """Generate bounded search queries from campaign criteria."""
         campaign = self._campaign(state)
+        get_observability().bind(
+            prompt_name=SEARCH_QUERY_PROMPT.name,
+            prompt_version=SEARCH_QUERY_PROMPT.version,
+        )
         response = await self._llm.generate_structured(
             system_prompt=search_query_system_prompt(),
             user_prompt=search_query_user_prompt(campaign),
             response_model=GeneratedSearchQueries,
         )
+        get_observability().event("search_queries_generated", query_count=len(response.queries))
         return {"queries": response.queries}
 
     async def search_web(
@@ -92,12 +100,18 @@ class ResearchNodes:
     ) -> dict[str, list[DiscoveredCompany]]:
         """Extract bounded, evidence-supported companies without persisting them."""
         campaign = self._campaign(state)
+        get_observability().bind(
+            prompt_name=COMPANY_DISCOVERY_PROMPT.name,
+            prompt_version=COMPANY_DISCOVERY_PROMPT.version,
+        )
         response = await self._llm.generate_structured(
             system_prompt=company_discovery_system_prompt(),
             user_prompt=company_discovery_user_prompt(campaign, state["search_results"]),
             response_model=DiscoveredCompanies,
         )
         companies = self._deduplicate_companies(response.companies)
+        get_observability().record("companies_discovered_total", len(companies), workflow="company_research")
+        get_observability().event("companies_discovered", company_count=len(companies))
         return {"discovered_companies": companies[: campaign.target_count]}
 
     async def persist_companies(self, state: ResearchWorkflowState) -> dict[str, int]:
@@ -106,6 +120,7 @@ class ResearchNodes:
             campaign_id=state["campaign_id"],
             companies=state["discovered_companies"],
         )
+        get_observability().event("companies_persisted", companies_found=companies_found)
         return {"companies_found": companies_found}
 
     async def complete_research_run(self, state: ResearchWorkflowState) -> dict[str, str]:

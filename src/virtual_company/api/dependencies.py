@@ -6,7 +6,12 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.session import get_session
-from virtual_company.llm import LLMProvider, LLMRegistry, LLMRole
+from virtual_company.llm import (
+    InstrumentedLLMProvider,
+    LLMProvider,
+    LLMRegistry,
+    LLMRole,
+)
 from virtual_company.services import (
     CampaignService,
     CompanyService,
@@ -41,7 +46,7 @@ def get_research_service(session: SessionDependency) -> ResearchService:
 
 def get_llm_provider() -> LLMProvider:
     """Build the configured research-role LLM provider."""
-    return LLMRegistry().for_role(LLMRole.RESEARCH)
+    return InstrumentedLLMProvider(LLMRegistry().for_role(LLMRole.RESEARCH))
 
 
 def get_web_search_tool() -> WebSearchTool:
