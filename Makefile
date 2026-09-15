@@ -25,7 +25,7 @@ wait-for-db:
 	done
 
 down:
-	$(COMPOSE) down
+	$(COMPOSE) down -v
 
 logs:
 	$(COMPOSE) logs -f app
