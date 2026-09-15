@@ -40,6 +40,23 @@ class DiscoveredCompanies(BaseModel):
     companies: list[DiscoveredCompany] = Field(default_factory=list)
 
 
+class ResearchCompany(BaseModel):
+    """Persisted company context used for transient company-specific research."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: NonEmptyString
+    website: str | None = None
+    domain: str | None = None
+
+
+class GeneratedCompanySearchQueries(BaseModel):
+    """Structured LLM output used to locate candidate evidence sources for one company."""
+
+    queries: list[NonEmptyString] = Field(min_length=1, max_length=6)
+
+
 class ResearchWorkflowResult(BaseModel):
     """Public result returned by a completed workflow execution."""
 

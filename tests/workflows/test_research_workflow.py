@@ -12,10 +12,16 @@ from virtual_company.db.models import Campaign
 from virtual_company.research.models import DiscoveredCompany, SearchResult
 from virtual_company.workflows.research.graph import ResearchWorkflow
 from virtual_company.workflows.research.models import (
+    CampaignCriteria,
     DiscoveredCompanies,
+    GeneratedCompanySearchQueries,
     GeneratedSearchQueries,
+    ResearchCompany,
 )
-from virtual_company.workflows.research.nodes import CampaignNotFoundError
+from virtual_company.workflows.research.nodes import (
+    CampaignNotFoundError,
+    ResearchNodes,
+)
 
 
 class CampaignServiceFake:
@@ -49,8 +55,9 @@ class ResearchServiceFake:
 
     async def persist_companies(
         self, *, campaign_id: UUID, companies: list[DiscoveredCompany]
-    ) -> int:
+    ) -> SimpleNamespace:
         created_targets = 0
+        persisted_companies = []
         for company in companies:
             domain = (company.domain or company.website or company.name).lower()
             company_id = self.companies_by_domain.setdefault(domain, uuid4())
@@ -58,7 +65,15 @@ class ResearchServiceFake:
             if target not in self.targets:
                 self.targets.add(target)
                 created_targets += 1
-        return created_targets
+            persisted_companies.append(
+                SimpleNamespace(
+                    id=company_id,
+                    name=company.name,
+                    website=company.website,
+                    domain=company.domain,
+                )
+            )
+        return SimpleNamespace(companies_found=created_targets, companies=persisted_companies)
 
     async def complete_run(self, research_run_id: UUID, companies_found: int) -> None:
         run = self.runs[research_run_id]
@@ -77,10 +92,12 @@ class LLMFake:
     def __init__(
         self,
         queries: list[str] | None = None,
+        company_queries: list[str] | None = None,
         companies: list[DiscoveredCompany] | None = None,
         error: Exception | None = None,
     ) -> None:
         self.queries = queries or ["Australian fintech companies"]
+        self.company_queries = company_queries or ["company engineering evidence"]
         self.companies = companies or []
         self.error = error
         self.response_models: list[type[object]] = []
@@ -93,6 +110,8 @@ class LLMFake:
             raise self.error
         if kwargs["response_model"] is GeneratedSearchQueries:
             return GeneratedSearchQueries(queries=self.queries)
+        if kwargs["response_model"] is GeneratedCompanySearchQueries:
+            return GeneratedCompanySearchQueries(queries=self.company_queries)
         return DiscoveredCompanies(companies=self.companies)
 
 
@@ -105,10 +124,11 @@ class WebSearchFake:
         self.results = results or []
         self.error = error
         self.queries: list[str] = []
+        self.calls: list[tuple[str, int]] = []
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
         self.queries.append(query)
-        assert limit == 10
+        self.calls.append((query, limit))
         if self.error is not None:
             raise self.error
         return self.results
@@ -183,8 +203,17 @@ async def test_successful_workflow_persists_deduplicated_campaign_companies() ->
     assert result.companies_found == 2
     assert len(research.companies_by_domain) == 2
     assert len(research.targets) == 2
-    assert search.queries == ["Australian fintech companies"]
-    assert llm.response_models == [GeneratedSearchQueries, DiscoveredCompanies]
+    assert search.calls == [
+        ("Australian fintech companies", 10),
+        ("company engineering evidence", 5),
+        ("company engineering evidence", 5),
+    ]
+    assert llm.response_models == [
+        GeneratedSearchQueries,
+        DiscoveredCompanies,
+        GeneratedCompanySearchQueries,
+        GeneratedCompanySearchQueries,
+    ]
 
 
 @pytest.mark.asyncio
@@ -282,3 +311,80 @@ async def test_multiple_queries_are_concurrent_deduplicated_and_bounded() -> Non
     assert "https://beta.example" in discovery_prompt
     assert "https://gamma.example" in discovery_prompt
     assert "https://delta.example" not in discovery_prompt
+
+
+@pytest.mark.asyncio
+async def test_company_queries_and_sources_are_separated_deduplicated_and_bounded() -> None:
+    model = campaign()
+    acme_id, beta_id = uuid4(), uuid4()
+    llm = LLMFake(company_queries=["company source one", "company source two", "unused"])
+    search = QueryResultsWebSearchFake(
+        {
+            "company source one": [
+                SearchResult(title="Careers", url="https://acme.example/careers"),
+                SearchResult(title="Blog", url="https://acme.example/blog"),
+            ],
+            "company source two": [
+                SearchResult(title="Careers duplicate", url="https://acme.example/careers/"),
+                SearchResult(title="Third", url="https://acme.example/third"),
+            ],
+            "unused": [SearchResult(title="Unused", url="https://acme.example/unused")],
+        }
+    )
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=ResearchServiceFake(),
+        llm=llm,
+        web_search=search,
+        web_search_concurrency=2,
+        company_research_query_count=2,
+        company_research_max_results_per_query=2,
+        company_research_max_results_per_company=3,
+    )
+    state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "research_companies": [
+            ResearchCompany(id=acme_id, name="Acme", domain="acme.example"),
+            ResearchCompany(id=beta_id, name="Beta", domain="beta.example"),
+        ],
+    }
+
+    generated = await nodes.generate_company_queries(state)  # type: ignore[arg-type]
+    state["company_research_queries"] = generated["company_research_queries"]
+    sources = await nodes.search_company_sources(state)  # type: ignore[arg-type]
+
+    assert llm.response_models == [GeneratedCompanySearchQueries, GeneratedCompanySearchQueries]
+    assert '"target_market":"Australia"' in llm.user_prompts[0]
+    assert '"name":"Acme"' in llm.user_prompts[0]
+    assert '"domain":"acme.example"' in llm.user_prompts[0]
+    assert len(generated["company_research_queries"][acme_id]) == 2
+    assert search.max_active == 2
+    assert len(sources["company_search_results"][acme_id]) == 3
+    assert len(sources["company_search_results"][beta_id]) == 3
+    assert sources["company_search_results"][acme_id][0].url == "https://acme.example/careers"
+
+
+@pytest.mark.asyncio
+async def test_company_source_failure_marks_existing_research_run_failed() -> None:
+    model = campaign()
+
+    class CompanySearchFailureFake(WebSearchFake):
+        async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+            if limit == 5:
+                raise RuntimeError("Company search unavailable")
+            return await super().search(query, limit)
+
+    research = ResearchServiceFake()
+    workflow = ResearchWorkflow(
+        campaigns=CampaignServiceFake(model),
+        research=research,
+        llm=LLMFake(companies=[DiscoveredCompany(name="Acme", domain="acme.example")]),
+        web_search=CompanySearchFailureFake(),
+    )
+
+    with pytest.raises(RuntimeError, match="Company search unavailable"):
+        await workflow.run(model.id)
+
+    run = next(iter(research.runs.values()))
+    assert run.status == "FAILED"
+    assert "search_company_sources" in run.error

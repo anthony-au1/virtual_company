@@ -69,6 +69,17 @@ class Observability:
         current.update({key: value for key, value in values.items() if value is not None})
         _context.set(current)
 
+    @contextmanager
+    def context(self, **values: str | None) -> Generator[None, None, None]:
+        """Temporarily enrich correlated telemetry without leaking values to later work."""
+        current = dict(_context.get() or {})
+        current.update({key: value for key, value in values.items() if value is not None})
+        token = _context.set(current)
+        try:
+            yield
+        finally:
+            _context.reset(token)
+
     def event(self, name: str, **context: Any) -> None:
         """Emit a structured, metadata-only application event."""
         merged = {**(_context.get() or {}), **{key: value for key, value in context.items() if value is not None}}
@@ -138,6 +149,12 @@ class Observability:
             "llm_input_tokens_total": self._meter.create_counter("llm_input_tokens_total"),
             "llm_output_tokens_total": self._meter.create_counter("llm_output_tokens_total"),
             "companies_discovered_total": self._meter.create_counter("companies_discovered_total"),
+            "company_research_queries_generated_total": self._meter.create_counter(
+                "company_research_queries_generated_total"
+            ),
+            "company_research_sources_found_total": self._meter.create_counter(
+                "company_research_sources_found_total"
+            ),
             "web_search_requests_total": self._meter.create_counter("web_search_requests_total"),
             "web_search_request_failures_total": self._meter.create_counter(
                 "web_search_request_failures_total"

@@ -41,6 +41,13 @@ class ResearchWorkflow:
             web_search_max_results=resolved_settings.web_search_max_results,
             web_search_max_total_results=resolved_settings.web_search_max_total_results,
             web_search_concurrency=resolved_settings.web_search_concurrency,
+            company_research_query_count=resolved_settings.company_research_query_count,
+            company_research_max_results_per_query=(
+                resolved_settings.company_research_max_results_per_query
+            ),
+            company_research_max_results_per_company=(
+                resolved_settings.company_research_max_results_per_company
+            ),
         )
         self._research = research
         self._graph = build_research_graph(self._nodes, research)
@@ -63,6 +70,9 @@ class ResearchWorkflow:
                         "search_results": [],
                         "discovered_companies": [],
                         "companies_found": 0,
+                        "research_companies": [],
+                        "company_research_queries": {},
+                        "company_search_results": {},
                         "error": None,
                     }
                 )
@@ -106,6 +116,18 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         _with_failure_handling(nodes.persist_companies, "persist_companies", research),
     )
     graph.add_node(
+        "generate_company_queries",
+        _with_failure_handling(
+            nodes.generate_company_queries, "generate_company_queries", research
+        ),
+    )
+    graph.add_node(
+        "search_company_sources",
+        _with_failure_handling(
+            nodes.search_company_sources, "search_company_sources", research
+        ),
+    )
+    graph.add_node(
         "complete_research_run",
         _with_failure_handling(nodes.complete_research_run, "complete_research_run", research),
     )
@@ -115,7 +137,9 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     graph.add_edge("generate_search_queries", "search_web")
     graph.add_edge("search_web", "discover_companies")
     graph.add_edge("discover_companies", "persist_companies")
-    graph.add_edge("persist_companies", "complete_research_run")
+    graph.add_edge("persist_companies", "generate_company_queries")
+    graph.add_edge("generate_company_queries", "search_company_sources")
+    graph.add_edge("search_company_sources", "complete_research_run")
     graph.add_edge("complete_research_run", END)
     return graph.compile()
 

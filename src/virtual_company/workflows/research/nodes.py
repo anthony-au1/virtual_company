@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from uuid import UUID
 
 from virtual_company.llm.base import LLMProvider
 from virtual_company.observability import get_observability
@@ -13,13 +14,18 @@ from virtual_company.tools.web_search import WebSearchTool
 from virtual_company.workflows.research.models import (
     CampaignCriteria,
     DiscoveredCompanies,
+    GeneratedCompanySearchQueries,
     GeneratedSearchQueries,
+    ResearchCompany,
 )
 from virtual_company.workflows.research.prompts import (
     COMPANY_DISCOVERY_PROMPT,
+    COMPANY_QUERY_PROMPT,
     SEARCH_QUERY_PROMPT,
     company_discovery_system_prompt,
     company_discovery_user_prompt,
+    company_query_system_prompt,
+    company_query_user_prompt,
     search_query_system_prompt,
     search_query_user_prompt,
 )
@@ -43,6 +49,9 @@ class ResearchNodes:
         web_search_max_results: int = 10,
         web_search_max_total_results: int = 30,
         web_search_concurrency: int = 3,
+        company_research_query_count: int = 5,
+        company_research_max_results_per_query: int = 5,
+        company_research_max_results_per_company: int = 15,
     ) -> None:
         self._campaigns = campaigns
         self._research = research
@@ -51,6 +60,9 @@ class ResearchNodes:
         self._web_search_max_results = web_search_max_results
         self._web_search_max_total_results = web_search_max_total_results
         self._web_search_concurrency = web_search_concurrency
+        self._company_research_query_count = company_research_query_count
+        self._company_research_max_results_per_query = company_research_max_results_per_query
+        self._company_research_max_results_per_company = company_research_max_results_per_company
 
     async def load_campaign(
         self, state: ResearchWorkflowState
@@ -127,14 +139,109 @@ class ResearchNodes:
         get_observability().event("companies_discovered", company_count=len(companies))
         return {"discovered_companies": companies[: campaign.target_count]}
 
-    async def persist_companies(self, state: ResearchWorkflowState) -> dict[str, int]:
+    async def persist_companies(self, state: ResearchWorkflowState) -> dict[str, object]:
         """Persist discovered companies and their campaign associations."""
-        companies_found = await self._research.persist_companies(
+        persisted = await self._research.persist_companies(
             campaign_id=state["campaign_id"],
             companies=state["discovered_companies"],
         )
-        get_observability().event("companies_persisted", companies_found=companies_found)
-        return {"companies_found": companies_found}
+        research_companies = [
+            ResearchCompany.model_validate(company) for company in persisted.companies
+        ]
+        get_observability().event(
+            "companies_persisted", companies_found=persisted.companies_found
+        )
+        return {
+            "companies_found": persisted.companies_found,
+            "research_companies": research_companies,
+        }
+
+    async def generate_company_queries(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, dict[UUID, list[str]]]:
+        """Generate bounded, evidence-seeking queries for each persisted company."""
+        campaign = self._campaign(state)
+        observability = get_observability()
+        company_queries: dict[UUID, list[str]] = {}
+        for company in state["research_companies"]:
+            with observability.context(
+                company_id=str(company.id),
+                company_domain=company.domain,
+                prompt_name=COMPANY_QUERY_PROMPT.name,
+                prompt_version=COMPANY_QUERY_PROMPT.version,
+            ):
+                response = await self._llm.generate_structured(
+                    system_prompt=company_query_system_prompt(),
+                    user_prompt=company_query_user_prompt(campaign, company),
+                    response_model=GeneratedCompanySearchQueries,
+                )
+                queries = response.queries[: self._company_research_query_count]
+                company_queries[company.id] = queries
+                observability.event(
+                    "company_research_queries_generated", query_count=len(queries)
+                )
+                observability.record(
+                    "company_research_queries_generated_total",
+                    len(queries),
+                    workflow="company_research",
+                )
+        return {"company_research_queries": company_queries}
+
+    async def search_company_sources(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, dict[UUID, list[SearchResult]]]:
+        """Search all company queries with one bounded provider-request fan-out."""
+        observability = get_observability()
+        semaphore = asyncio.Semaphore(self._web_search_concurrency)
+        company_queries = state["company_research_queries"]
+        work = [
+            (company, query)
+            for company in state["research_companies"]
+            for query in company_queries.get(company.id, [])
+        ]
+
+        async def search_company_query(
+            company: ResearchCompany, query: str
+        ) -> list[SearchResult]:
+            with observability.context(
+                company_id=str(company.id), company_domain=company.domain
+            ):
+                async with semaphore:
+                    return await self._web_search.search(
+                        query, limit=self._company_research_max_results_per_query
+                    )
+
+        result_groups = await asyncio.gather(
+            *(search_company_query(company, query) for company, query in work)
+        )
+        results_by_company: dict[UUID, list[SearchResult]] = {
+            company.id: [] for company in state["research_companies"]
+        }
+        seen_urls_by_company: dict[UUID, set[str]] = {
+            company.id: set() for company in state["research_companies"]
+        }
+        for (company, _query), result_group in zip(work, result_groups, strict=True):
+            results = results_by_company[company.id]
+            seen_urls = seen_urls_by_company[company.id]
+            for result in result_group:
+                if len(results) >= self._company_research_max_results_per_company:
+                    break
+                normalized_url = normalize_url(result.url)
+                if normalized_url not in seen_urls:
+                    seen_urls.add(normalized_url)
+                    results.append(result)
+        for company in state["research_companies"]:
+            with observability.context(
+                company_id=str(company.id), company_domain=company.domain
+            ):
+                count = len(results_by_company[company.id])
+                observability.record(
+                    "company_research_sources_found_total",
+                    count,
+                    workflow="company_research",
+                )
+                observability.event("company_research_sources_found", result_count=count)
+        return {"company_search_results": results_by_company}
 
     async def complete_research_run(self, state: ResearchWorkflowState) -> dict[str, str]:
         """Mark the run complete and commit all pending workflow persistence."""

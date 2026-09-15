@@ -42,3 +42,9 @@ RUN_WEB_SEARCH_INTEGRATION_TESTS=true TAVILY_API_KEY=... uv run pytest tests/int
 ```
 
 Replace the provider/key prefix with `WEB_SEARCH_PROVIDER=exa EXA_API_KEY=...` to smoke-test Exa.
+
+Company-specific source discovery runs after initial companies are persisted. For a manual
+end-to-end check, create a small campaign targeting 2–3 Australian fintech companies with
+Java and Spring criteria, then inspect the traces for `generate_company_queries` and
+`search_company_sources`. The latter should contain company-correlated provider searches
+and candidate URLs only; it does not fetch pages or create Evidence records.

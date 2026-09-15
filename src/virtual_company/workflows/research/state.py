@@ -6,7 +6,7 @@ from typing import TypedDict
 from uuid import UUID
 
 from virtual_company.research.models import DiscoveredCompany, SearchResult
-from virtual_company.workflows.research.models import CampaignCriteria
+from virtual_company.workflows.research.models import CampaignCriteria, ResearchCompany
 
 
 class ResearchWorkflowState(TypedDict):
@@ -19,4 +19,7 @@ class ResearchWorkflowState(TypedDict):
     search_results: list[SearchResult]
     discovered_companies: list[DiscoveredCompany]
     companies_found: int
+    research_companies: list[ResearchCompany]
+    company_research_queries: dict[UUID, list[str]]
+    company_search_results: dict[UUID, list[SearchResult]]
     error: str | None

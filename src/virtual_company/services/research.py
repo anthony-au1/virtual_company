@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.db.models import ResearchRun
+from virtual_company.db.models import Company, ResearchRun
 from virtual_company.repositories.campaign_target import CampaignTargetRepository
 from virtual_company.repositories.company import CompanyRepository
 from virtual_company.repositories.dtos import (
@@ -19,6 +20,14 @@ from virtual_company.repositories.dtos import (
 from virtual_company.repositories.research_run import ResearchRunRepository
 from virtual_company.research.models import DiscoveredCompany
 from virtual_company.research.normalization import normalize_domain
+
+
+@dataclass(frozen=True)
+class PersistedCompanies:
+    """The campaign-target count and exact company records resolved for one run."""
+
+    companies_found: int
+    companies: list[Company]
 
 
 class ResearchService:
@@ -48,9 +57,10 @@ class ResearchService:
         *,
         campaign_id: UUID,
         companies: list[DiscoveredCompany],
-    ) -> int:
-        """Persist companies and return newly created campaign associations."""
+    ) -> PersistedCompanies:
+        """Persist companies and return their resolved records for this run."""
         created_targets = 0
+        persisted_companies: list[Company] = []
         for discovered in companies:
             domain = normalize_domain(discovered.domain or discovered.website)
             company = (
@@ -72,7 +82,11 @@ class ResearchService:
                     CampaignTargetCreate(campaign_id=campaign_id, company_id=company.id)
                 )
                 created_targets += 1
-        return created_targets
+            persisted_companies.append(company)
+        return PersistedCompanies(
+            companies_found=created_targets,
+            companies=persisted_companies,
+        )
 
     async def complete_run(self, research_run_id: UUID, companies_found: int) -> ResearchRun:
         """Mark a run complete and commit its associated persistence work."""

@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 
 from virtual_company.research.models import SearchResult
-from virtual_company.workflows.research.models import CampaignCriteria
+from virtual_company.workflows.research.models import CampaignCriteria, ResearchCompany
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,7 @@ class PromptIdentity:
 
 SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v1")
 COMPANY_DISCOVERY_PROMPT = PromptIdentity("discover_companies", "v1")
+COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v1")
 
 
 def search_query_system_prompt() -> str:
@@ -54,4 +55,24 @@ def company_discovery_user_prompt(
     return (
         f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"
         f"Search results:\n{json.dumps(evidence)}"
+    )
+
+
+def company_query_system_prompt() -> str:
+    """Return instructions for source-discovery queries about one known company."""
+    return (
+        "Generate 4 to 6 web-search queries to find candidate sources of evidence about "
+        "whether this company matches the campaign. You are generating research queries, "
+        "not asserting facts: queries may investigate and disprove hypotheses. When a company "
+        "domain is supplied, include some official-domain site: queries and some relevant "
+        "third-party queries. Favor engineering, careers, job advertisements, technical blogs, "
+        "conference material, architecture articles, migrations, and credible news where relevant."
+    )
+
+
+def company_query_user_prompt(campaign: CampaignCriteria, company: ResearchCompany) -> str:
+    """Serialize campaign criteria and one company for source-query generation."""
+    return (
+        f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"
+        f"Company context:\n{company.model_dump_json()}"
     )
