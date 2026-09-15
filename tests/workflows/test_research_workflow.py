@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from virtual_company.config import Settings
 from virtual_company.db.models import Campaign
@@ -21,6 +22,10 @@ from virtual_company.workflows.research.models import (
 from virtual_company.workflows.research.nodes import (
     CampaignNotFoundError,
     ResearchNodes,
+)
+from virtual_company.workflows.research.prompts import (
+    SEARCH_QUERY_PROMPT,
+    search_query_system_prompt,
 )
 
 
@@ -165,12 +170,30 @@ def campaign() -> Campaign:
         description="Find engineering-focused fintech companies.",
         target_market="Australia",
         industry="Financial services",
-        technologies=["Java"],
+        technologies=["Java", "Spring Boot", "Kafka"],
         company_size_min=50,
         company_size_max=500,
         target_count=5,
         status="DRAFT",
     )
+
+
+def test_discovery_query_prompt_defines_company_discovery_semantics() -> None:
+    prompt = search_query_system_prompt().lower()
+
+    assert SEARCH_QUERY_PROMPT.version == "v2"
+    assert "company discovery" in prompt
+    assert "downstream investigation criteria" in prompt
+    assert "jobs, vacancies, careers" in prompt
+    assert "linkedin jobs, seek, indeed, glassdoor" in prompt
+    assert "company websites, company directories, industry associations" in prompt
+    assert "distinct, complementary search strategies" in prompt
+    assert "3 to 5" in prompt
+
+
+def test_discovery_query_schema_rejects_more_than_five_queries() -> None:
+    with pytest.raises(ValidationError):
+        GeneratedSearchQueries(queries=[f"query {index}" for index in range(12)])
 
 
 @pytest.mark.asyncio
@@ -355,6 +378,7 @@ async def test_company_queries_and_sources_are_separated_deduplicated_and_bounde
 
     assert llm.response_models == [GeneratedCompanySearchQueries, GeneratedCompanySearchQueries]
     assert '"target_market":"Australia"' in llm.user_prompts[0]
+    assert '"technologies":["Java","Spring Boot","Kafka"]' in llm.user_prompts[0]
     assert '"name":"Acme"' in llm.user_prompts[0]
     assert '"domain":"acme.example"' in llm.user_prompts[0]
     assert len(generated["company_research_queries"][acme_id]) == 2

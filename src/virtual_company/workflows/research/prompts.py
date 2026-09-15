@@ -17,17 +17,30 @@ class PromptIdentity:
     version: str
 
 
-SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v1")
+SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
 COMPANY_DISCOVERY_PROMPT = PromptIdentity("discover_companies", "v1")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v1")
 
 
 def search_query_system_prompt() -> str:
-    """Return instructions for campaign-focused query generation."""
+    """Return instructions for bounded company-discovery query generation."""
     return (
-        "Generate targeted web-search queries for discovering companies that match "
-        "the campaign. Return queries only; do not research or answer the campaign. "
-        "Favor queries likely to surface company and official-site information."
+        "Your goal is COMPANY DISCOVERY: generate 3 to 5 complementary web-search "
+        "queries that identify plausible companies matching the campaign's broad business "
+        "profile. This stage finds candidate companies; it is not technology verification, "
+        "job search, or evidence collection. Focus primarily on target geography or market, "
+        "industry, company or business type, relevant industry segments, and approximate "
+        "company size when useful. Technology criteria such as programming languages, "
+        "frameworks, cloud platforms, databases, and messaging systems are downstream "
+        "investigation criteria: do not use them as primary discovery search constraints. "
+        "Avoid queries primarily intended to find jobs, vacancies, careers, hiring, software "
+        "engineer positions, or developer positions. Do not intentionally target LinkedIn "
+        "Jobs, SEEK, Indeed, Glassdoor, or generic job aggregators. Prefer queries likely "
+        "to surface company websites, company directories, industry associations, industry "
+        "company lists, startup or scale-up lists, accelerator or portfolio pages, "
+        "reputable market reports, funding or company databases, and articles profiling "
+        "relevant companies. Use distinct, complementary search strategies rather than "
+        "paraphrases. Return search queries only; do not answer the campaign or invent companies."
     )
 
 
