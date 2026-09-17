@@ -49,6 +49,8 @@ class ResearchNodes:
         web_search_max_results: int = 10,
         web_search_max_total_results: int = 30,
         web_search_concurrency: int = 3,
+        discovery_candidate_multiplier: int = 3,
+        discovery_candidate_max: int = 15,
         company_research_query_count: int = 5,
         company_research_max_results_per_query: int = 5,
         company_research_max_results_per_company: int = 15,
@@ -60,6 +62,8 @@ class ResearchNodes:
         self._web_search_max_results = web_search_max_results
         self._web_search_max_total_results = web_search_max_total_results
         self._web_search_concurrency = web_search_concurrency
+        self._discovery_candidate_multiplier = discovery_candidate_multiplier
+        self._discovery_candidate_max = discovery_candidate_max
         self._company_research_query_count = company_research_query_count
         self._company_research_max_results_per_query = company_research_max_results_per_query
         self._company_research_max_results_per_company = company_research_max_results_per_company
@@ -123,26 +127,30 @@ class ResearchNodes:
     async def discover_companies(
         self, state: ResearchWorkflowState
     ) -> dict[str, list[DiscoveredCompany]]:
-        """Extract bounded, evidence-supported companies without persisting them."""
+        """Extract a bounded pool of plausible companies without persisting them."""
         campaign = self._campaign(state)
+        candidate_limit = self._discovery_candidate_limit(campaign.target_count)
         get_observability().bind(
             prompt_name=COMPANY_DISCOVERY_PROMPT.name,
             prompt_version=COMPANY_DISCOVERY_PROMPT.version,
         )
         response = await self._llm.generate_structured(
             system_prompt=company_discovery_system_prompt(),
-            user_prompt=company_discovery_user_prompt(campaign, state["search_results"]),
+            user_prompt=company_discovery_user_prompt(
+                campaign, state["search_results"], candidate_limit
+            ),
             response_model=DiscoveredCompanies,
         )
         companies = self._deduplicate_companies(
             self._validate_supporting_urls(response.companies, state["search_results"])
-        )[: campaign.target_count]
+        )[:candidate_limit]
         observability = get_observability()
         supporting_source_count = sum(len(company.supporting_urls) for company in companies)
         selection_context = {
-            "candidate_count": len(companies),
+            "campaign_target_count": campaign.target_count,
+            "discovery_candidate_limit": candidate_limit,
+            "discovered_candidate_count": len(companies),
             "selected_company_names": [company.name for company in companies],
-            "discovery_confidences": [company.discovery_confidence for company in companies],
             "supporting_source_count": supporting_source_count,
         }
         with observability.span("discovery_candidate_selection", **selection_context):
@@ -268,6 +276,16 @@ class ResearchNodes:
         if campaign is None:
             raise ValueError("Campaign was not loaded")
         return campaign
+
+    def _discovery_candidate_limit(self, target_count: int) -> int:
+        """Return the bounded investigation pool size for a campaign."""
+        return max(
+            target_count,
+            min(
+                target_count * self._discovery_candidate_multiplier,
+                self._discovery_candidate_max,
+            ),
+        )
 
     @staticmethod
     def _deduplicate_companies(

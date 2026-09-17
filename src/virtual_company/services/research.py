@@ -24,7 +24,7 @@ from virtual_company.research.normalization import normalize_domain
 
 @dataclass(frozen=True)
 class PersistedCompanies:
-    """The campaign-target count and exact company records resolved for one run."""
+    """The new campaign-candidate count and exact company records resolved for one run."""
 
     companies_found: int
     companies: list[Company]
@@ -58,7 +58,7 @@ class ResearchService:
         campaign_id: UUID,
         companies: list[DiscoveredCompany],
     ) -> PersistedCompanies:
-        """Persist companies and return their resolved records for this run."""
+        """Persist discovery candidates and return their resolved records for this run."""
         created_targets = 0
         persisted_companies: list[Company] = []
         for discovered in companies:

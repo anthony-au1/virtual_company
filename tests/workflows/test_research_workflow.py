@@ -184,7 +184,6 @@ def discovered_company(name: str, **values: object) -> DiscoveredCompany:
     """Build structured discovery output with realistic transient provenance."""
     payload = {
         "name": name,
-        "discovery_confidence": 0.8,
         "discovery_reason": "Supplied search evidence supports further investigation.",
         "supporting_urls": [],
     }
@@ -210,18 +209,19 @@ def test_discovery_query_schema_rejects_more_than_five_queries() -> None:
         GeneratedSearchQueries(queries=[f"query {index}" for index in range(12)])
 
 
-def test_company_discovery_prompt_prioritizes_quality_over_quota() -> None:
+def test_company_discovery_prompt_prioritizes_candidate_recall() -> None:
     prompt = company_discovery_system_prompt().lower()
 
-    assert COMPANY_DISCOVERY_PROMPT.version == "v2"
-    assert "compare plausible companies" in prompt
-    assert "source quality" in prompt
-    assert "unknown size must not disqualify" in prompt
-    assert "do not verify technology criteria" in prompt
-    assert "up to the campaign target count, not a quota" in prompt
-    assert "return fewer candidates or none" in prompt
+    assert COMPANY_DISCOVERY_PROMPT.version == "v3"
+    assert "candidate discovery, not final qualification" in prompt
+    assert "favor recall over strict qualification" in prompt
+    assert "supplied discovery candidate limit, not the campaign target count" in prompt
+    assert "ranking signals, not hard gates" in prompt
+    assert "unknown size is not a reason to exclude" in prompt
+    assert "technology information is not required during discovery" in prompt
+    assert "clearly irrelevant entities" in prompt
     assert "do not invent companies, websites, domains, or supporting urls" in prompt
-    assert "states material uncertainty" in prompt
+    assert "material uncertainty" in prompt
 
 
 @pytest.mark.asyncio
@@ -372,7 +372,7 @@ async def test_multiple_queries_are_concurrent_deduplicated_and_bounded() -> Non
 
 
 @pytest.mark.asyncio
-async def test_discovery_keeps_fewer_strong_candidates_and_validates_provenance() -> None:
+async def test_discovery_keeps_incomplete_candidates_and_validates_provenance() -> None:
     model = campaign()
     model.target_count = 3
     source_a = "https://industry.example/acme"
@@ -384,17 +384,18 @@ async def test_discovery_keeps_fewer_strong_candidates_and_validates_provenance(
             companies=[
                 discovered_company(
                     "Acme",
-                    discovery_confidence=0.93,
                     discovery_reason=(
-                        "Two credible sources identify Acme as an Australian payments fintech; "
-                        "size is unknown."
+                        "An industry source identifies Acme as an Australian payments fintech; "
+                        "size and technology stack require investigation."
                     ),
                     supporting_urls=[source_a, "https://invented.example/acme"],
                 ),
                 discovered_company(
                     "Beta",
-                    discovery_confidence=0.86,
-                    discovery_reason="A credible report identifies Beta as an Australian fintech.",
+                    discovery_reason=(
+                        "A credible report identifies Beta as an Australian fintech; "
+                        "employee count and technologies are unknown."
+                    ),
                     supporting_urls=[source_b],
                 ),
             ]
@@ -415,10 +416,96 @@ async def test_discovery_keeps_fewer_strong_candidates_and_validates_provenance(
     companies = discovered["discovered_companies"]
     assert [company.name for company in companies] == ["Acme", "Beta"]
     assert len(companies) == 2
-    assert companies[0].discovery_confidence == 0.93
-    assert "size is unknown" in companies[0].discovery_reason
+    assert "technology stack require investigation" in companies[0].discovery_reason
     assert companies[0].supporting_urls == [source_a]
     assert companies[1].supporting_urls == [source_b]
+
+
+@pytest.mark.asyncio
+async def test_discovery_uses_broader_candidate_limit_than_target_count() -> None:
+    model = campaign()
+    model.target_count = 3
+    source_urls = [f"https://directory.example/company-{index}" for index in range(7)]
+    llm = LLMFake(
+        companies=[
+            discovered_company(
+                f"Candidate {index}",
+                discovery_reason=(
+                    "A credible Australian fintech directory identifies this company; "
+                    "size and technologies require investigation."
+                ),
+                supporting_urls=[source_url],
+            )
+            for index, source_url in enumerate(source_urls)
+        ]
+    )
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=ResearchServiceFake(),
+        llm=llm,
+        web_search=WebSearchFake(),
+        discovery_candidate_multiplier=3,
+        discovery_candidate_max=15,
+    )
+
+    discovered = await nodes.discover_companies(  # type: ignore[arg-type]
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "search_results": [
+                SearchResult(title=f"Candidate {index}", url=source_url)
+                for index, source_url in enumerate(source_urls)
+            ],
+        }
+    )
+
+    assert len(discovered["discovered_companies"]) == 7
+    assert "Discovery candidate limit: 9" in llm.user_prompts[-1]
+
+
+def test_discovery_candidate_limit_caps_at_configured_maximum() -> None:
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(campaign()),
+        research=ResearchServiceFake(),
+        llm=LLMFake(),
+        web_search=WebSearchFake(),
+        discovery_candidate_multiplier=3,
+        discovery_candidate_max=15,
+    )
+
+    assert nodes._discovery_candidate_limit(3) == 9
+    assert nodes._discovery_candidate_limit(10) == 15
+
+
+@pytest.mark.asyncio
+async def test_workflow_investigates_candidate_pool_beyond_target_count() -> None:
+    model = campaign()
+    model.target_count = 3
+    candidates = [
+        discovered_company(f"Candidate {index}", domain=f"candidate-{index}.example")
+        for index in range(7)
+    ]
+    research = ResearchServiceFake()
+    llm = LLMFake(companies=candidates, company_queries=["candidate investigation"])
+    search = WebSearchFake()
+    workflow = ResearchWorkflow(
+        campaigns=CampaignServiceFake(model),
+        research=research,
+        llm=llm,
+        web_search=search,
+        settings=Settings(
+            discovery_candidate_multiplier=3,
+            discovery_candidate_max=15,
+        ),
+    )
+
+    result = await workflow.run(model.id)
+
+    assert result.companies_found == 7
+    assert len(research.targets) == 7
+    assert llm.response_models.count(GeneratedCompanySearchQueries) == 7
+    assert search.calls == [("Australian fintech companies", 10)] + [
+        ("candidate investigation", 5)
+    ] * 7
 
 
 @pytest.mark.asyncio

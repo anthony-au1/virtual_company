@@ -79,7 +79,7 @@ class Company(Base):
 
 
 class CampaignTarget(Base):
-    """A company's qualification result within a campaign."""
+    """A candidate company within a campaign, pending future qualification."""
 
     __tablename__ = "campaign_targets"
 

@@ -41,6 +41,8 @@ class ResearchWorkflow:
             web_search_max_results=resolved_settings.web_search_max_results,
             web_search_max_total_results=resolved_settings.web_search_max_total_results,
             web_search_concurrency=resolved_settings.web_search_concurrency,
+            discovery_candidate_multiplier=resolved_settings.discovery_candidate_multiplier,
+            discovery_candidate_max=resolved_settings.discovery_candidate_max,
             company_research_query_count=resolved_settings.company_research_query_count,
             company_research_max_results_per_query=(
                 resolved_settings.company_research_max_results_per_query

@@ -6,20 +6,20 @@ Represents a software entity discovered during analysis.
 
 Table: campaign
 
-| Column             | PostgreSQL type | Nullable | Description                      |
-| ------------------ | --------------- | -------: | -------------------------------- |
-| `id`               | `UUID`          |       NO | unique ID campaign               |
-| `name`             | `VARCHAR(255)`  |       NO | name                             |
-| `description`      | `TEXT`          |      YES | detailed description             |
-| `target_market`    | `VARCHAR(255)`  |      YES | geographical market              |
-| `industry`         | `VARCHAR(255)`  |      YES | targeted industry                |
-| `technologies`     | `JSONB`         |      YES | technologies used                |
-| `company_size_min` | `INTEGER`       |      YES | minimum company size             |
-| `company_size_max` | `INTEGER`       |      YES | maximum company size             |
-| `target_count`     | `INTEGER`       |       NO | how many companies we search for |
-| `status`           | `VARCHAR(30)`   |       NO | campaign status                  |
-| `created_at`       | `TIMESTAMPTZ`   |       NO | created date                     |
-| `updated_at`       | `TIMESTAMPTZ`   |       NO | last change date                 |
+| Column             | PostgreSQL type | Nullable | Description                             |
+| ------------------ | --------------- | -------: | --------------------------------------- |
+| `id`               | `UUID`          |       NO | unique ID campaign                      |
+| `name`             | `VARCHAR(255)`  |       NO | name                                    |
+| `description`      | `TEXT`          |      YES | detailed description                    |
+| `target_market`    | `VARCHAR(255)`  |      YES | geographical market                     |
+| `industry`         | `VARCHAR(255)`  |      YES | targeted industry                       |
+| `technologies`     | `JSONB`         |      YES | technologies used                       |
+| `company_size_min` | `INTEGER`       |      YES | minimum company size                    |
+| `company_size_max` | `INTEGER`       |      YES | maximum company size                    |
+| `target_count`     | `INTEGER`       |       NO | desired eventual qualified-target count |
+| `status`           | `VARCHAR(30)`   |       NO | campaign status                         |
+| `created_at`       | `TIMESTAMPTZ`   |       NO | created date                            |
+| `updated_at`       | `TIMESTAMPTZ`   |       NO | last change date                        |
 
 status:
 
@@ -61,7 +61,7 @@ Table: campaign_targets
 | ------------- | ----------- | ---------------------------- |
 | `campaign_id` | UUID        | campaign                     |
 | `company_id`  | UUID        | company                      |
-| `score`       | NUMERIC     | qualification score          |
+| `score`       | NUMERIC     | future qualification score   |
 | `status`      | VARCHAR     | candidate/qualified/rejected |
 | `created_at`  | TIMESTAMPTZ | created date                 |
 

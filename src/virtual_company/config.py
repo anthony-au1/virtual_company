@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     web_search_max_results: int = Field(default=10, ge=1, le=10)
     web_search_max_total_results: int = Field(default=30, ge=1)
     web_search_concurrency: int = Field(default=3, ge=1, le=10)
+    discovery_candidate_multiplier: int = Field(default=3, ge=1)
+    discovery_candidate_max: int = Field(default=15, ge=1)
     company_research_query_count: int = Field(default=5, ge=1, le=6)
     company_research_max_results_per_query: int = Field(default=5, ge=1, le=10)
     company_research_max_results_per_company: int = Field(default=15, ge=1)
