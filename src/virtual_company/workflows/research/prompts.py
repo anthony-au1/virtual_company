@@ -18,7 +18,7 @@ class PromptIdentity:
 
 
 SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
-COMPANY_DISCOVERY_PROMPT = PromptIdentity("discover_companies", "v1")
+COMPANY_DISCOVERY_PROMPT = PromptIdentity("discover_companies", "v2")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v1")
 
 
@@ -50,13 +50,24 @@ def search_query_user_prompt(campaign: CampaignCriteria) -> str:
 
 
 def company_discovery_system_prompt() -> str:
-    """Return instructions for evidence-bound company discovery."""
+    """Return instructions for evidence-bound, quality-first company discovery."""
     return (
-        "Identify plausible companies for the campaign using only the supplied search "
-        "results. Do not invent companies, websites, or domains. Prefer an official "
-        "website only when it appears in the supplied evidence. Deduplicate companies, "
-        "normalize domains where practical, and return no more companies than the "
-        "campaign target count."
+        "Identify and compare plausible companies for the campaign using only the supplied "
+        "search results. Select the strongest candidates based on combined support for company "
+        "identity, target geography or market, industry or business relevance, source quality, "
+        "and multiple-source support where available. Prefer official company websites, official "
+        "industry associations, government or trade bodies, credible industry reports, reputable "
+        "business publications, and credible company directories over scraped directories, generic "
+        "SEO pages, social-media posts, ambiguous snippets, or unrelated mentions. Company size is "
+        "useful when available but is not required: unknown size must not disqualify an otherwise "
+        "strong candidate. Do not verify technology criteria at this stage; those belong to downstream "
+        "company-specific investigation. Return UP TO the campaign target count, not a quota: quality "
+        "is more important than filling the count, so return fewer candidates or none when support is "
+        "weak. Do not invent companies, websites, domains, or supporting URLs. Return a website or "
+        "domain only when the supplied results reasonably support it as official. For every selected "
+        "company, provide a discovery confidence for its suitability for further investigation, a concise "
+        "reason that states material uncertainty, and up to three supporting URLs copied from the supplied "
+        "results."
     )
 
 

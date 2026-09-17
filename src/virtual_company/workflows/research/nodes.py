@@ -134,10 +134,21 @@ class ResearchNodes:
             user_prompt=company_discovery_user_prompt(campaign, state["search_results"]),
             response_model=DiscoveredCompanies,
         )
-        companies = self._deduplicate_companies(response.companies)
+        companies = self._deduplicate_companies(
+            self._validate_supporting_urls(response.companies, state["search_results"])
+        )[: campaign.target_count]
+        observability = get_observability()
+        supporting_source_count = sum(len(company.supporting_urls) for company in companies)
+        selection_context = {
+            "candidate_count": len(companies),
+            "selected_company_names": [company.name for company in companies],
+            "discovery_confidences": [company.discovery_confidence for company in companies],
+            "supporting_source_count": supporting_source_count,
+        }
+        with observability.span("discovery_candidate_selection", **selection_context):
+            observability.event("companies_discovered", **selection_context)
         get_observability().record("companies_discovered_total", len(companies), workflow="company_research")
-        get_observability().event("companies_discovered", company_count=len(companies))
-        return {"discovered_companies": companies[: campaign.target_count]}
+        return {"discovered_companies": companies}
 
     async def persist_companies(self, state: ResearchWorkflowState) -> dict[str, object]:
         """Persist discovered companies and their campaign associations."""
@@ -272,3 +283,30 @@ class ResearchNodes:
                 seen.add(key)
                 deduplicated.append(company)
         return deduplicated
+
+    @staticmethod
+    def _validate_supporting_urls(
+        companies: list[DiscoveredCompany], search_results: list[SearchResult]
+    ) -> list[DiscoveredCompany]:
+        """Keep only provenance URLs present in the supplied discovery results."""
+        source_urls: dict[str, str] = {}
+        for result in search_results:
+            try:
+                source_urls.setdefault(normalize_url(result.url), result.url)
+            except ValueError:
+                continue
+
+        validated_companies = []
+        for company in companies:
+            supporting_urls = []
+            for url in company.supporting_urls:
+                try:
+                    source_url = source_urls.get(normalize_url(url))
+                except ValueError:
+                    source_url = None
+                if source_url is not None and source_url not in supporting_urls:
+                    supporting_urls.append(source_url)
+            validated_companies.append(
+                company.model_copy(update={"supporting_urls": supporting_urls})
+            )
+        return validated_companies

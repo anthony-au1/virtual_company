@@ -27,6 +27,9 @@ class DiscoveredCompany(BaseModel):
     name: str
     website: str | None = None
     domain: str | None = None
+    discovery_confidence: Annotated[float, Field(ge=0.0, le=1.0)]
+    discovery_reason: str = Field(min_length=1)
+    supporting_urls: list[str] = Field(max_length=3)
 
 
 class ExtractedEvidence(BaseModel):

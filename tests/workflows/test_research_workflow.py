@@ -24,7 +24,9 @@ from virtual_company.workflows.research.nodes import (
     ResearchNodes,
 )
 from virtual_company.workflows.research.prompts import (
+    COMPANY_DISCOVERY_PROMPT,
     SEARCH_QUERY_PROMPT,
+    company_discovery_system_prompt,
     search_query_system_prompt,
 )
 
@@ -178,6 +180,18 @@ def campaign() -> Campaign:
     )
 
 
+def discovered_company(name: str, **values: object) -> DiscoveredCompany:
+    """Build structured discovery output with realistic transient provenance."""
+    payload = {
+        "name": name,
+        "discovery_confidence": 0.8,
+        "discovery_reason": "Supplied search evidence supports further investigation.",
+        "supporting_urls": [],
+    }
+    payload.update(values)
+    return DiscoveredCompany(**payload)
+
+
 def test_discovery_query_prompt_defines_company_discovery_semantics() -> None:
     prompt = search_query_system_prompt().lower()
 
@@ -196,17 +210,38 @@ def test_discovery_query_schema_rejects_more_than_five_queries() -> None:
         GeneratedSearchQueries(queries=[f"query {index}" for index in range(12)])
 
 
+def test_company_discovery_prompt_prioritizes_quality_over_quota() -> None:
+    prompt = company_discovery_system_prompt().lower()
+
+    assert COMPANY_DISCOVERY_PROMPT.version == "v2"
+    assert "compare plausible companies" in prompt
+    assert "source quality" in prompt
+    assert "unknown size must not disqualify" in prompt
+    assert "do not verify technology criteria" in prompt
+    assert "up to the campaign target count, not a quota" in prompt
+    assert "return fewer candidates or none" in prompt
+    assert "do not invent companies, websites, domains, or supporting urls" in prompt
+    assert "states material uncertainty" in prompt
+
+
 @pytest.mark.asyncio
 async def test_successful_workflow_persists_deduplicated_campaign_companies() -> None:
     model = campaign()
     research = ResearchServiceFake()
     llm = LLMFake(
         companies=[
-            DiscoveredCompany(
-                name="Acme", website="https://www.acme.example", domain="acme.example"
+            discovered_company(
+                "Acme",
+                website="https://www.acme.example",
+                domain="acme.example",
+                supporting_urls=["https://acme.example/jobs"],
             ),
-            DiscoveredCompany(name="Acme duplicate", domain="www.acme.example"),
-            DiscoveredCompany(name="Beta", domain="beta.example"),
+            discovered_company(
+                "Acme duplicate",
+                domain="www.acme.example",
+                supporting_urls=["https://acme.example/jobs/"],
+            ),
+            discovered_company("Beta", domain="beta.example"),
         ]
     )
     search = WebSearchFake(
@@ -248,7 +283,7 @@ async def test_existing_company_is_reused_and_existing_target_is_not_duplicated(
     workflow = ResearchWorkflow(
         campaigns=CampaignServiceFake(model),
         research=research,
-        llm=LLMFake(companies=[DiscoveredCompany(name="Acme", domain="acme.example")]),
+        llm=LLMFake(companies=[discovered_company("Acme", domain="acme.example")]),
         web_search=WebSearchFake(),
     )
 
@@ -337,6 +372,73 @@ async def test_multiple_queries_are_concurrent_deduplicated_and_bounded() -> Non
 
 
 @pytest.mark.asyncio
+async def test_discovery_keeps_fewer_strong_candidates_and_validates_provenance() -> None:
+    model = campaign()
+    model.target_count = 3
+    source_a = "https://industry.example/acme"
+    source_b = "https://report.example/beta"
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=ResearchServiceFake(),
+        llm=LLMFake(
+            companies=[
+                discovered_company(
+                    "Acme",
+                    discovery_confidence=0.93,
+                    discovery_reason=(
+                        "Two credible sources identify Acme as an Australian payments fintech; "
+                        "size is unknown."
+                    ),
+                    supporting_urls=[source_a, "https://invented.example/acme"],
+                ),
+                discovered_company(
+                    "Beta",
+                    discovery_confidence=0.86,
+                    discovery_reason="A credible report identifies Beta as an Australian fintech.",
+                    supporting_urls=[source_b],
+                ),
+            ]
+        ),
+        web_search=WebSearchFake(),
+    )
+
+    discovered = await nodes.discover_companies(  # type: ignore[arg-type]
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "search_results": [
+                SearchResult(title="Acme profile", url=source_a),
+                SearchResult(title="Beta report", url=source_b),
+            ],
+        }
+    )
+
+    companies = discovered["discovered_companies"]
+    assert [company.name for company in companies] == ["Acme", "Beta"]
+    assert len(companies) == 2
+    assert companies[0].discovery_confidence == 0.93
+    assert "size is unknown" in companies[0].discovery_reason
+    assert companies[0].supporting_urls == [source_a]
+    assert companies[1].supporting_urls == [source_b]
+
+
+@pytest.mark.asyncio
+async def test_discovery_allows_zero_candidates() -> None:
+    model = campaign()
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=ResearchServiceFake(),
+        llm=LLMFake(companies=[]),
+        web_search=WebSearchFake(),
+    )
+
+    discovered = await nodes.discover_companies(  # type: ignore[arg-type]
+        {"campaign": CampaignCriteria.model_validate(model), "search_results": []}
+    )
+
+    assert discovered["discovered_companies"] == []
+
+
+@pytest.mark.asyncio
 async def test_company_queries_and_sources_are_separated_deduplicated_and_bounded() -> None:
     model = campaign()
     acme_id, beta_id = uuid4(), uuid4()
@@ -402,7 +504,7 @@ async def test_company_source_failure_marks_existing_research_run_failed() -> No
     workflow = ResearchWorkflow(
         campaigns=CampaignServiceFake(model),
         research=research,
-        llm=LLMFake(companies=[DiscoveredCompany(name="Acme", domain="acme.example")]),
+        llm=LLMFake(companies=[discovered_company("Acme", domain="acme.example")]),
         web_search=CompanySearchFailureFake(),
     )
 
