@@ -19,7 +19,9 @@ from virtual_company.config import Settings, get_settings
 from virtual_company.observability.logging import configure_logging
 
 logger = logging.getLogger(__name__)
-_context: ContextVar[dict[str, str] | None] = ContextVar("observability_context", default=None)
+_context: ContextVar[dict[str, str] | None] = ContextVar(
+    "observability_context", default=None
+)
 
 
 class Observability:
@@ -40,7 +42,10 @@ class Observability:
             return
         if settings.otel_enabled:
             resource = Resource.create(
-                {SERVICE_NAME: settings.otel_service_name, "deployment.environment": settings.environment}
+                {
+                    SERVICE_NAME: settings.otel_service_name,
+                    "deployment.environment": settings.environment,
+                }
             )
             provider = TracerProvider(resource=resource)
             trace.set_tracer_provider(provider)
@@ -61,19 +66,26 @@ class Observability:
 
     @staticmethod
     def _langfuse_configured(settings: Settings) -> bool:
-        return settings.langfuse_public_key is not None and settings.langfuse_secret_key is not None
+        return (
+            settings.langfuse_public_key is not None
+            and settings.langfuse_secret_key is not None
+        )
 
     def bind(self, **values: str | None) -> None:
         """Attach business correlation fields to subsequent events in this task."""
         current = dict(_context.get() or {})
-        current.update({key: value for key, value in values.items() if value is not None})
+        current.update(
+            {key: value for key, value in values.items() if value is not None}
+        )
         _context.set(current)
 
     @contextmanager
     def context(self, **values: str | None) -> Generator[None, None, None]:
         """Temporarily enrich correlated telemetry without leaking values to later work."""
         current = dict(_context.get() or {})
-        current.update({key: value for key, value in values.items() if value is not None})
+        current.update(
+            {key: value for key, value in values.items() if value is not None}
+        )
         token = _context.set(current)
         try:
             yield
@@ -82,11 +94,16 @@ class Observability:
 
     def event(self, name: str, **context: Any) -> None:
         """Emit a structured, metadata-only application event."""
-        merged = {**(_context.get() or {}), **{key: value for key, value in context.items() if value is not None}}
+        merged = {
+            **(_context.get() or {}),
+            **{key: value for key, value in context.items() if value is not None},
+        }
         logger.info(name, extra={"context": merged})
 
     @contextmanager
-    def span(self, name: str, *, as_type: str = "span", **attributes: Any) -> Generator[Any, None, None]:
+    def span(
+        self, name: str, *, as_type: str = "span", **attributes: Any
+    ) -> Generator[Any, None, None]:
         """Create a correlated OTel span and optional Langfuse observation."""
         merged = {**(_context.get() or {}), **attributes}
         started = time.perf_counter()
@@ -103,7 +120,12 @@ class Observability:
                     observation.update(level="ERROR", status_message=str(error))
                     raise
                 finally:
-                    observation.update(metadata={**merged, "duration_ms": int((time.perf_counter() - started) * 1000)})
+                    observation.update(
+                        metadata={
+                            **merged,
+                            "duration_ms": int((time.perf_counter() - started) * 1000),
+                        }
+                    )
             return
         with self._tracer.start_as_current_span(name) as span:
             for key, value in merged.items():
@@ -141,28 +163,52 @@ class Observability:
     def _create_instruments(self) -> None:
         self._instruments = {
             "research_runs_total": self._meter.create_counter("research_runs_total"),
-            "research_run_failures_total": self._meter.create_counter("research_run_failures_total"),
-            "research_run_duration_seconds": self._meter.create_histogram("research_run_duration_seconds"),
+            "research_run_failures_total": self._meter.create_counter(
+                "research_run_failures_total"
+            ),
+            "research_run_duration_seconds": self._meter.create_histogram(
+                "research_run_duration_seconds"
+            ),
             "llm_requests_total": self._meter.create_counter("llm_requests_total"),
-            "llm_request_failures_total": self._meter.create_counter("llm_request_failures_total"),
-            "llm_request_duration_seconds": self._meter.create_histogram("llm_request_duration_seconds"),
-            "llm_input_tokens_total": self._meter.create_counter("llm_input_tokens_total"),
-            "llm_output_tokens_total": self._meter.create_counter("llm_output_tokens_total"),
-            "companies_discovered_total": self._meter.create_counter("companies_discovered_total"),
+            "llm_request_failures_total": self._meter.create_counter(
+                "llm_request_failures_total"
+            ),
+            "llm_request_duration_seconds": self._meter.create_histogram(
+                "llm_request_duration_seconds"
+            ),
+            "llm_input_tokens_total": self._meter.create_counter(
+                "llm_input_tokens_total"
+            ),
+            "llm_output_tokens_total": self._meter.create_counter(
+                "llm_output_tokens_total"
+            ),
+            "companies_discovered_total": self._meter.create_counter(
+                "companies_discovered_total"
+            ),
+            "company_candidates_extracted_total": self._meter.create_counter(
+                "company_candidates_extracted_total"
+            ),
+            "company_candidates_aggregated_total": self._meter.create_counter(
+                "company_candidates_aggregated_total"
+            ),
             "company_research_queries_generated_total": self._meter.create_counter(
                 "company_research_queries_generated_total"
             ),
             "company_research_sources_found_total": self._meter.create_counter(
                 "company_research_sources_found_total"
             ),
-            "web_search_requests_total": self._meter.create_counter("web_search_requests_total"),
+            "web_search_requests_total": self._meter.create_counter(
+                "web_search_requests_total"
+            ),
             "web_search_request_failures_total": self._meter.create_counter(
                 "web_search_request_failures_total"
             ),
             "web_search_request_duration_seconds": self._meter.create_histogram(
                 "web_search_request_duration_seconds"
             ),
-            "web_search_results_total": self._meter.create_counter("web_search_results_total"),
+            "web_search_results_total": self._meter.create_counter(
+                "web_search_results_total"
+            ),
         }
 
 

@@ -28,7 +28,9 @@ class ResearchWorkflow:
         *,
         campaigns: CampaignService,
         research: ResearchService,
-        llm: LLMProvider,
+        research_llm: LLMProvider | None = None,
+        extraction_llm: LLMProvider | None = None,
+        llm: LLMProvider | None = None,
         web_search: WebSearchTool,
         settings: Settings | None = None,
     ) -> None:
@@ -36,6 +38,8 @@ class ResearchWorkflow:
         self._nodes = ResearchNodes(
             campaigns=campaigns,
             research=research,
+            research_llm=research_llm,
+            extraction_llm=extraction_llm,
             llm=llm,
             web_search=web_search,
             web_search_max_results=resolved_settings.web_search_max_results,
@@ -59,7 +63,9 @@ class ResearchWorkflow:
         observability = get_observability()
         observability.bind(campaign_id=str(campaign_id), workflow="company_research")
         observability.event("research_run_started")
-        observability.record("research_runs_total", status="started", workflow="company_research")
+        observability.record(
+            "research_runs_total", status="started", workflow="company_research"
+        )
         started = perf_counter()
         try:
             with observability.span("research_workflow", workflow="company_research"):
@@ -70,6 +76,8 @@ class ResearchWorkflow:
                         "research_run_id": None,
                         "queries": [],
                         "search_results": [],
+                        "extracted_company_candidates": [],
+                        "aggregated_company_candidates": [],
                         "discovered_companies": [],
                         "companies_found": 0,
                         "research_companies": [],
@@ -79,19 +87,29 @@ class ResearchWorkflow:
                     }
                 )
         except Exception as error:
-            observability.record("research_runs_total", status="failed", workflow="company_research")
-            observability.record("research_run_failures_total", workflow="company_research")
+            observability.record(
+                "research_runs_total", status="failed", workflow="company_research"
+            )
+            observability.record(
+                "research_run_failures_total", workflow="company_research"
+            )
             observability.event("research_run_failed", error_type=type(error).__name__)
             raise
         research_run_id = state["research_run_id"]
         if research_run_id is None:
             raise ValueError("Research workflow completed without a research run")
         observability.bind(research_run_id=str(research_run_id))
-        observability.record("research_runs_total", status="completed", workflow="company_research")
         observability.record(
-            "research_run_duration_seconds", perf_counter() - started, workflow="company_research"
+            "research_runs_total", status="completed", workflow="company_research"
         )
-        observability.event("research_run_completed", companies_found=state["companies_found"])
+        observability.record(
+            "research_run_duration_seconds",
+            perf_counter() - started,
+            workflow="company_research",
+        )
+        observability.event(
+            "research_run_completed", companies_found=state["companies_found"]
+        )
         return ResearchWorkflowResult(
             research_run_id=research_run_id,
             status="COMPLETED",
@@ -106,12 +124,30 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     graph.add_node("create_research_run", nodes.create_research_run)
     graph.add_node(
         "generate_search_queries",
-        _with_failure_handling(nodes.generate_search_queries, "generate_search_queries", research),
+        _with_failure_handling(
+            nodes.generate_search_queries, "generate_search_queries", research
+        ),
     )
-    graph.add_node("search_web", _with_failure_handling(nodes.search_web, "search_web", research))
     graph.add_node(
-        "discover_companies",
-        _with_failure_handling(nodes.discover_companies, "discover_companies", research),
+        "search_web", _with_failure_handling(nodes.search_web, "search_web", research)
+    )
+    graph.add_node(
+        "extract_company_candidates",
+        _with_failure_handling(
+            nodes.extract_company_candidates, "extract_company_candidates", research
+        ),
+    )
+    graph.add_node(
+        "aggregate_company_candidates",
+        _with_failure_handling(
+            nodes.aggregate_company_candidates, "aggregate_company_candidates", research
+        ),
+    )
+    graph.add_node(
+        "rank_company_candidates",
+        _with_failure_handling(
+            nodes.rank_company_candidates, "rank_company_candidates", research
+        ),
     )
     graph.add_node(
         "persist_companies",
@@ -131,14 +167,18 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     )
     graph.add_node(
         "complete_research_run",
-        _with_failure_handling(nodes.complete_research_run, "complete_research_run", research),
+        _with_failure_handling(
+            nodes.complete_research_run, "complete_research_run", research
+        ),
     )
     graph.add_edge(START, "load_campaign")
     graph.add_edge("load_campaign", "create_research_run")
     graph.add_edge("create_research_run", "generate_search_queries")
     graph.add_edge("generate_search_queries", "search_web")
-    graph.add_edge("search_web", "discover_companies")
-    graph.add_edge("discover_companies", "persist_companies")
+    graph.add_edge("search_web", "extract_company_candidates")
+    graph.add_edge("extract_company_candidates", "aggregate_company_candidates")
+    graph.add_edge("aggregate_company_candidates", "rank_company_candidates")
+    graph.add_edge("rank_company_candidates", "persist_companies")
     graph.add_edge("persist_companies", "generate_company_queries")
     graph.add_edge("generate_company_queries", "search_company_sources")
     graph.add_edge("search_company_sources", "complete_research_run")
@@ -146,7 +186,9 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     return graph.compile()
 
 
-def _with_failure_handling(node: Node, node_name: str, research: ResearchService) -> Node:
+def _with_failure_handling(
+    node: Node, node_name: str, research: ResearchService
+) -> Node:
     """Mark an already-created run failed before propagating a node exception."""
 
     async def wrapped(state: ResearchWorkflowState) -> dict[str, object]:

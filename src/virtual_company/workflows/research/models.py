@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from virtual_company.research.models import DiscoveredCompany
+from virtual_company.research.models import DiscoveredCompany, SearchResult
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -34,8 +34,41 @@ class GeneratedSearchQueries(BaseModel):
     queries: list[NonEmptyString] = Field(min_length=1, max_length=5)
 
 
+class ExtractedCompanyIdentity(BaseModel):
+    """Identity fields the extraction model may identify from one search result."""
+
+    name: NonEmptyString
+    website: str | None = None
+    domain: str | None = None
+
+
+class ExtractedCompanyIdentities(BaseModel):
+    """Structured LLM output for recall-oriented per-result extraction."""
+
+    companies: list[ExtractedCompanyIdentity] = Field(default_factory=list)
+
+
+class ExtractedCompanyCandidate(ExtractedCompanyIdentity):
+    """One extracted company mention with application-assigned source provenance."""
+
+    source_url: str
+    source_title: str | None = None
+    source_snippet: str | None = None
+
+
+class AggregatedCompanyCandidate(BaseModel):
+    """One conservatively merged candidate and its transient discovery support."""
+
+    name: NonEmptyString
+    website: str | None = None
+    domain: str | None = None
+    mention_count: int = Field(ge=1)
+    supporting_urls: list[str] = Field(default_factory=list)
+    supporting_results: list[SearchResult] = Field(default_factory=list)
+
+
 class DiscoveredCompanies(BaseModel):
-    """Structured LLM output of campaign-relevant companies."""
+    """Structured ranking output of campaign-relevant companies."""
 
     companies: list[DiscoveredCompany] = Field(default_factory=list)
 

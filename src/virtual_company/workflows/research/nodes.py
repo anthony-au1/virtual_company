@@ -8,24 +8,34 @@ from uuid import UUID
 from virtual_company.llm.base import LLMProvider
 from virtual_company.observability import get_observability
 from virtual_company.research.models import DiscoveredCompany, SearchResult
-from virtual_company.research.normalization import normalize_domain, normalize_url
+from virtual_company.research.normalization import (
+    normalize_company_name,
+    normalize_domain,
+    normalize_url,
+)
 from virtual_company.services import CampaignService, ResearchService
 from virtual_company.tools.web_search import WebSearchTool
 from virtual_company.workflows.research.models import (
+    AggregatedCompanyCandidate,
     CampaignCriteria,
     DiscoveredCompanies,
+    ExtractedCompanyCandidate,
+    ExtractedCompanyIdentities,
     GeneratedCompanySearchQueries,
     GeneratedSearchQueries,
     ResearchCompany,
 )
 from virtual_company.workflows.research.prompts import (
-    COMPANY_DISCOVERY_PROMPT,
     COMPANY_QUERY_PROMPT,
+    EXTRACT_COMPANY_CANDIDATES_PROMPT,
+    RANK_COMPANY_CANDIDATES_PROMPT,
     SEARCH_QUERY_PROMPT,
-    company_discovery_system_prompt,
-    company_discovery_user_prompt,
     company_query_system_prompt,
     company_query_user_prompt,
+    extract_company_candidates_system_prompt,
+    extract_company_candidates_user_prompt,
+    rank_company_candidates_system_prompt,
+    rank_company_candidates_user_prompt,
     search_query_system_prompt,
     search_query_user_prompt,
 )
@@ -44,7 +54,9 @@ class ResearchNodes:
         *,
         campaigns: CampaignService,
         research: ResearchService,
-        llm: LLMProvider,
+        research_llm: LLMProvider | None = None,
+        extraction_llm: LLMProvider | None = None,
+        llm: LLMProvider | None = None,
         web_search: WebSearchTool,
         web_search_max_results: int = 10,
         web_search_max_total_results: int = 30,
@@ -57,7 +69,10 @@ class ResearchNodes:
     ) -> None:
         self._campaigns = campaigns
         self._research = research
-        self._llm = llm
+        self._research_llm = research_llm or llm
+        self._extraction_llm = extraction_llm or llm
+        if self._research_llm is None or self._extraction_llm is None:
+            raise ValueError("Research and extraction LLM providers are required")
         self._web_search = web_search
         self._web_search_max_results = web_search_max_results
         self._web_search_max_total_results = web_search_max_total_results
@@ -65,8 +80,12 @@ class ResearchNodes:
         self._discovery_candidate_multiplier = discovery_candidate_multiplier
         self._discovery_candidate_max = discovery_candidate_max
         self._company_research_query_count = company_research_query_count
-        self._company_research_max_results_per_query = company_research_max_results_per_query
-        self._company_research_max_results_per_company = company_research_max_results_per_company
+        self._company_research_max_results_per_query = (
+            company_research_max_results_per_query
+        )
+        self._company_research_max_results_per_company = (
+            company_research_max_results_per_company
+        )
 
     async def load_campaign(
         self, state: ResearchWorkflowState
@@ -93,12 +112,14 @@ class ResearchNodes:
             prompt_name=SEARCH_QUERY_PROMPT.name,
             prompt_version=SEARCH_QUERY_PROMPT.version,
         )
-        response = await self._llm.generate_structured(
+        response = await self._research_llm.generate_structured(
             system_prompt=search_query_system_prompt(),
             user_prompt=search_query_user_prompt(campaign),
             response_model=GeneratedSearchQueries,
         )
-        get_observability().event("search_queries_generated", query_count=len(response.queries))
+        get_observability().event(
+            "search_queries_generated", query_count=len(response.queries)
+        )
         return {"queries": response.queries}
 
     async def search_web(
@@ -109,9 +130,13 @@ class ResearchNodes:
 
         async def search_query(query: str) -> list[SearchResult]:
             async with semaphore:
-                return await self._web_search.search(query, limit=self._web_search_max_results)
+                return await self._web_search.search(
+                    query, limit=self._web_search_max_results
+                )
 
-        result_groups = await asyncio.gather(*(search_query(query) for query in state["queries"]))
+        result_groups = await asyncio.gather(
+            *(search_query(query) for query in state["queries"])
+        )
         seen_urls: set[str] = set()
         results: list[SearchResult] = []
         for result_group in result_groups:
@@ -124,41 +149,165 @@ class ResearchNodes:
                         return {"search_results": results}
         return {"search_results": results}
 
-    async def discover_companies(
+    async def extract_company_candidates(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, list[ExtractedCompanyCandidate]]:
+        """Extract all plausible mentions with explicit attention per search result."""
+        campaign = self._campaign(state)
+        observability = get_observability()
+        semaphore = asyncio.Semaphore(self._web_search_concurrency)
+
+        async def extract_from_result(
+            result: SearchResult,
+        ) -> list[ExtractedCompanyCandidate]:
+            async with semaphore:
+                with observability.context(
+                    prompt_name=EXTRACT_COMPANY_CANDIDATES_PROMPT.name,
+                    prompt_version=EXTRACT_COMPANY_CANDIDATES_PROMPT.version,
+                ):
+                    response = await self._extraction_llm.generate_structured(
+                        system_prompt=extract_company_candidates_system_prompt(),
+                        user_prompt=extract_company_candidates_user_prompt(
+                            campaign, result
+                        ),
+                        response_model=ExtractedCompanyIdentities,
+                    )
+            return [
+                ExtractedCompanyCandidate(
+                    **candidate.model_dump(),
+                    source_url=result.url,
+                    source_title=result.title,
+                    source_snippet=result.snippet,
+                )
+                for candidate in response.companies
+            ]
+
+        groups = await asyncio.gather(
+            *(extract_from_result(result) for result in state["search_results"])
+        )
+        candidates = [candidate for group in groups for candidate in group]
+        context = {
+            "search_result_count": len(state["search_results"]),
+            "extracted_mention_count": len(candidates),
+            "extracted_candidate_names": [candidate.name for candidate in candidates],
+        }
+        with observability.span("extract_company_candidates", **context):
+            observability.event("company_candidates_extracted", **context)
+        observability.record(
+            "company_candidates_extracted_total",
+            len(candidates),
+            workflow="company_research",
+        )
+        return {"extracted_company_candidates": candidates}
+
+    async def aggregate_company_candidates(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, list[AggregatedCompanyCandidate]]:
+        """Conservatively merge obvious identities without dropping single mentions."""
+        grouped: dict[str, AggregatedCompanyCandidate] = {}
+        for mention in state["extracted_company_candidates"]:
+            domain = normalize_domain(mention.domain or mention.website)
+            key = (
+                f"domain:{domain}"
+                if domain
+                else f"name:{normalize_company_name(mention.name)}"
+            )
+            result = SearchResult(
+                title=mention.source_title or mention.name,
+                url=mention.source_url,
+                snippet=mention.source_snippet,
+            )
+            existing = grouped.get(key)
+            if existing is None:
+                grouped[key] = AggregatedCompanyCandidate(
+                    name=mention.name,
+                    website=mention.website,
+                    domain=domain,
+                    mention_count=1,
+                    supporting_urls=[mention.source_url],
+                    supporting_results=[result],
+                )
+                continue
+            urls = list(existing.supporting_urls)
+            results = list(existing.supporting_results)
+            if mention.source_url not in urls:
+                urls.append(mention.source_url)
+                results.append(result)
+            grouped[key] = existing.model_copy(
+                update={
+                    "website": existing.website or mention.website,
+                    "domain": existing.domain or domain,
+                    "mention_count": existing.mention_count + 1,
+                    "supporting_urls": urls,
+                    "supporting_results": results,
+                }
+            )
+        candidates = list(grouped.values())
+        observability = get_observability()
+        context = {
+            "extracted_mention_count": len(state["extracted_company_candidates"]),
+            "unique_candidate_count": len(candidates),
+            "aggregated_candidates": [
+                {
+                    "name": candidate.name,
+                    "mentions": candidate.mention_count,
+                    "sources": len(candidate.supporting_urls),
+                }
+                for candidate in candidates
+            ],
+        }
+        with observability.span("aggregate_company_candidates", **context):
+            observability.event("company_candidates_aggregated", **context)
+        observability.record(
+            "company_candidates_aggregated_total",
+            len(candidates),
+            workflow="company_research",
+        )
+        return {"aggregated_company_candidates": candidates}
+
+    async def rank_company_candidates(
         self, state: ResearchWorkflowState
     ) -> dict[str, list[DiscoveredCompany]]:
-        """Extract a bounded pool of plausible companies without persisting them."""
+        """Rank the aggregate pool and limit only downstream investigation."""
         campaign = self._campaign(state)
         candidate_limit = self._discovery_candidate_limit(campaign.target_count)
-        get_observability().bind(
-            prompt_name=COMPANY_DISCOVERY_PROMPT.name,
-            prompt_version=COMPANY_DISCOVERY_PROMPT.version,
-        )
-        response = await self._llm.generate_structured(
-            system_prompt=company_discovery_system_prompt(),
-            user_prompt=company_discovery_user_prompt(
-                campaign, state["search_results"], candidate_limit
-            ),
-            response_model=DiscoveredCompanies,
-        )
-        companies = self._deduplicate_companies(
-            self._validate_supporting_urls(response.companies, state["search_results"])
-        )[:candidate_limit]
+        ranking_candidates = [
+            candidate.model_copy(
+                update={"supporting_results": candidate.supporting_results[:3]}
+            )
+            for candidate in state["aggregated_company_candidates"]
+        ]
         observability = get_observability()
-        supporting_source_count = sum(len(company.supporting_urls) for company in companies)
-        selection_context = {
-            "campaign_target_count": campaign.target_count,
+        with observability.context(
+            prompt_name=RANK_COMPANY_CANDIDATES_PROMPT.name,
+            prompt_version=RANK_COMPANY_CANDIDATES_PROMPT.version,
+        ):
+            response = await self._research_llm.generate_structured(
+                system_prompt=rank_company_candidates_system_prompt(),
+                user_prompt=rank_company_candidates_user_prompt(
+                    campaign, ranking_candidates, candidate_limit
+                ),
+                response_model=DiscoveredCompanies,
+            )
+        companies = self._validated_ranked_companies(
+            response.companies, state["aggregated_company_candidates"], candidate_limit
+        )
+        context = {
+            "unique_candidate_count": len(ranking_candidates),
+            "ranked_candidate_count": len(companies),
             "discovery_candidate_limit": candidate_limit,
-            "discovered_candidate_count": len(companies),
-            "selected_company_names": [company.name for company in companies],
-            "supporting_source_count": supporting_source_count,
+            "ranked_candidate_names": [company.name for company in companies],
         }
-        with observability.span("discovery_candidate_selection", **selection_context):
-            observability.event("companies_discovered", **selection_context)
-        get_observability().record("companies_discovered_total", len(companies), workflow="company_research")
+        with observability.span("rank_company_candidates", **context):
+            observability.event("company_candidates_ranked", **context)
+        observability.record(
+            "companies_discovered_total", len(companies), workflow="company_research"
+        )
         return {"discovered_companies": companies}
 
-    async def persist_companies(self, state: ResearchWorkflowState) -> dict[str, object]:
+    async def persist_companies(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, object]:
         """Persist discovered companies and their campaign associations."""
         persisted = await self._research.persist_companies(
             campaign_id=state["campaign_id"],
@@ -189,7 +338,7 @@ class ResearchNodes:
                 prompt_name=COMPANY_QUERY_PROMPT.name,
                 prompt_version=COMPANY_QUERY_PROMPT.version,
             ):
-                response = await self._llm.generate_structured(
+                response = await self._research_llm.generate_structured(
                     system_prompt=company_query_system_prompt(),
                     user_prompt=company_query_user_prompt(campaign, company),
                     response_model=GeneratedCompanySearchQueries,
@@ -259,10 +408,14 @@ class ResearchNodes:
                     count,
                     workflow="company_research",
                 )
-                observability.event("company_research_sources_found", result_count=count)
+                observability.event(
+                    "company_research_sources_found", result_count=count
+                )
         return {"company_search_results": results_by_company}
 
-    async def complete_research_run(self, state: ResearchWorkflowState) -> dict[str, str]:
+    async def complete_research_run(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, str]:
         """Mark the run complete and commit all pending workflow persistence."""
         research_run_id = state["research_run_id"]
         if research_run_id is None:
@@ -288,43 +441,50 @@ class ResearchNodes:
         )
 
     @staticmethod
-    def _deduplicate_companies(
+    def _validated_ranked_companies(
         companies: list[DiscoveredCompany],
+        candidates: list[AggregatedCompanyCandidate],
+        candidate_limit: int,
     ) -> list[DiscoveredCompany]:
-        """Deduplicate by normalized domain, falling back to normalized company name."""
-        deduplicated = []
+        """Keep ranked selections and provenance constrained to aggregate evidence."""
+        by_domain = {
+            domain: candidate
+            for candidate in candidates
+            if (domain := normalize_domain(candidate.domain or candidate.website))
+            is not None
+        }
+        by_name = {
+            normalize_company_name(candidate.name): candidate
+            for candidate in candidates
+        }
+        selected: list[DiscoveredCompany] = []
         seen: set[str] = set()
         for company in companies:
             domain = normalize_domain(company.domain or company.website)
-            key = f"domain:{domain}" if domain else f"name:{company.name.strip().casefold()}"
-            if key not in seen:
-                seen.add(key)
-                deduplicated.append(company)
-        return deduplicated
-
-    @staticmethod
-    def _validate_supporting_urls(
-        companies: list[DiscoveredCompany], search_results: list[SearchResult]
-    ) -> list[DiscoveredCompany]:
-        """Keep only provenance URLs present in the supplied discovery results."""
-        source_urls: dict[str, str] = {}
-        for result in search_results:
-            try:
-                source_urls.setdefault(normalize_url(result.url), result.url)
-            except ValueError:
+            candidate = by_domain.get(domain) if domain else None
+            candidate = candidate or by_name.get(normalize_company_name(company.name))
+            if candidate is None:
                 continue
-
-        validated_companies = []
-        for company in companies:
-            supporting_urls = []
-            for url in company.supporting_urls:
-                try:
-                    source_url = source_urls.get(normalize_url(url))
-                except ValueError:
-                    source_url = None
-                if source_url is not None and source_url not in supporting_urls:
-                    supporting_urls.append(source_url)
-            validated_companies.append(
-                company.model_copy(update={"supporting_urls": supporting_urls})
+            key = normalize_domain(
+                candidate.domain or candidate.website
+            ) or normalize_company_name(candidate.name)
+            if key in seen:
+                continue
+            supporting_urls = [
+                url
+                for url in company.supporting_urls
+                if url in candidate.supporting_urls
+            ]
+            selected.append(
+                DiscoveredCompany(
+                    name=candidate.name,
+                    website=candidate.website,
+                    domain=candidate.domain,
+                    discovery_reason=company.discovery_reason,
+                    supporting_urls=supporting_urls,
+                )
             )
-        return validated_companies
+            seen.add(key)
+            if len(selected) == candidate_limit:
+                break
+        return selected

@@ -49,6 +49,11 @@ def get_llm_provider() -> LLMProvider:
     return InstrumentedLLMProvider(LLMRegistry().for_role(LLMRole.RESEARCH))
 
 
+def get_extraction_llm_provider() -> LLMProvider:
+    """Build the configured extraction-role LLM provider."""
+    return InstrumentedLLMProvider(LLMRegistry().for_role(LLMRole.EXTRACTION))
+
+
 def get_web_search_tool() -> WebSearchTool:
     """Build the single web-search provider selected by application configuration."""
     return create_web_search_tool()
@@ -59,6 +64,7 @@ def get_research_workflow(session: SessionDependency) -> ResearchWorkflow:
     return ResearchWorkflow(
         campaigns=CampaignService(session),
         research=ResearchService(session),
-        llm=get_llm_provider(),
+        research_llm=get_llm_provider(),
+        extraction_llm=get_extraction_llm_provider(),
         web_search=get_web_search_tool(),
     )

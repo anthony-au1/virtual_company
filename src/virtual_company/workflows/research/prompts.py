@@ -6,7 +6,11 @@ import json
 from dataclasses import dataclass
 
 from virtual_company.research.models import SearchResult
-from virtual_company.workflows.research.models import CampaignCriteria, ResearchCompany
+from virtual_company.workflows.research.models import (
+    AggregatedCompanyCandidate,
+    CampaignCriteria,
+    ResearchCompany,
+)
 
 
 @dataclass(frozen=True)
@@ -18,7 +22,8 @@ class PromptIdentity:
 
 
 SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
-COMPANY_DISCOVERY_PROMPT = PromptIdentity("discover_companies", "v3")
+EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v1")
+RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v1")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v1")
 
 
@@ -49,42 +54,63 @@ def search_query_user_prompt(campaign: CampaignCriteria) -> str:
     return f"Campaign criteria:\n{campaign.model_dump_json()}"
 
 
-def company_discovery_system_prompt() -> str:
-    """Return instructions for evidence-bound, recall-oriented candidate discovery."""
+def extract_company_candidates_system_prompt() -> str:
+    """Return instructions for recall-oriented company entity extraction."""
     return (
-        "Your task is CANDIDATE DISCOVERY, not final qualification. Using only the supplied "
-        "search results, identify plausible companies worth further investigation for the campaign. "
-        "Favor recall over strict qualification: a company does not need every campaign criterion "
-        "proven in these results. Include a company when there is reasonable evidence that it is a "
-        "real, identifiable organization; operates in or is meaningfully associated with the target "
-        "market; plausibly belongs to the target industry or business category; and is worth additional "
-        "research. Return up to the supplied discovery candidate limit, not the campaign target count. "
-        "Rank stronger candidates first using industry relevance, geographic relevance, clear company "
-        "identity, source credibility, company-size compatibility when known, and multiple-source "
-        "support when available. These are ranking signals, not hard gates. Company size is useful when "
-        "available, but unknown size is not a reason to exclude an otherwise strong candidate. Technology "
-        "information is not required during discovery; technologies, exact employee counts, architecture, "
-        "and hiring signals belong to downstream investigation. Prefer official company websites, official "
-        "industry associations, government or trade bodies, credible industry reports, reputable business "
-        "publications, and credible company directories over generic SEO pages, social-media posts, "
-        "ambiguous snippets, or unrelated mentions. Do not include clearly irrelevant entities, companies "
-        "from clearly wrong countries, non-company entities, generic websites, or ambiguous names without "
-        "useful context. Do not invent companies, websites, domains, or supporting URLs. Return a website "
-        "or domain only when the supplied results reasonably support it as official. For every selected "
-        "company, provide a concise reason it is worth investigating, including material uncertainty, and "
-        "up to three supporting URLs copied from the supplied results."
+        "Your task is COMPANY ENTITY EXTRACTION. Extract all reasonably identifiable companies from "
+        "the supplied single search result that could plausibly be relevant to the campaign's target "
+        "market and industry. This stage optimizes for RECALL. Do not rank companies, select only the "
+        "strongest companies, apply the campaign target count, or apply a downstream discovery candidate "
+        "limit. A company does not need employee count, technology stack, official website, or other "
+        "detailed campaign criteria established. Include a company when it is a reasonably identifiable "
+        "real company, the supplied result associates it with the target geography or market, and it "
+        "plausibly belongs to the target industry or business category. Technology criteria and exact "
+        "employee count are not required. Do not invent companies, websites, or domains. Do not extract "
+        "article publishers merely because they published an article; universities; government bodies; "
+        "industry associations; generic websites; products unless they clearly represent a company; "
+        "unrelated incidental companies; or clearly wrong-country companies with no meaningful target-market "
+        "association. Return identity fields only."
     )
 
 
-def company_discovery_user_prompt(
-    campaign: CampaignCriteria, search_results: list[SearchResult], candidate_limit: int
+def extract_company_candidates_user_prompt(
+    campaign: CampaignCriteria, search_result: SearchResult
 ) -> str:
-    """Serialize campaign criteria and evidence for company discovery."""
-    evidence = [result.model_dump() for result in search_results]
+    """Serialize campaign criteria and one source result for extraction."""
+    return (
+        f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"
+        f"Search result:\n{json.dumps(search_result.model_dump())}"
+    )
+
+
+def rank_company_candidates_system_prompt() -> str:
+    """Return instructions for evidence-bound candidate prioritization."""
+    return (
+        "You are ranking an already extracted set of company candidates. Do not discover additional "
+        "companies. Do not remove a company merely because detailed downstream criteria are currently "
+        "unknown. Select the companies most worth additional investigation for the campaign. Rank using "
+        "clear target-industry relevance, meaningful target geography or market connection, supporting "
+        "source quality, identity clarity, multiple independent mentions when available, and company-size "
+        "compatibility only when supplied evidence supports it. Unknown company size and technology stack "
+        "are not negatives. Do not use your own unstated knowledge to disqualify a company; technology "
+        "verification belongs to downstream investigation. Prefer plausible, well-supported companies. "
+        "Return up to the supplied discovery candidate limit. For each selected candidate, provide a concise "
+        "discovery reason and zero to three supporting URLs chosen only from that candidate's supplied "
+        "supporting URLs."
+    )
+
+
+def rank_company_candidates_user_prompt(
+    campaign: CampaignCriteria,
+    candidates: list[AggregatedCompanyCandidate],
+    candidate_limit: int,
+) -> str:
+    """Serialize compact, aggregated discovery evidence for ranking."""
+    evidence = [candidate.model_dump() for candidate in candidates]
     return (
         f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"
         f"Discovery candidate limit: {candidate_limit}\n\n"
-        f"Search results:\n{json.dumps(evidence)}"
+        f"Aggregated company candidates:\n{json.dumps(evidence)}"
     )
 
 
@@ -100,7 +126,9 @@ def company_query_system_prompt() -> str:
     )
 
 
-def company_query_user_prompt(campaign: CampaignCriteria, company: ResearchCompany) -> str:
+def company_query_user_prompt(
+    campaign: CampaignCriteria, company: ResearchCompany
+) -> str:
     """Serialize campaign criteria and one company for source-query generation."""
     return (
         f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"

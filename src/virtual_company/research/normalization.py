@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlsplit, urlunsplit
+
+_LEGAL_SUFFIX_PATTERN = re.compile(
+    r"(?:,?\s+)(?:pty\.?\s+ltd\.?|proprietary\s+limited|limited|ltd\.?)$",
+    re.IGNORECASE,
+)
 
 
 def normalize_domain(value: str | None) -> str | None:
@@ -33,3 +39,9 @@ def normalize_url(value: str) -> str:
         netloc = f"{hostname}:{port}"
     path = parsed.path.rstrip("/")
     return urlunsplit((scheme, netloc, path, parsed.query, ""))
+
+
+def normalize_company_name(value: str) -> str:
+    """Return a conservative comparison key for obvious company-name variants."""
+    normalized = " ".join(value.strip().casefold().split())
+    return _LEGAL_SUFFIX_PATTERN.sub("", normalized).strip()
