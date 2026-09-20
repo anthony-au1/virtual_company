@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -92,6 +93,53 @@ class GeneratedCompanySearchQueries(BaseModel):
     """Structured LLM output used to locate candidate evidence sources for one company."""
 
     queries: list[NonEmptyString] = Field(min_length=1, max_length=6)
+
+
+class CompanyPageAttribution(BaseModel):
+    """Structured decision that gates a fetched page before evidence extraction."""
+
+    attributable: bool
+    reason: NonEmptyString
+
+
+class CoverageStatus(StrEnum):
+    FOUND = "found"
+    MISSING = "missing"
+
+
+class CriterionCoverage(BaseModel):
+    criterion: EvidenceCriterion
+    subject: str | None = None
+    status: CoverageStatus
+    evidence_ids: list[UUID] = Field(default_factory=list)
+
+
+class CoverageSummary(BaseModel):
+    total: int
+    found: int
+    missing: int
+
+
+class InvestigationStopReason(StrEnum):
+    COVERAGE_COMPLETE = "coverage_complete"
+    MAX_ROUNDS = "max_rounds"
+    NO_PROGRESS = "no_progress"
+
+
+class CompanyInvestigationState(BaseModel):
+    company_id: UUID
+    round: int = Field(default=0, ge=0)
+    coverage: list[CriterionCoverage] = Field(default_factory=list)
+    attempted_urls: set[str] = Field(default_factory=set)
+    missing_before: int | None = None
+    new_evidence_count: int = 0
+    stopped: bool = False
+    stop_reason: InvestigationStopReason | None = None
+
+    @property
+    def summary(self) -> CoverageSummary:
+        found = sum(item.status is CoverageStatus.FOUND for item in self.coverage)
+        return CoverageSummary(total=len(self.coverage), found=found, missing=len(self.coverage) - found)
 
 
 class ValidatedEvidence(BaseModel):

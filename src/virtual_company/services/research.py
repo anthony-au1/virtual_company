@@ -38,6 +38,7 @@ class PersistedEvidence:
 
     created_count: int
     skipped_count: int
+    created_by_company: dict[UUID, int]
 
 
 class ResearchService:
@@ -122,6 +123,7 @@ class ResearchService:
         seen = {self._evidence_key(item) for item in existing}
         created_count = 0
         skipped_count = 0
+        created_by_company: dict[UUID, int] = {}
         for item in evidence:
             if item.research_run_id != research_run_id:
                 raise ValueError("Evidence must belong to the active research run")
@@ -132,7 +134,16 @@ class ResearchService:
             await self._evidence.create(item)
             seen.add(key)
             created_count += 1
-        return PersistedEvidence(created_count=created_count, skipped_count=skipped_count)
+            created_by_company[item.company_id] = created_by_company.get(item.company_id, 0) + 1
+        return PersistedEvidence(
+            created_count=created_count,
+            skipped_count=skipped_count,
+            created_by_company=created_by_company,
+        )
+
+    async def list_evidence_for_run(self, research_run_id: UUID) -> list[Evidence]:
+        """Load all accumulated Evidence for one research execution."""
+        return await self._evidence.list_by_research_run_id(research_run_id)
 
     async def fail_run(self, research_run_id: UUID, error: str) -> ResearchRun:
         """Discard uncommitted work and persist a failed run."""

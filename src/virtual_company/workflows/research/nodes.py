@@ -24,16 +24,22 @@ from virtual_company.research.normalization import (
     normalize_url,
 )
 from virtual_company.services import CampaignService, ResearchService
+from virtual_company.services.coverage import assess_evidence_coverage
 from virtual_company.tools.web_fetch import WebFetchError, WebFetchTool
 from virtual_company.tools.web_search import WebSearchTool
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
+    CompanyInvestigationState,
+    CompanyPageAttribution,
+    CoverageStatus,
+    CriterionCoverage,
     DiscoveredCompanies,
     ExtractedCompanyCandidate,
     ExtractedCompanyIdentities,
     GeneratedCompanySearchQueries,
     GeneratedSearchQueries,
+    InvestigationStopReason,
     ResearchCompany,
     ValidatedEvidence,
 )
@@ -41,18 +47,24 @@ from virtual_company.workflows.research.prompts import (
     COMPANY_QUERY_PROMPT,
     EXTRACT_COMPANY_CANDIDATES_PROMPT,
     EXTRACT_COMPANY_EVIDENCE_PROMPT,
+    FOLLOWUP_COMPANY_QUERY_PROMPT,
     RANK_COMPANY_CANDIDATES_PROMPT,
     SEARCH_QUERY_PROMPT,
+    VALIDATE_COMPANY_PAGE_ATTRIBUTION_PROMPT,
     company_query_system_prompt,
     company_query_user_prompt,
     extract_company_candidates_system_prompt,
     extract_company_candidates_user_prompt,
     extract_company_evidence_system_prompt,
     extract_company_evidence_user_prompt,
+    followup_company_query_system_prompt,
+    followup_company_query_user_prompt,
     rank_company_candidates_system_prompt,
     rank_company_candidates_user_prompt,
     search_query_system_prompt,
     search_query_user_prompt,
+    validate_company_page_attribution_system_prompt,
+    validate_company_page_attribution_user_prompt,
 )
 from virtual_company.workflows.research.state import ResearchWorkflowState
 
@@ -83,6 +95,9 @@ class ResearchNodes:
         company_research_max_results_per_query: int = 5,
         company_research_max_results_per_company: int = 15,
         company_research_max_fetches_per_company: int = 5,
+        company_research_max_investigation_rounds: int = 2,
+        company_research_followup_search_queries_per_company: int = 3,
+        company_research_followup_max_fetches_per_company: int = 3,
         web_fetch_concurrency: int = 5,
         evidence_extraction_concurrency: int = 3,
         evidence_max_excerpt_chars: int = 1_000,
@@ -109,6 +124,15 @@ class ResearchNodes:
         )
         self._company_research_max_fetches_per_company = (
             company_research_max_fetches_per_company
+        )
+        self._company_research_max_investigation_rounds = (
+            company_research_max_investigation_rounds
+        )
+        self._company_research_followup_search_queries_per_company = (
+            company_research_followup_search_queries_per_company
+        )
+        self._company_research_followup_max_fetches_per_company = (
+            company_research_followup_max_fetches_per_company
         )
         self._web_fetch_concurrency = web_fetch_concurrency
         self._evidence_extraction_concurrency = evidence_extraction_concurrency
@@ -349,6 +373,11 @@ class ResearchNodes:
         return {
             "companies_found": persisted.companies_found,
             "research_companies": research_companies,
+            "active_company_ids": [company.id for company in research_companies],
+            "investigations": {
+                company.id: CompanyInvestigationState(company_id=company.id)
+                for company in research_companies
+            },
         }
 
     async def generate_company_queries(
@@ -361,6 +390,7 @@ class ResearchNodes:
         for company in state["research_companies"]:
             with observability.context(
                 company_id=str(company.id),
+                company_name=company.name,
                 company_domain=company.domain,
                 prompt_name=COMPANY_QUERY_PROMPT.name,
                 prompt_version=COMPANY_QUERY_PROMPT.version,
@@ -382,6 +412,68 @@ class ResearchNodes:
                 )
         return {"company_research_queries": company_queries}
 
+    async def generate_followup_queries(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, object, bool]:
+        """Generate targeted searches for each active company's missing criteria."""
+        campaign = self._campaign(state)
+        investigations = dict(state["investigations"])
+        queries_by_company: dict[UUID, list[str]] = {}
+        observability = get_observability()
+        for company in self._active_companies(state):
+            investigation = investigations[company.id]
+            missing = [
+                item for item in investigation.coverage
+                if item.status is CoverageStatus.MISSING
+            ]
+            next_round = investigation.round + 1
+            with observability.context(
+                company_id=str(company.id),
+                company_name=company.name,
+                company_domain=company.domain,
+                prompt_name=FOLLOWUP_COMPANY_QUERY_PROMPT.name,
+                prompt_version=FOLLOWUP_COMPANY_QUERY_PROMPT.version,
+                investigation_round=str(next_round),
+            ):
+                response = await self._research_llm.generate_structured(
+                    system_prompt=followup_company_query_system_prompt(),
+                    user_prompt=followup_company_query_user_prompt(
+                        campaign, company, missing
+                    ),
+                    response_model=GeneratedCompanySearchQueries,
+                )
+                queries = response.queries[
+                    : self._company_research_followup_search_queries_per_company
+                ]
+                queries_by_company[company.id] = queries
+                observability.event(
+                    "followup_company_queries_generated",
+                    investigation_round=next_round,
+                    missing_criteria=[
+                        f"{item.criterion.value}/{item.subject}" if item.subject
+                        else item.criterion.value
+                        for item in missing
+                    ],
+                    query_count=len(queries),
+                )
+                observability.record(
+                    "followup_queries_generated_total",
+                    len(queries),
+                    workflow="company_research",
+                )
+            investigations[company.id] = investigation.model_copy(
+                update={
+                    "round": next_round,
+                    "missing_before": len(missing),
+                    "new_evidence_count": 0,
+                }
+            )
+        return {
+            "company_research_queries": queries_by_company,
+            "investigations": investigations,
+            "adaptive_mode": True,
+        }
+
     async def search_company_sources(
         self, state: ResearchWorkflowState
     ) -> dict[str, dict[UUID, list[SearchResult]]]:
@@ -389,9 +481,10 @@ class ResearchNodes:
         observability = get_observability()
         semaphore = asyncio.Semaphore(self._web_search_concurrency)
         company_queries = state["company_research_queries"]
+        active_companies = self._active_companies(state)
         work = [
             (company, query)
-            for company in state["research_companies"]
+            for company in active_companies
             for query in company_queries.get(company.id, [])
         ]
 
@@ -410,10 +503,15 @@ class ResearchNodes:
             *(search_company_query(company, query) for company, query in work)
         )
         results_by_company: dict[UUID, list[SearchResult]] = {
-            company.id: [] for company in state["research_companies"]
+            company.id: [] for company in active_companies
         }
         seen_urls_by_company: dict[UUID, set[str]] = {
-            company.id: set() for company in state["research_companies"]
+            company.id: set(
+                state.get("investigations", {})
+                .get(company.id, CompanyInvestigationState(company_id=company.id))
+                .attempted_urls
+            )
+            for company in active_companies
         }
         for (company, _query), result_group in zip(work, result_groups, strict=True):
             results = results_by_company[company.id]
@@ -421,11 +519,14 @@ class ResearchNodes:
             for result in result_group:
                 if len(results) >= self._company_research_max_results_per_company:
                     break
-                normalized_url = normalize_url(result.url)
+                try:
+                    normalized_url = normalize_fetch_url(result.url)
+                except ValueError:
+                    continue
                 if normalized_url not in seen_urls:
                     seen_urls.add(normalized_url)
                     results.append(result)
-        for company in state["research_companies"]:
+        for company in active_companies:
             with observability.context(
                 company_id=str(company.id), company_domain=company.domain
             ):
@@ -446,8 +547,20 @@ class ResearchNodes:
         """Deterministically select a small, useful source set per company."""
         selected: dict[UUID, list[SearchResult]] = {}
         observability = get_observability()
-        for company in state["research_companies"]:
-            seen_urls: set[str] = set()
+        investigations = dict(state.get("investigations", {}))
+        active_companies = self._active_companies(state)
+        adaptive_mode = state.get("adaptive_mode", False)
+        fetch_limit = (
+            self._company_research_followup_max_fetches_per_company
+            if adaptive_mode
+            else self._company_research_max_fetches_per_company
+        )
+        for company in active_companies:
+            seen_urls: set[str] = set(
+                investigations.get(
+                    company.id, CompanyInvestigationState(company_id=company.id)
+                ).attempted_urls
+            )
             unique_results: list[tuple[int, SearchResult]] = []
             for index, result in enumerate(
                 state["company_search_results"].get(company.id, [])
@@ -463,15 +576,27 @@ class ResearchNodes:
             ordered = sorted(
                 unique_results,
                 key=lambda item: (
-                    -self._source_selection_score(item[1], company),
+                    -self._source_selection_score(
+                        item[1],
+                        company,
+                        investigations.get(
+                            company.id,
+                            CompanyInvestigationState(company_id=company.id),
+                        ).coverage if adaptive_mode else [],
+                    ),
                     item[0],
                 ),
             )
-            sources = [
-                result
-                for _, result in ordered[: self._company_research_max_fetches_per_company]
-            ]
+            sources = [result for _, result in ordered[:fetch_limit]]
             selected[company.id] = sources
+            investigation = investigations.get(
+                company.id, CompanyInvestigationState(company_id=company.id)
+            )
+            attempted = set(investigation.attempted_urls)
+            attempted.update(normalize_fetch_url(source.url) for source in sources)
+            investigations[company.id] = investigation.model_copy(
+                update={"attempted_urls": attempted}
+            )
             with observability.context(
                 company_id=str(company.id), company_domain=company.domain
             ):
@@ -486,13 +611,16 @@ class ResearchNodes:
                     workflow="company_research",
                 )
         context = {
-            "company_count": len(state["research_companies"]),
+            "company_count": len(active_companies),
             "selected_source_count": sum(len(sources) for sources in selected.values()),
-            "max_fetches_per_company": self._company_research_max_fetches_per_company,
+            "max_fetches_per_company": fetch_limit,
         }
         with observability.span("select_company_sources", **context):
             observability.event("company_sources_selection_completed", **context)
-        return {"selected_company_sources": selected}
+        return {
+            "selected_company_sources": selected,
+            "investigations": investigations,
+        }
 
     async def fetch_company_sources(
         self, state: ResearchWorkflowState
@@ -501,7 +629,7 @@ class ResearchNodes:
         observability = get_observability()
         work = [
             (company.id, index, result)
-            for company in state["research_companies"]
+            for company in self._active_companies(state)
             for index, result in enumerate(
                 state["selected_company_sources"].get(company.id, [])
             )
@@ -548,7 +676,7 @@ class ResearchNodes:
                 )
                 if (company.id, index) in successes
             ]
-            for company in state["research_companies"]
+            for company in self._active_companies(state)
         }
         context = {
             "selected_source_count": len(work),
@@ -569,10 +697,13 @@ class ResearchNodes:
             raise ValueError("Research run was not created")
         observability = get_observability()
         semaphore = asyncio.Semaphore(self._evidence_extraction_concurrency)
+        pages_by_company = state.get(
+            "attributable_company_web_pages", state["company_web_pages"]
+        )
         work = [
             (company, page)
-            for company in state["research_companies"]
-            for page in state["company_web_pages"].get(company.id, [])
+            for company in self._active_companies(state)
+            for page in pages_by_company.get(company.id, [])
         ]
 
         async def extract_page(
@@ -662,11 +793,11 @@ class ResearchNodes:
         for name, value in context.items():
             observability.record(f"{name}_total", value, workflow="company_research")
         observability.record("evidence_extraction_calls_total", len(work), workflow="company_research")
-        for company in state["research_companies"]:
+        for company in self._active_companies(state):
             company_evidence = [
                 item for item in deduplicated if item.company_id == company.id
             ]
-            fetched_pages = state["company_web_pages"].get(company.id, [])
+            fetched_pages = pages_by_company.get(company.id, [])
             selected_count = len(
                 state.get("selected_company_sources", {}).get(company.id, [])
             )
@@ -684,6 +815,68 @@ class ResearchNodes:
                     validated_evidence_count=len(company_evidence),
                 )
         return {"validated_evidence": deduplicated}
+
+    async def validate_company_page_attribution(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, dict[UUID, list[WebPage]]]:
+        """Reject fetched pages that cannot be tied to their intended company."""
+        observability = get_observability()
+        semaphore = asyncio.Semaphore(self._evidence_extraction_concurrency)
+        work = [
+            (company, page)
+            for company in self._active_companies(state)
+            for page in state["company_web_pages"].get(company.id, [])
+        ]
+
+        async def validate(
+            company: ResearchCompany, page: WebPage
+        ) -> tuple[UUID, WebPage, bool]:
+            with observability.context(
+                company_id=str(company.id),
+                source_url=page.url,
+                prompt_name=VALIDATE_COMPANY_PAGE_ATTRIBUTION_PROMPT.name,
+                prompt_version=VALIDATE_COMPANY_PAGE_ATTRIBUTION_PROMPT.version,
+            ):
+                try:
+                    async with semaphore:
+                        result = await self._extraction_llm.generate_structured(
+                            system_prompt=validate_company_page_attribution_system_prompt(),
+                            user_prompt=validate_company_page_attribution_user_prompt(
+                                company, page
+                            ),
+                            response_model=CompanyPageAttribution,
+                        )
+                except Exception as error:  # noqa: BLE001 - reject one uncertain page
+                    observability.event(
+                        "company_page_attribution_failed",
+                        error_type=type(error).__name__,
+                    )
+                    return company.id, page, False
+                observability.event(
+                    "company_page_attribution_validated",
+                    attributable=result.attributable,
+                    reason=result.reason,
+                )
+                return company.id, page, result.attributable
+
+        results = await asyncio.gather(*(validate(company, page) for company, page in work))
+        attributable = {
+            company.id: [] for company in self._active_companies(state)
+        }
+        for company_id, page, accepted in results:
+            if accepted:
+                attributable[company_id].append(page)
+        accepted_count = sum(len(pages) for pages in attributable.values())
+        observability.event(
+            "company_page_attribution_completed",
+            pages_considered=len(work),
+            attributable_pages=accepted_count,
+            rejected_pages=len(work) - accepted_count,
+        )
+        observability.record(
+            "attributable_pages_total", accepted_count, workflow="company_research"
+        )
+        return {"attributable_company_web_pages": attributable}
 
     async def persist_evidence(self, state: ResearchWorkflowState) -> dict[str, object]:
         """Persist validated evidence with run-scoped duplicate protection."""
@@ -716,10 +909,107 @@ class ResearchNodes:
         observability.record(
             "evidence_items_persisted_total", outcome.created_count, workflow="company_research"
         )
-        return {}
+        investigations = dict(state.get("investigations", {}))
+        created_by_company = getattr(outcome, "created_by_company", None)
+        if created_by_company is None:
+            created_by_company = {}
+            for item in evidence[: outcome.created_count]:
+                created_by_company[item.company_id] = (
+                    created_by_company.get(item.company_id, 0) + 1
+                )
+        for company_id, count in created_by_company.items():
+            investigation = investigations.get(
+                company_id, CompanyInvestigationState(company_id=company_id)
+            )
+            investigations[company_id] = investigation.model_copy(
+                update={"new_evidence_count": count}
+            )
+        return {"investigations": investigations}
+
+    async def check_evidence_coverage(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, object]:
+        """Recompute coverage and deterministic stop decisions for every company."""
+        campaign = self._campaign(state)
+        research_run_id = state["research_run_id"]
+        if research_run_id is None:
+            raise ValueError("Research run was not created")
+        evidence = await self._research.list_evidence_for_run(research_run_id)
+        investigations = dict(state["investigations"])
+        active_company_ids: list[UUID] = []
+        observability = get_observability()
+        for company in state["research_companies"]:
+            previous = investigations[company.id]
+            if previous.stopped:
+                continue
+            coverage = assess_evidence_coverage(
+                campaign,
+                evidence,
+                company_id=company.id,
+                research_run_id=research_run_id,
+            )
+            missing = sum(item.status is CoverageStatus.MISSING for item in coverage)
+            stop_reason: InvestigationStopReason | None = None
+            if missing == 0:
+                stop_reason = InvestigationStopReason.COVERAGE_COMPLETE
+            elif (
+                previous.round > 0
+                and previous.missing_before == missing
+                and previous.new_evidence_count == 0
+            ):
+                stop_reason = InvestigationStopReason.NO_PROGRESS
+            elif previous.round >= self._company_research_max_investigation_rounds:
+                stop_reason = InvestigationStopReason.MAX_ROUNDS
+            investigation = previous.model_copy(
+                update={
+                    "coverage": coverage,
+                    "stopped": stop_reason is not None,
+                    "stop_reason": stop_reason,
+                }
+            )
+            investigations[company.id] = investigation
+            if stop_reason is None:
+                active_company_ids.append(company.id)
+            found_items = [
+                item for item in coverage if item.status is CoverageStatus.FOUND
+            ]
+            missing_items = [
+                item for item in coverage if item.status is CoverageStatus.MISSING
+            ]
+            with observability.context(
+                company_id=str(company.id), company_name=company.name
+            ):
+                observability.event(
+                    "company_evidence_coverage_checked",
+                    investigation_round=previous.round,
+                    coverage_total=len(coverage),
+                    coverage_found=len(found_items),
+                    coverage_missing=len(missing_items),
+                    found=[item.model_dump(mode="json") for item in found_items],
+                    missing=[item.model_dump(mode="json") for item in missing_items],
+                    new_evidence_items=previous.new_evidence_count,
+                    stop_reason=stop_reason.value if stop_reason else None,
+                )
+            observability.record(
+                "coverage_criteria_total", len(coverage), workflow="company_research"
+            )
+            observability.record(
+                "coverage_found_total", len(found_items), workflow="company_research"
+            )
+            observability.record(
+                "coverage_missing_total", len(missing_items), workflow="company_research"
+            )
+        return {
+            "investigations": investigations,
+            "active_company_ids": active_company_ids,
+        }
 
     @staticmethod
-    def _source_selection_score(result: SearchResult, company: ResearchCompany) -> int:
+    def _source_selection_score(
+        result: SearchResult,
+        company: ResearchCompany,
+        coverage: list[CriterionCoverage] | None = None,
+    ) -> int:
         """Rank clear first-party and research-relevant result signals conservatively."""
         try:
             parsed = urlsplit(result.url)
@@ -739,6 +1029,18 @@ class ResearchNodes:
             score += 15
         if any(token in path or token in text for token in ("blog", "technology", "product")):
             score += 8
+        missing = [
+            item for item in (coverage or [])
+            if item.status is CoverageStatus.MISSING
+        ]
+        for item in missing:
+            subject_match = bool(item.subject and item.subject.casefold() in text)
+            size_match = item.criterion is EvidenceCriterion.COMPANY_SIZE and any(
+                token in text or token in path
+                for token in ("employee", "people", "team", "about", "company-size")
+            )
+            if subject_match or size_match:
+                score += 12
         if result.snippet:
             score += 3
         if path in {"", "/"} and not result.snippet:
@@ -770,6 +1072,19 @@ class ResearchNodes:
         if campaign is None:
             raise ValueError("Campaign was not loaded")
         return campaign
+
+    @staticmethod
+    def _active_companies(state: ResearchWorkflowState) -> list[ResearchCompany]:
+        active_ids = set(
+            state.get(
+                "active_company_ids",
+                [company.id for company in state["research_companies"]],
+            )
+        )
+        return [
+            company for company in state["research_companies"]
+            if company.id in active_ids
+        ]
 
     def _discovery_candidate_limit(self, target_count: int) -> int:
         """Return the bounded investigation pool size for a campaign."""

@@ -200,6 +200,21 @@ class Observability:
             "company_research_sources_selected_total": self._meter.create_counter(
                 "company_research_sources_selected_total"
             ),
+            "followup_queries_generated_total": self._meter.create_counter(
+                "followup_queries_generated_total"
+            ),
+            "attributable_pages_total": self._meter.create_counter(
+                "attributable_pages_total"
+            ),
+            "coverage_criteria_total": self._meter.create_counter(
+                "coverage_criteria_total"
+            ),
+            "coverage_found_total": self._meter.create_counter(
+                "coverage_found_total"
+            ),
+            "coverage_missing_total": self._meter.create_counter(
+                "coverage_missing_total"
+            ),
             "web_search_requests_total": self._meter.create_counter(
                 "web_search_requests_total"
             ),

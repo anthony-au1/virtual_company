@@ -25,12 +25,17 @@ from virtual_company.workflows.research.graph import ResearchWorkflow
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
+    CompanyInvestigationState,
+    CompanyPageAttribution,
+    CoverageStatus,
+    CriterionCoverage,
     DiscoveredCompanies,
     ExtractedCompanyCandidate,
     ExtractedCompanyIdentities,
     ExtractedCompanyIdentity,
     GeneratedCompanySearchQueries,
     GeneratedSearchQueries,
+    InvestigationStopReason,
     ResearchCompany,
 )
 from virtual_company.workflows.research.nodes import (
@@ -57,6 +62,7 @@ class ResearchServiceFake:
     def __init__(self) -> None:
         self.runs: dict[UUID, SimpleNamespace] = {}
         self.targets: list[str] = []
+        self.evidence: list[SimpleNamespace] = []
 
     async def create_run(self, campaign_id: UUID) -> SimpleNamespace:
         run = SimpleNamespace(id=uuid4(), campaign_id=campaign_id, status="RUNNING")
@@ -81,7 +87,19 @@ class ResearchServiceFake:
         self.runs[run_id].status = "COMPLETED"
 
     async def persist_evidence(self, *, research_run_id: UUID, evidence: list[object]) -> SimpleNamespace:
-        return SimpleNamespace(created_count=len(evidence), skipped_count=0)
+        created_by_company: dict[UUID, int] = {}
+        for item in evidence:
+            stored = SimpleNamespace(id=uuid4(), **item.model_dump())
+            self.evidence.append(stored)
+            created_by_company[item.company_id] = created_by_company.get(item.company_id, 0) + 1
+        return SimpleNamespace(
+            created_count=len(evidence),
+            skipped_count=0,
+            created_by_company=created_by_company,
+        )
+
+    async def list_evidence_for_run(self, run_id: UUID) -> list[SimpleNamespace]:
+        return [item for item in self.evidence if item.research_run_id == run_id]
 
     async def fail_run(self, run_id: UUID, error: str) -> None:
         self.runs[run_id].status = "FAILED"
@@ -117,9 +135,14 @@ class ExtractionFake:
         self.active = 0
         self.max_active = 0
 
-    async def generate_structured(self, **kwargs: object) -> ExtractedCompanyIdentities:
+    async def generate_structured(self, **kwargs: object) -> object:
         prompt = str(kwargs["user_prompt"])
         self.prompts.append(prompt)
+        model = kwargs["response_model"]
+        if model is CompanyPageAttribution:
+            return CompanyPageAttribution(attributable=True, reason="The page concerns the company.")
+        if model is ExtractedEvidenceItems:
+            return ExtractedEvidenceItems(evidence=[])
         self.active += 1
         self.max_active = max(self.max_active, self.active)
         try:
@@ -326,7 +349,7 @@ async def test_workflow_investigates_only_ranked_companies() -> None:
         extraction_llm=extraction,
         web_search=SearchFake(results),
         web_fetch=FetchFake({}),
-        settings=Settings(),
+        settings=Settings(company_research_max_investigation_rounds=0),
     )
     await workflow.run(model.id)
     assert service.targets == [f"Candidate {i}" for i in range(9)]
@@ -547,3 +570,182 @@ async def test_evidence_persistence_is_idempotent_within_one_research_run() -> N
     assert (first.created_count, first.skipped_count) == (1, 1)
     assert (second.created_count, second.skipped_count) == (0, 1)
     assert repository.items == [item]
+
+
+@pytest.mark.asyncio
+async def test_followup_queries_contain_only_missing_criteria() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    research = ResearchFake([])
+    nodes = make_nodes(ExtractionFake({}), research, model)
+    coverage = [
+        CriterionCoverage(
+            criterion=EvidenceCriterion.TARGET_MARKET,
+            subject="Australia",
+            status=CoverageStatus.FOUND,
+            evidence_ids=[uuid4()],
+        ),
+        CriterionCoverage(
+            criterion=EvidenceCriterion.TECHNOLOGY,
+            subject="Kafka",
+            status=CoverageStatus.MISSING,
+        ),
+    ]
+    output = await nodes.generate_followup_queries(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "investigations": {
+                company.id: CompanyInvestigationState(
+                    company_id=company.id, coverage=coverage
+                )
+            },
+        }
+    )  # type: ignore[arg-type]
+    prompt = research.prompts[-1]
+    missing_section = prompt.split("Missing criteria:", 1)[1]
+    assert "Kafka" in missing_section
+    assert "Australia" not in missing_section
+    assert output["investigations"][company.id].round == 1
+
+
+@pytest.mark.asyncio
+async def test_attempted_urls_are_not_selected_or_fetched_again() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    old_url = "https://acme.example/jobs/123"
+    new_url = "https://acme.example/jobs/456"
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    output = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "adaptive_mode": True,
+            "company_search_results": {
+                company.id: [
+                    SearchResult(title="Old", url=old_url),
+                    SearchResult(title="New", url=new_url),
+                ]
+            },
+            "investigations": {
+                company.id: CompanyInvestigationState(
+                    company_id=company.id, attempted_urls={old_url}
+                )
+            },
+        }
+    )  # type: ignore[arg-type]
+    assert [item.url for item in output["selected_company_sources"][company.id]] == [new_url]
+    assert output["investigations"][company.id].attempted_urls == {old_url, new_url}
+
+
+@pytest.mark.asyncio
+async def test_coverage_stops_companies_independently() -> None:
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = ["Kafka"]
+    complete = ResearchCompany(id=uuid4(), name="Complete")
+    stalled = ResearchCompany(id=uuid4(), name="Stalled")
+    progressing = ResearchCompany(id=uuid4(), name="Progressing")
+    run_id = uuid4()
+    service = ResearchServiceFake()
+    service.evidence = [
+        SimpleNamespace(
+            id=uuid4(), company_id=complete.id, research_run_id=run_id,
+            criterion="technology", subject="Kafka"
+        )
+    ]
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=service,
+        research_llm=ResearchFake([]),
+        extraction_llm=ExtractionFake({}),
+        web_search=SearchFake([]),
+        web_fetch=FetchFake({}),
+        company_research_max_investigation_rounds=2,
+    )
+    output = await nodes.check_evidence_coverage(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_run_id": run_id,
+            "research_companies": [complete, stalled, progressing],
+            "investigations": {
+                complete.id: CompanyInvestigationState(company_id=complete.id),
+                stalled.id: CompanyInvestigationState(
+                    company_id=stalled.id, round=1, missing_before=1,
+                    new_evidence_count=0
+                ),
+                progressing.id: CompanyInvestigationState(
+                    company_id=progressing.id, round=1, missing_before=2,
+                    new_evidence_count=1
+                ),
+            },
+        }
+    )  # type: ignore[arg-type]
+    states = output["investigations"]
+    assert states[complete.id].stop_reason is InvestigationStopReason.COVERAGE_COMPLETE
+    assert states[stalled.id].stop_reason is InvestigationStopReason.NO_PROGRESS
+    assert states[progressing.id].stop_reason is None
+    assert output["active_company_ids"] == [progressing.id]
+
+
+@pytest.mark.asyncio
+async def test_coverage_stops_at_maximum_adaptive_rounds() -> None:
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = ["Kafka"]
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    run_id = uuid4()
+    service = ResearchServiceFake()
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=service,
+        research_llm=ResearchFake([]),
+        extraction_llm=ExtractionFake({}),
+        web_search=SearchFake([]),
+        web_fetch=FetchFake({}),
+        company_research_max_investigation_rounds=2,
+    )
+    output = await nodes.check_evidence_coverage(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_run_id": run_id,
+            "research_companies": [company],
+            "investigations": {
+                company.id: CompanyInvestigationState(
+                    company_id=company.id,
+                    round=2,
+                    missing_before=2,
+                    new_evidence_count=1,
+                )
+            },
+        }
+    )  # type: ignore[arg-type]
+    investigation = output["investigations"][company.id]
+    assert investigation.stop_reason is InvestigationStopReason.MAX_ROUNDS
+    assert output["active_company_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_adaptive_pages_must_pass_attribution() -> None:
+    class AttributionFake:
+        async def generate_structured(self, **kwargs: object) -> CompanyPageAttribution:
+            return CompanyPageAttribution(
+                attributable=False, reason="The page belongs to another company."
+            )
+
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    page = WebPage(url="https://other.example/kafka", content="Other uses Kafka")
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._extraction_llm = AttributionFake()
+    output = await nodes.validate_company_page_attribution(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "company_web_pages": {company.id: [page]},
+        }
+    )  # type: ignore[arg-type]
+    assert output["attributable_company_web_pages"][company.id] == []

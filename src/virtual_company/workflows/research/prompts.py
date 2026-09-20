@@ -9,6 +9,7 @@ from virtual_company.research.models import SearchResult, WebPage
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
+    CriterionCoverage,
     ResearchCompany,
 )
 
@@ -26,6 +27,10 @@ EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates",
 RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v1")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v1")
 EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v1")
+FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity("generate_followup_company_queries", "v1")
+VALIDATE_COMPANY_PAGE_ATTRIBUTION_PROMPT = PromptIdentity(
+    "validate_company_page_attribution", "v1"
+)
 
 
 def search_query_system_prompt() -> str:
@@ -134,6 +139,52 @@ def company_query_user_prompt(
     return (
         f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"
         f"Company context:\n{company.model_dump_json()}"
+    )
+
+
+def followup_company_query_system_prompt() -> str:
+    """Return instructions for targeted searches for missing coverage only."""
+    return (
+        "Generate a small set of concise web-search queries designed to find source-grounded "
+        "evidence for ONLY the listed missing campaign criteria for this company. Include the "
+        "company name in every query. Combine related criteria when sensible. Prefer queries "
+        "likely to surface official careers, engineering, technical, company, or credible "
+        "business sources. Do not target already-found criteria except as necessary context. "
+        "Do not invent facts or assume a missing technology exists: each query is only a "
+        "research hypothesis. Return search queries only."
+    )
+
+
+def followup_company_query_user_prompt(
+    campaign: CampaignCriteria,
+    company: ResearchCompany,
+    missing: list[CriterionCoverage],
+) -> str:
+    """Serialize one company and only its missing coverage expectations."""
+    return (
+        f"Company:\n{company.model_dump_json()}\n\n"
+        f"Campaign context:\n{campaign.model_dump_json()}\n\n"
+        f"Missing criteria:\n{json.dumps([item.model_dump(mode='json') for item in missing])}"
+    )
+
+
+def validate_company_page_attribution_system_prompt() -> str:
+    """Return strict instructions for company/page identity validation."""
+    return (
+        "Decide whether the supplied page is attributable to the supplied company. Accept "
+        "official company pages and third-party pages whose content clearly concerns that "
+        "company. Reject pages about a different same-named company, incidental mentions, "
+        "generic listings without clear identity, or pages whose ownership cannot be established. "
+        "Use only the supplied company and page. Return the boolean decision and a concise reason."
+    )
+
+
+def validate_company_page_attribution_user_prompt(
+    company: ResearchCompany, page: WebPage
+) -> str:
+    return (
+        f"Company:\n{company.model_dump_json()}\n\n"
+        f"Page:\n{json.dumps(page.model_dump())}"
     )
 
 

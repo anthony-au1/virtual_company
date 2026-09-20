@@ -9,6 +9,7 @@ from virtual_company.research.models import DiscoveredCompany, SearchResult, Web
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
+    CompanyInvestigationState,
     ExtractedCompanyCandidate,
     ResearchCompany,
     ValidatedEvidence,
@@ -32,5 +33,9 @@ class ResearchWorkflowState(TypedDict):
     company_search_results: dict[UUID, list[SearchResult]]
     selected_company_sources: dict[UUID, list[SearchResult]]
     company_web_pages: dict[UUID, list[WebPage]]
+    attributable_company_web_pages: dict[UUID, list[WebPage]]
     validated_evidence: list[ValidatedEvidence]
+    investigations: dict[UUID, CompanyInvestigationState]
+    active_company_ids: list[UUID]
+    adaptive_mode: bool
     error: str | None

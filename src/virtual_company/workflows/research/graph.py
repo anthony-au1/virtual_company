@@ -60,6 +60,15 @@ class ResearchWorkflow:
             company_research_max_fetches_per_company=(
                 resolved_settings.company_research_max_fetches_per_company
             ),
+            company_research_max_investigation_rounds=(
+                resolved_settings.company_research_max_investigation_rounds
+            ),
+            company_research_followup_search_queries_per_company=(
+                resolved_settings.company_research_followup_search_queries_per_company
+            ),
+            company_research_followup_max_fetches_per_company=(
+                resolved_settings.company_research_followup_max_fetches_per_company
+            ),
             web_fetch_concurrency=resolved_settings.web_fetch_concurrency,
             evidence_extraction_concurrency=resolved_settings.evidence_extraction_concurrency,
             evidence_max_excerpt_chars=resolved_settings.evidence_max_excerpt_chars,
@@ -94,9 +103,14 @@ class ResearchWorkflow:
                         "company_search_results": {},
                         "selected_company_sources": {},
                         "company_web_pages": {},
+                        "attributable_company_web_pages": {},
                         "validated_evidence": [],
+                        "investigations": {},
+                        "active_company_ids": [],
+                        "adaptive_mode": False,
                         "error": None,
-                    }
+                    },
+                    config={"recursion_limit": 100},
                 )
         except Exception as error:
             observability.record(
@@ -190,6 +204,14 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         ),
     )
     graph.add_node(
+        "validate_company_page_attribution",
+        _with_failure_handling(
+            nodes.validate_company_page_attribution,
+            "validate_company_page_attribution",
+            research,
+        ),
+    )
+    graph.add_node(
         "extract_company_evidence",
         _with_failure_handling(
             nodes.extract_company_evidence, "extract_company_evidence", research
@@ -198,6 +220,18 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     graph.add_node(
         "persist_evidence",
         _with_failure_handling(nodes.persist_evidence, "persist_evidence", research),
+    )
+    graph.add_node(
+        "check_evidence_coverage",
+        _with_failure_handling(
+            nodes.check_evidence_coverage, "check_evidence_coverage", research
+        ),
+    )
+    graph.add_node(
+        "generate_followup_queries",
+        _with_failure_handling(
+            nodes.generate_followup_queries, "generate_followup_queries", research
+        ),
     )
     graph.add_node(
         "complete_research_run",
@@ -217,11 +251,26 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     graph.add_edge("generate_company_queries", "search_company_sources")
     graph.add_edge("search_company_sources", "select_company_sources")
     graph.add_edge("select_company_sources", "fetch_company_sources")
-    graph.add_edge("fetch_company_sources", "extract_company_evidence")
+    graph.add_edge("fetch_company_sources", "validate_company_page_attribution")
+    graph.add_edge("validate_company_page_attribution", "extract_company_evidence")
     graph.add_edge("extract_company_evidence", "persist_evidence")
-    graph.add_edge("persist_evidence", "complete_research_run")
+    graph.add_edge("persist_evidence", "check_evidence_coverage")
+    graph.add_conditional_edges(
+        "check_evidence_coverage",
+        route_investigation,
+        {
+            "follow_up": "generate_followup_queries",
+            "done": "complete_research_run",
+        },
+    )
+    graph.add_edge("generate_followup_queries", "search_company_sources")
     graph.add_edge("complete_research_run", END)
     return graph.compile()
+
+
+def route_investigation(state: ResearchWorkflowState) -> str:
+    """Continue only while at least one company remains independently active."""
+    return "follow_up" if state["active_company_ids"] else "done"
 
 
 def _with_failure_handling(
