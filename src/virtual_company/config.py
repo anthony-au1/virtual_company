@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     company_research_query_count: int = Field(default=5, ge=1, le=6)
     company_research_max_results_per_query: int = Field(default=5, ge=1, le=10)
     company_research_max_results_per_company: int = Field(default=15, ge=1)
+    company_research_max_fetches_per_company: int = Field(default=5, ge=1, le=20)
+    web_fetch_timeout_seconds: float = Field(default=15, gt=0, le=60)
+    web_fetch_max_response_bytes: int = Field(default=2_000_000, ge=1, le=10_000_000)
+    web_fetch_max_content_chars: int = Field(default=50_000, ge=1, le=200_000)
+    web_fetch_concurrency: int = Field(default=5, ge=1, le=20)
     tavily_api_key: SecretStr | None = None
     tavily_search_depth: Literal["basic", "advanced"] = "basic"
     exa_api_key: SecretStr | None = None

@@ -197,6 +197,9 @@ class Observability:
             "company_research_sources_found_total": self._meter.create_counter(
                 "company_research_sources_found_total"
             ),
+            "company_research_sources_selected_total": self._meter.create_counter(
+                "company_research_sources_selected_total"
+            ),
             "web_search_requests_total": self._meter.create_counter(
                 "web_search_requests_total"
             ),
@@ -208,6 +211,24 @@ class Observability:
             ),
             "web_search_results_total": self._meter.create_counter(
                 "web_search_results_total"
+            ),
+            "web_fetch_requests_total": self._meter.create_counter(
+                "web_fetch_requests_total"
+            ),
+            "web_fetch_failures_total": self._meter.create_counter(
+                "web_fetch_failures_total"
+            ),
+            "web_fetch_duration_seconds": self._meter.create_histogram(
+                "web_fetch_duration_seconds"
+            ),
+            "web_fetch_content_chars": self._meter.create_histogram(
+                "web_fetch_content_chars"
+            ),
+            "web_pages_fetched_total": self._meter.create_counter(
+                "web_pages_fetched_total"
+            ),
+            "web_pages_truncated_total": self._meter.create_counter(
+                "web_pages_truncated_total"
             ),
         }
 

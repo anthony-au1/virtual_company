@@ -46,5 +46,8 @@ Replace the provider/key prefix with `WEB_SEARCH_PROVIDER=exa EXA_API_KEY=...` t
 Company-specific source discovery runs after initial companies are persisted. For a manual
 end-to-end check, create a small campaign targeting 2–3 Australian fintech companies with
 Java and Spring criteria, then inspect the traces for `generate_company_queries` and
-`search_company_sources`. The latter should contain company-correlated provider searches
-and candidate URLs only; it does not fetch pages or create Evidence records.
+`search_company_sources`, `select_company_sources`, and `fetch_company_sources`. The latter
+fetches a bounded set of company-correlated candidate URLs into readable transient page text;
+it does not create Evidence records. Fetches are limited by `WEB_FETCH_TIMEOUT_SECONDS`,
+`WEB_FETCH_MAX_RESPONSE_BYTES`, `WEB_FETCH_MAX_CONTENT_CHARS`,
+`WEB_FETCH_CONCURRENCY`, and `COMPANY_RESEARCH_MAX_FETCHES_PER_COMPANY`.

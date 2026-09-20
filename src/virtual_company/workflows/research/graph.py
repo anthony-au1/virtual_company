@@ -12,6 +12,7 @@ from virtual_company.config import Settings, get_settings
 from virtual_company.llm.base import LLMProvider
 from virtual_company.observability import get_observability
 from virtual_company.services import CampaignService, ResearchService
+from virtual_company.tools.web_fetch import WebFetchTool
 from virtual_company.tools.web_search import WebSearchTool
 from virtual_company.workflows.research.models import ResearchWorkflowResult
 from virtual_company.workflows.research.nodes import ResearchNodes
@@ -32,6 +33,7 @@ class ResearchWorkflow:
         extraction_llm: LLMProvider | None = None,
         llm: LLMProvider | None = None,
         web_search: WebSearchTool,
+        web_fetch: WebFetchTool,
         settings: Settings | None = None,
     ) -> None:
         resolved_settings = settings or get_settings()
@@ -42,6 +44,7 @@ class ResearchWorkflow:
             extraction_llm=extraction_llm,
             llm=llm,
             web_search=web_search,
+            web_fetch=web_fetch,
             web_search_max_results=resolved_settings.web_search_max_results,
             web_search_max_total_results=resolved_settings.web_search_max_total_results,
             web_search_concurrency=resolved_settings.web_search_concurrency,
@@ -54,6 +57,10 @@ class ResearchWorkflow:
             company_research_max_results_per_company=(
                 resolved_settings.company_research_max_results_per_company
             ),
+            company_research_max_fetches_per_company=(
+                resolved_settings.company_research_max_fetches_per_company
+            ),
+            web_fetch_concurrency=resolved_settings.web_fetch_concurrency,
         )
         self._research = research
         self._graph = build_research_graph(self._nodes, research)
@@ -83,6 +90,8 @@ class ResearchWorkflow:
                         "research_companies": [],
                         "company_research_queries": {},
                         "company_search_results": {},
+                        "selected_company_sources": {},
+                        "company_web_pages": {},
                         "error": None,
                     }
                 )
@@ -166,6 +175,18 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         ),
     )
     graph.add_node(
+        "select_company_sources",
+        _with_failure_handling(
+            nodes.select_company_sources, "select_company_sources", research
+        ),
+    )
+    graph.add_node(
+        "fetch_company_sources",
+        _with_failure_handling(
+            nodes.fetch_company_sources, "fetch_company_sources", research
+        ),
+    )
+    graph.add_node(
         "complete_research_run",
         _with_failure_handling(
             nodes.complete_research_run, "complete_research_run", research
@@ -181,7 +202,9 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     graph.add_edge("rank_company_candidates", "persist_companies")
     graph.add_edge("persist_companies", "generate_company_queries")
     graph.add_edge("generate_company_queries", "search_company_sources")
-    graph.add_edge("search_company_sources", "complete_research_run")
+    graph.add_edge("search_company_sources", "select_company_sources")
+    graph.add_edge("select_company_sources", "fetch_company_sources")
+    graph.add_edge("fetch_company_sources", "complete_research_run")
     graph.add_edge("complete_research_run", END)
     return graph.compile()
 

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from virtual_company.research.models import SearchResult
+from virtual_company.research.models import SearchResult, WebPage
+from virtual_company.tools.instrumented_web_fetch import InstrumentedWebFetchTool
 from virtual_company.tools.instrumented_web_search import InstrumentedWebSearchTool
 
 
@@ -33,6 +34,19 @@ class ToolFake:
         return [SearchResult(title="Acme", url="https://acme.example")]
 
 
+class FetchToolFake:
+    provider = "httpx"
+
+    async def fetch(self, url: str) -> WebPage:
+        return WebPage(
+            url=url,
+            final_url=url,
+            content="Useful content",
+            content_type="text/html",
+            truncated=True,
+        )
+
+
 @pytest.mark.asyncio
 async def test_instrumented_search_records_low_cardinality_metrics() -> None:
     observability = ObservabilityFake()
@@ -43,3 +57,21 @@ async def test_instrumented_search_records_low_cardinality_metrics() -> None:
     assert observability.events == ["web_search_started", "web_search_completed"]
     assert ("web_search_requests_total", {"status": "completed", "provider": "tavily", "search_depth": "basic"}) in observability.metrics
     assert ("web_search_results_total", {"provider": "tavily", "search_depth": "basic"}) in observability.metrics
+
+
+@pytest.mark.asyncio
+async def test_instrumented_fetch_records_low_cardinality_metrics() -> None:
+    observability = ObservabilityFake()
+    tool = InstrumentedWebFetchTool(FetchToolFake(), observability=observability)  # type: ignore[arg-type]
+
+    await tool.fetch("https://acme.example/careers/backend")
+
+    assert observability.events == ["web_fetch_started", "web_fetch_completed"]
+    assert (
+        "web_fetch_requests_total",
+        {"status": "completed", "provider": "httpx", "content_type": "html"},
+    ) in observability.metrics
+    assert (
+        "web_pages_truncated_total",
+        {"provider": "httpx", "content_type": "html"},
+    ) in observability.metrics

@@ -13,6 +13,7 @@ dependencies = [
     "asyncpg>=0.31.0",
     "exa-py>=2.20.0",
     "fastapi>=0.141.1",
+    "httpx>=0.28.1",
     "greenlet>=3.0",
     "langfuse>=4.15.2",
     "langgraph>=1.2.11",
@@ -24,6 +25,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "sqlalchemy>=2.0.52",
     "tavily-python>=0.8.2",
+    "trafilatura>=2.0.0",
     "uvicorn[standard]>=0.52.4",
 ]
 
@@ -36,7 +38,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.16.6",

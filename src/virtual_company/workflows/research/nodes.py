@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from virtual_company.llm.base import LLMProvider
 from virtual_company.observability import get_observability
-from virtual_company.research.models import DiscoveredCompany, SearchResult
+from virtual_company.research.models import DiscoveredCompany, SearchResult, WebPage
 from virtual_company.research.normalization import (
     normalize_company_name,
     normalize_domain,
+    normalize_fetch_url,
     normalize_url,
 )
 from virtual_company.services import CampaignService, ResearchService
+from virtual_company.tools.web_fetch import WebFetchError, WebFetchTool
 from virtual_company.tools.web_search import WebSearchTool
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
@@ -58,6 +61,7 @@ class ResearchNodes:
         extraction_llm: LLMProvider | None = None,
         llm: LLMProvider | None = None,
         web_search: WebSearchTool,
+        web_fetch: WebFetchTool,
         web_search_max_results: int = 10,
         web_search_max_total_results: int = 30,
         web_search_concurrency: int = 3,
@@ -66,6 +70,8 @@ class ResearchNodes:
         company_research_query_count: int = 5,
         company_research_max_results_per_query: int = 5,
         company_research_max_results_per_company: int = 15,
+        company_research_max_fetches_per_company: int = 5,
+        web_fetch_concurrency: int = 5,
     ) -> None:
         self._campaigns = campaigns
         self._research = research
@@ -74,6 +80,7 @@ class ResearchNodes:
         if self._research_llm is None or self._extraction_llm is None:
             raise ValueError("Research and extraction LLM providers are required")
         self._web_search = web_search
+        self._web_fetch = web_fetch
         self._web_search_max_results = web_search_max_results
         self._web_search_max_total_results = web_search_max_total_results
         self._web_search_concurrency = web_search_concurrency
@@ -86,6 +93,10 @@ class ResearchNodes:
         self._company_research_max_results_per_company = (
             company_research_max_results_per_company
         )
+        self._company_research_max_fetches_per_company = (
+            company_research_max_fetches_per_company
+        )
+        self._web_fetch_concurrency = web_fetch_concurrency
 
     async def load_campaign(
         self, state: ResearchWorkflowState
@@ -412,6 +423,161 @@ class ResearchNodes:
                     "company_research_sources_found", result_count=count
                 )
         return {"company_search_results": results_by_company}
+
+    async def select_company_sources(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, dict[UUID, list[SearchResult]]]:
+        """Deterministically select a small, useful source set per company."""
+        selected: dict[UUID, list[SearchResult]] = {}
+        observability = get_observability()
+        for company in state["research_companies"]:
+            seen_urls: set[str] = set()
+            unique_results: list[tuple[int, SearchResult]] = []
+            for index, result in enumerate(
+                state["company_search_results"].get(company.id, [])
+            ):
+                try:
+                    key = normalize_fetch_url(result.url)
+                except ValueError:
+                    continue
+                if key in seen_urls:
+                    continue
+                seen_urls.add(key)
+                unique_results.append((index, result))
+            ordered = sorted(
+                unique_results,
+                key=lambda item: (
+                    -self._source_selection_score(item[1], company),
+                    item[0],
+                ),
+            )
+            sources = [
+                result
+                for _, result in ordered[: self._company_research_max_fetches_per_company]
+            ]
+            selected[company.id] = sources
+            with observability.context(
+                company_id=str(company.id), company_domain=company.domain
+            ):
+                observability.event(
+                    "company_sources_selected",
+                    available_source_count=len(unique_results),
+                    selected_source_count=len(sources),
+                )
+                observability.record(
+                    "company_research_sources_selected_total",
+                    len(sources),
+                    workflow="company_research",
+                )
+        context = {
+            "company_count": len(state["research_companies"]),
+            "selected_source_count": sum(len(sources) for sources in selected.values()),
+            "max_fetches_per_company": self._company_research_max_fetches_per_company,
+        }
+        with observability.span("select_company_sources", **context):
+            observability.event("company_sources_selection_completed", **context)
+        return {"selected_company_sources": selected}
+
+    async def fetch_company_sources(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, dict[UUID, list[WebPage]]]:
+        """Fetch selected sources with a bounded worker pool and partial failures."""
+        observability = get_observability()
+        work = [
+            (company.id, index, result)
+            for company in state["research_companies"]
+            for index, result in enumerate(
+                state["selected_company_sources"].get(company.id, [])
+            )
+        ]
+        successes: dict[tuple[UUID, int], WebPage] = {}
+        queue: asyncio.Queue[tuple[UUID, int, SearchResult]] = asyncio.Queue()
+        for item in work:
+            queue.put_nowait(item)
+
+        async def worker() -> None:
+            while True:
+                try:
+                    company_id, index, source = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    with observability.context(company_id=str(company_id), source_url=source.url):
+                        page = await self._web_fetch.fetch(source.url)
+                    successes[(company_id, index)] = page.model_copy(
+                        update={"title": page.title or source.title}
+                    )
+                except WebFetchError as error:
+                    observability.event(
+                        "company_source_fetch_failed",
+                        company_id=str(company_id),
+                        url=source.url,
+                        failure_category=error.category,
+                        http_status=getattr(error, "status_code", None),
+                    )
+                finally:
+                    queue.task_done()
+
+        workers = [
+            asyncio.create_task(worker())
+            for _ in range(min(self._web_fetch_concurrency, len(work)))
+        ]
+        if workers:
+            await asyncio.gather(*workers)
+        pages_by_company = {
+            company.id: [
+                successes[(company.id, index)]
+                for index, _ in enumerate(
+                    state["selected_company_sources"].get(company.id, [])
+                )
+                if (company.id, index) in successes
+            ]
+            for company in state["research_companies"]
+        }
+        context = {
+            "selected_source_count": len(work),
+            "web_page_count": sum(len(pages) for pages in pages_by_company.values()),
+            "failed_source_count": len(work) - len(successes),
+        }
+        with observability.span("fetch_company_sources", **context):
+            observability.event("company_sources_fetch_completed", **context)
+        return {"company_web_pages": pages_by_company}
+
+    @staticmethod
+    def _source_selection_score(result: SearchResult, company: ResearchCompany) -> int:
+        """Rank clear first-party and research-relevant result signals conservatively."""
+        try:
+            parsed = urlsplit(result.url)
+            host = normalize_domain(parsed.hostname)
+        except ValueError:
+            return -100
+        path = parsed.path.casefold()
+        text = " ".join(
+            value for value in (result.title, result.snippet or "") if value
+        ).casefold()
+        score = 0
+        if company.domain and host == normalize_domain(company.domain):
+            score += 30
+        if any(token in path or token in text for token in ("career", "job")):
+            score += 25
+        elif "engineering" in path or "engineering" in text:
+            score += 15
+        if any(token in path or token in text for token in ("blog", "technology", "product")):
+            score += 8
+        if result.snippet:
+            score += 3
+        if path in {"", "/"} and not result.snippet:
+            score -= 30
+        if host in {
+            "google.com",
+            "linkedin.com",
+            "facebook.com",
+            "instagram.com",
+            "x.com",
+            "twitter.com",
+        }:
+            score -= 25
+        return score
 
     async def complete_research_run(
         self, state: ResearchWorkflowState

@@ -10,7 +10,8 @@ import pytest
 
 from virtual_company.config import Settings
 from virtual_company.db.models import Campaign
-from virtual_company.research.models import DiscoveredCompany, SearchResult
+from virtual_company.research.models import DiscoveredCompany, SearchResult, WebPage
+from virtual_company.tools.web_fetch import WebFetchError
 from virtual_company.workflows.research.graph import ResearchWorkflow
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
@@ -83,6 +84,19 @@ class SearchFake:
         return self.results
 
 
+class FetchFake:
+    def __init__(self, pages: dict[str, WebPage | Exception]) -> None:
+        self.pages = pages
+        self.calls: list[str] = []
+
+    async def fetch(self, url: str) -> WebPage:
+        self.calls.append(url)
+        value = self.pages.get(url, WebPage(url=url, content="Fetched page"))
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
 class ExtractionFake:
     def __init__(self, values: dict[str, list[ExtractedCompanyIdentity]]) -> None:
         self.values = values
@@ -151,6 +165,7 @@ def make_nodes(
         research_llm=research,
         extraction_llm=extraction,
         web_search=SearchFake([]),
+        web_fetch=FetchFake({}),
         web_search_concurrency=2,
     )
 
@@ -283,6 +298,7 @@ async def test_workflow_investigates_only_ranked_companies() -> None:
         research_llm=research,
         extraction_llm=extraction,
         web_search=SearchFake(results),
+        web_fetch=FetchFake({}),
         settings=Settings(),
     )
     await workflow.run(model.id)
@@ -300,5 +316,68 @@ async def test_unknown_campaign_does_not_create_run() -> None:
             research_llm=ResearchFake([]),
             extraction_llm=ExtractionFake({}),
             web_search=SearchFake([]),
+            web_fetch=FetchFake({}),
         ).run(uuid4())
     assert service.runs == {}
+
+
+@pytest.mark.asyncio
+async def test_source_selection_deduplicates_and_prefers_first_party_pages() -> None:
+    model = campaign()
+    company = SimpleNamespace(id=uuid4(), name="Acme", website=None, domain="acme.example")
+    sources = [
+        SearchResult(title="Profile", url="https://directory.example/acme", snippet="Company profile"),
+        SearchResult(title="Acme", url="https://acme.example/", snippet=None),
+        SearchResult(title="Backend jobs", url="https://acme.example/careers/backend", snippet="Java"),
+        SearchResult(title="Duplicate", url="https://acme.example/careers/backend?utm_source=search"),
+        SearchResult(title="Engineering", url="https://acme.example/blog/engineering", snippet="Platform"),
+        SearchResult(title="Independent", url="https://news.example/acme", snippet="Funding"),
+    ]
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._company_research_max_fetches_per_company = 3
+    output = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "company_search_results": {company.id: sources},
+        }
+    )  # type: ignore[arg-type]
+    selected = output["selected_company_sources"][company.id]
+    assert [source.url for source in selected][:2] == [
+        "https://acme.example/careers/backend",
+        "https://acme.example/blog/engineering",
+    ]
+    assert len(selected) == 3
+    assert all("utm_source" not in source.url for source in selected)
+
+
+@pytest.mark.asyncio
+async def test_fetch_sources_retains_partial_successes() -> None:
+    model = campaign()
+    company_a = SimpleNamespace(id=uuid4(), name="A", website=None, domain="a.example")
+    company_b = SimpleNamespace(id=uuid4(), name="B", website=None, domain="b.example")
+    sources = {
+        company_a.id: [
+            SearchResult(title="A one", url="https://a.example/one"),
+            SearchResult(title="A two", url="https://a.example/two"),
+        ],
+        company_b.id: [SearchResult(title="B", url="https://b.example")],
+    }
+    fetch = FetchFake(
+        {
+            "https://a.example/one": WebPage(url="https://a.example/one", content="A"),
+            "https://a.example/two": WebFetchError("timeout"),
+            "https://b.example": WebPage(url="https://b.example", content="B"),
+        }
+    )
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._web_fetch = fetch
+    output = await nodes.fetch_company_sources(
+        {"research_companies": [company_a, company_b], "selected_company_sources": sources}
+    )  # type: ignore[arg-type]
+    assert [page.content for page in output["company_web_pages"][company_a.id]] == ["A"]
+    assert [page.content for page in output["company_web_pages"][company_b.id]] == ["B"]
+    assert fetch.calls == [
+        "https://a.example/one",
+        "https://a.example/two",
+        "https://b.example",
+    ]

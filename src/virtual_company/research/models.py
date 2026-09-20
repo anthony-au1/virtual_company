@@ -17,8 +17,11 @@ class WebPage(BaseModel):
     """Downloaded web-page content for later analysis."""
 
     url: str
+    final_url: str | None = None
     title: str | None = None
     content: str
+    content_type: str | None = None
+    truncated: bool = False
 
 
 class DiscoveredCompany(BaseModel):

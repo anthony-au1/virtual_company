@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TypedDict
 from uuid import UUID
 
-from virtual_company.research.models import DiscoveredCompany, SearchResult
+from virtual_company.research.models import DiscoveredCompany, SearchResult, WebPage
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
@@ -29,4 +29,6 @@ class ResearchWorkflowState(TypedDict):
     research_companies: list[ResearchCompany]
     company_research_queries: dict[UUID, list[str]]
     company_search_results: dict[UUID, list[SearchResult]]
+    selected_company_sources: dict[UUID, list[SearchResult]]
+    company_web_pages: dict[UUID, list[WebPage]]
     error: str | None

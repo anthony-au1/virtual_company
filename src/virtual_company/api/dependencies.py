@@ -18,7 +18,12 @@ from virtual_company.services import (
     EvidenceService,
     ResearchService,
 )
-from virtual_company.tools import WebSearchTool, create_web_search_tool
+from virtual_company.tools import (
+    WebFetchTool,
+    WebSearchTool,
+    create_web_fetch_tool,
+    create_web_search_tool,
+)
 from virtual_company.workflows.research import ResearchWorkflow
 
 SessionDependency = Annotated[AsyncSession, Depends(get_session)]
@@ -59,6 +64,11 @@ def get_web_search_tool() -> WebSearchTool:
     return create_web_search_tool()
 
 
+def get_web_fetch_tool() -> WebFetchTool:
+    """Build the configured safe web-page fetch implementation."""
+    return create_web_fetch_tool()
+
+
 def get_research_workflow(session: SessionDependency) -> ResearchWorkflow:
     """Build a request-scoped research workflow with its dependencies."""
     return ResearchWorkflow(
@@ -67,4 +77,5 @@ def get_research_workflow(session: SessionDependency) -> ResearchWorkflow:
         research_llm=get_llm_provider(),
         extraction_llm=get_extraction_llm_provider(),
         web_search=get_web_search_tool(),
+        web_fetch=get_web_fetch_tool(),
     )
