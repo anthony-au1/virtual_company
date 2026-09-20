@@ -61,6 +61,8 @@ class ResearchWorkflow:
                 resolved_settings.company_research_max_fetches_per_company
             ),
             web_fetch_concurrency=resolved_settings.web_fetch_concurrency,
+            evidence_extraction_concurrency=resolved_settings.evidence_extraction_concurrency,
+            evidence_max_excerpt_chars=resolved_settings.evidence_max_excerpt_chars,
         )
         self._research = research
         self._graph = build_research_graph(self._nodes, research)
@@ -92,6 +94,7 @@ class ResearchWorkflow:
                         "company_search_results": {},
                         "selected_company_sources": {},
                         "company_web_pages": {},
+                        "validated_evidence": [],
                         "error": None,
                     }
                 )
@@ -187,6 +190,16 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         ),
     )
     graph.add_node(
+        "extract_company_evidence",
+        _with_failure_handling(
+            nodes.extract_company_evidence, "extract_company_evidence", research
+        ),
+    )
+    graph.add_node(
+        "persist_evidence",
+        _with_failure_handling(nodes.persist_evidence, "persist_evidence", research),
+    )
+    graph.add_node(
         "complete_research_run",
         _with_failure_handling(
             nodes.complete_research_run, "complete_research_run", research
@@ -204,7 +217,9 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     graph.add_edge("generate_company_queries", "search_company_sources")
     graph.add_edge("search_company_sources", "select_company_sources")
     graph.add_edge("select_company_sources", "fetch_company_sources")
-    graph.add_edge("fetch_company_sources", "complete_research_run")
+    graph.add_edge("fetch_company_sources", "extract_company_evidence")
+    graph.add_edge("extract_company_evidence", "persist_evidence")
+    graph.add_edge("persist_evidence", "complete_research_run")
     graph.add_edge("complete_research_run", END)
     return graph.compile()
 

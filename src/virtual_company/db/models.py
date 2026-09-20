@@ -110,6 +110,11 @@ class Evidence(Base):
     company_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), ForeignKey("company.id")
     )
+    research_run_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("research_run.id")
+    )
+    criterion: Mapped[str | None] = mapped_column(String(50))
+    subject: Mapped[str | None] = mapped_column(String(500))
     claim: Mapped[str] = mapped_column(Text, nullable=False)
     evidence_text: Mapped[str] = mapped_column(Text, nullable=False)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
@@ -124,6 +129,7 @@ class Evidence(Base):
     )
 
     company: Mapped[Company] = relationship(back_populates="evidence")
+    research_run: Mapped[ResearchRun | None] = relationship(back_populates="evidence")
 
 
 class ResearchRun(Base):
@@ -149,3 +155,4 @@ class ResearchRun(Base):
     )
 
     campaign: Mapped[Campaign] = relationship(back_populates="research_runs")
+    evidence: Mapped[list[Evidence]] = relationship(back_populates="research_run")

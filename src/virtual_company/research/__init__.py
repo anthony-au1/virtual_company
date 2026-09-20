@@ -2,9 +2,18 @@
 
 from virtual_company.research.models import (
     DiscoveredCompany,
+    EvidenceCriterion,
     ExtractedEvidence,
+    ExtractedEvidenceItems,
     SearchResult,
     WebPage,
 )
 
-__all__ = ["DiscoveredCompany", "ExtractedEvidence", "SearchResult", "WebPage"]
+__all__ = [
+    "DiscoveredCompany",
+    "EvidenceCriterion",
+    "ExtractedEvidence",
+    "ExtractedEvidenceItems",
+    "SearchResult",
+    "WebPage",
+]

@@ -74,24 +74,28 @@ Indexes:
 
 Table: evidence
 
-| Column          | PostgreSQL type | Nullable | Description                |
-| --------------- | --------------- | -------: | -------------------------- |
-| `id`            | UUID            |       NO | Internal ID                |
-| `company_id`    | UUID            |       NO | company                    |
-| `claim`         | TEXT            |       NO | claim                      |
-| `evidence_text` | TEXT            |       NO | evidence confirmation      |
-| `source_url`    | TEXT            |       NO | information source         |
-| `source_title`  | VARCHAR(500)    |      YES | source title               |
-| `source_type`   | VARCHAR(50)     |      YES | careers/blog/news/etc      |
-| `confidence`    | NUMERIC(4,3)    |      YES | agent confidence           |
-| `observed_at`   | TIMESTAMPTZ     |       NO | when information was found |
-| `created_at`    | TIMESTAMPTZ     |       NO | when evidence was saved    |
+| Column            | PostgreSQL type | Nullable | Description                                     |
+| ----------------- | --------------- | -------: | ----------------------------------------------- |
+| `id`              | UUID            |       NO | Internal ID                                     |
+| `company_id`      | UUID            |       NO | company                                         |
+| `research_run_id` | UUID            |      YES | research execution that extracted this evidence |
+| `criterion`       | VARCHAR(50)     |      YES | campaign criterion supported                    |
+| `subject`         | VARCHAR(500)    |      YES | criterion value or subject                      |
+| `claim`           | TEXT            |       NO | claim                                           |
+| `evidence_text`   | TEXT            |       NO | evidence confirmation                           |
+| `source_url`      | TEXT            |       NO | information source                              |
+| `source_title`    | VARCHAR(500)    |      YES | source title                                    |
+| `source_type`     | VARCHAR(50)     |      YES | careers/blog/news/etc                           |
+| `confidence`      | NUMERIC(4,3)    |      YES | agent confidence                                |
+| `observed_at`     | TIMESTAMPTZ     |       NO | when information was found                      |
+| `created_at`      | TIMESTAMPTZ     |       NO | when evidence was saved                         |
 
 
 Indexes:
 
 - PK(id)
 - FK(company_id) -> company(id) 
+- FK(research_run_id) -> research_run(id)
 
 
 Table: research_run

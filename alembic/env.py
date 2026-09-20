@@ -8,14 +8,15 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, async_engine_from_config
 
+from alembic import context
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from virtual_company.db import Base  # noqa: E402
+from virtual_company.db import Base
 
 config = context.config
 

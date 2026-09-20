@@ -11,6 +11,7 @@ from virtual_company.workflows.research.models import (
     CampaignCriteria,
     ExtractedCompanyCandidate,
     ResearchCompany,
+    ValidatedEvidence,
 )
 
 
@@ -31,4 +32,5 @@ class ResearchWorkflowState(TypedDict):
     company_search_results: dict[UUID, list[SearchResult]]
     selected_company_sources: dict[UUID, list[SearchResult]]
     company_web_pages: dict[UUID, list[WebPage]]
+    validated_evidence: list[ValidatedEvidence]
     error: str | None

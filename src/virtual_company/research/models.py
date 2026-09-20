@@ -1,6 +1,6 @@
 """Pydantic data-transfer models for the research workflow."""
 
-from typing import Annotated
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
@@ -34,12 +34,25 @@ class DiscoveredCompany(BaseModel):
     supporting_urls: list[str] = Field(max_length=3)
 
 
-class ExtractedEvidence(BaseModel):
-    """A source-backed claim extracted from research material."""
+class EvidenceCriterion(StrEnum):
+    """Campaign criteria which can be supported by extracted evidence."""
 
-    claim: str
-    evidence_text: str
-    source_url: str
-    source_title: str | None = None
-    source_type: str | None = None
-    confidence: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
+    TARGET_MARKET = "target_market"
+    INDUSTRY = "industry"
+    TECHNOLOGY = "technology"
+    COMPANY_SIZE = "company_size"
+
+
+class ExtractedEvidence(BaseModel):
+    """LLM-provided evidence content, without authoritative source identity."""
+
+    criterion: EvidenceCriterion
+    subject: str | None = None
+    claim: str = Field(min_length=1)
+    evidence_text: str = Field(min_length=1)
+
+
+class ExtractedEvidenceItems(BaseModel):
+    """Structured output from one page-scoped evidence extraction call."""
+
+    evidence: list[ExtractedEvidence] = Field(default_factory=list)

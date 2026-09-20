@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from virtual_company.research.models import SearchResult
+from virtual_company.research.models import SearchResult, WebPage
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
@@ -25,6 +25,7 @@ SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
 EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v1")
 RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v1")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v1")
+EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v1")
 
 
 def search_query_system_prompt() -> str:
@@ -133,4 +134,33 @@ def company_query_user_prompt(
     return (
         f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"
         f"Company context:\n{company.model_dump_json()}"
+    )
+
+
+def extract_company_evidence_system_prompt() -> str:
+    """Return grounded instructions for extracting evidence from one fetched page."""
+    return (
+        "You are extracting factual evidence from ONE supplied web page for ONE company "
+        "and ONE research campaign. Use ONLY the supplied page content; do not use prior "
+        "knowledge and do not infer facts that are merely plausible. Extract only positive, "
+        "campaign-relevant evidence for target market/geography, industry, technologies, or "
+        "company size. Return an empty evidence list when there is no supported evidence. "
+        "For every item, select the constrained criterion, provide a concise factual claim, "
+        "and copy the smallest useful supporting excerpt exactly from the page. The excerpt "
+        "MUST occur in the supplied page content. Do not treat a missing technology as negative "
+        "evidence. Do not invent URLs, employee counts, headquarters, or unsupported technology. "
+        "For technology, use the matching campaign technology label as the subject; harmless "
+        "spacing or punctuation variants in the page may support that label. Preserve what a "
+        "geography, industry, or size source actually states rather than strengthening it."
+    )
+
+
+def extract_company_evidence_user_prompt(
+    campaign: CampaignCriteria, company: ResearchCompany, page: WebPage
+) -> str:
+    """Serialize one bounded page and its precise campaign/company context."""
+    return (
+        f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"
+        f"Company:\n{company.model_dump_json()}\n\n"
+        f"Page:\n{json.dumps(page.model_dump())}"
     )

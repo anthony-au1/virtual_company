@@ -70,6 +70,9 @@ class CampaignTargetUpdate(BaseModel):
 
 class EvidenceCreate(BaseModel):
     company_id: UUID
+    research_run_id: UUID | None = None
+    criterion: str | None = None
+    subject: str | None = None
     claim: str
     evidence_text: str
     source_url: str
@@ -80,6 +83,8 @@ class EvidenceCreate(BaseModel):
 
 
 class EvidenceUpdate(BaseModel):
+    criterion: str | None = None
+    subject: str | None = None
     claim: str | None = None
     evidence_text: str | None = None
     source_url: str | None = None

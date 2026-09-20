@@ -102,6 +102,9 @@ class EvidenceResponse(BaseModel):
 
     id: UUID
     company_id: UUID
+    research_run_id: UUID | None
+    criterion: str | None
+    subject: str | None
     claim: str
     evidence_text: str
     source_url: str

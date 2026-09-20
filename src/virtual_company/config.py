@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     web_fetch_max_response_bytes: int = Field(default=2_000_000, ge=1, le=10_000_000)
     web_fetch_max_content_chars: int = Field(default=50_000, ge=1, le=200_000)
     web_fetch_concurrency: int = Field(default=5, ge=1, le=20)
+    evidence_extraction_concurrency: int = Field(default=3, ge=1, le=10)
+    evidence_max_excerpt_chars: int = Field(default=1_000, ge=1, le=10_000)
     tavily_api_key: SecretStr | None = None
     tavily_search_depth: Literal["basic", "advanced"] = "basic"
     exa_api_key: SecretStr | None = None

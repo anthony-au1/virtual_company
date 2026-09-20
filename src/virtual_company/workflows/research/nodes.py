@@ -8,7 +8,15 @@ from uuid import UUID
 
 from virtual_company.llm.base import LLMProvider
 from virtual_company.observability import get_observability
-from virtual_company.research.models import DiscoveredCompany, SearchResult, WebPage
+from virtual_company.repositories.dtos import EvidenceCreate
+from virtual_company.research.models import (
+    DiscoveredCompany,
+    EvidenceCriterion,
+    ExtractedEvidence,
+    ExtractedEvidenceItems,
+    SearchResult,
+    WebPage,
+)
 from virtual_company.research.normalization import (
     normalize_company_name,
     normalize_domain,
@@ -27,16 +35,20 @@ from virtual_company.workflows.research.models import (
     GeneratedCompanySearchQueries,
     GeneratedSearchQueries,
     ResearchCompany,
+    ValidatedEvidence,
 )
 from virtual_company.workflows.research.prompts import (
     COMPANY_QUERY_PROMPT,
     EXTRACT_COMPANY_CANDIDATES_PROMPT,
+    EXTRACT_COMPANY_EVIDENCE_PROMPT,
     RANK_COMPANY_CANDIDATES_PROMPT,
     SEARCH_QUERY_PROMPT,
     company_query_system_prompt,
     company_query_user_prompt,
     extract_company_candidates_system_prompt,
     extract_company_candidates_user_prompt,
+    extract_company_evidence_system_prompt,
+    extract_company_evidence_user_prompt,
     rank_company_candidates_system_prompt,
     rank_company_candidates_user_prompt,
     search_query_system_prompt,
@@ -72,6 +84,8 @@ class ResearchNodes:
         company_research_max_results_per_company: int = 15,
         company_research_max_fetches_per_company: int = 5,
         web_fetch_concurrency: int = 5,
+        evidence_extraction_concurrency: int = 3,
+        evidence_max_excerpt_chars: int = 1_000,
     ) -> None:
         self._campaigns = campaigns
         self._research = research
@@ -97,6 +111,8 @@ class ResearchNodes:
             company_research_max_fetches_per_company
         )
         self._web_fetch_concurrency = web_fetch_concurrency
+        self._evidence_extraction_concurrency = evidence_extraction_concurrency
+        self._evidence_max_excerpt_chars = evidence_max_excerpt_chars
 
     async def load_campaign(
         self, state: ResearchWorkflowState
@@ -543,6 +559,165 @@ class ResearchNodes:
             observability.event("company_sources_fetch_completed", **context)
         return {"company_web_pages": pages_by_company}
 
+    async def extract_company_evidence(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, list[ValidatedEvidence]]:
+        """Extract and validate page-specific campaign evidence without failing on one page."""
+        campaign = self._campaign(state)
+        research_run_id = state["research_run_id"]
+        if research_run_id is None:
+            raise ValueError("Research run was not created")
+        observability = get_observability()
+        semaphore = asyncio.Semaphore(self._evidence_extraction_concurrency)
+        work = [
+            (company, page)
+            for company in state["research_companies"]
+            for page in state["company_web_pages"].get(company.id, [])
+        ]
+
+        async def extract_page(
+            company: ResearchCompany, page: WebPage
+        ) -> tuple[ResearchCompany, WebPage, list[ExtractedEvidence], bool]:
+            with observability.context(
+                company_id=str(company.id),
+                company_domain=company.domain,
+                source_url=page.url,
+                prompt_name=EXTRACT_COMPANY_EVIDENCE_PROMPT.name,
+                prompt_version=EXTRACT_COMPANY_EVIDENCE_PROMPT.version,
+            ):
+                try:
+                    async with semaphore:
+                        response = await self._extraction_llm.generate_structured(
+                            system_prompt=extract_company_evidence_system_prompt(),
+                            user_prompt=extract_company_evidence_user_prompt(
+                                campaign, company, page
+                            ),
+                            response_model=ExtractedEvidenceItems,
+                        )
+                    evidence = response.evidence
+                except Exception as error:  # noqa: BLE001 - one page must not abort the run
+                    observability.event(
+                        "company_evidence_extraction_failed",
+                        error_type=type(error).__name__,
+                    )
+                    observability.record(
+                        "evidence_extraction_failures_total", workflow="company_research"
+                    )
+                    return company, page, [], False
+            return company, page, evidence, True
+
+        groups = await asyncio.gather(*(extract_page(company, page) for company, page in work))
+        validated: list[ValidatedEvidence] = []
+        extracted_count = 0
+        rejected_count = 0
+        pages_with_evidence = 0
+        successful_pages = 0
+        for company, page, extracted, succeeded in groups:
+            if not succeeded:
+                continue
+            successful_pages += 1
+            extracted_count += len(extracted)
+            page_validated = [
+                candidate
+                for item in extracted
+                if (
+                    candidate := self._validated_evidence(
+                        campaign, company, research_run_id, page, item
+                    )
+                )
+                is not None
+            ]
+            rejected_count += len(extracted) - len(page_validated)
+            with observability.context(
+                company_id=str(company.id),
+                company_domain=company.domain,
+                source_url=page.url,
+            ), observability.span(
+                "validate_company_evidence",
+                extracted_item_count=len(extracted),
+                validated_item_count=len(page_validated),
+                rejected_item_count=len(extracted) - len(page_validated),
+            ):
+                observability.event(
+                    "company_page_evidence_validated",
+                    extracted_item_count=len(extracted),
+                    validated_item_count=len(page_validated),
+                    rejected_item_count=len(extracted) - len(page_validated),
+                )
+            if page_validated:
+                pages_with_evidence += 1
+            validated.extend(page_validated)
+        deduplicated = self._deduplicate_evidence(validated)
+        rejected_count += len(validated) - len(deduplicated)
+        context = {
+            "web_pages_considered": len(work),
+            "evidence_items_extracted": extracted_count,
+            "evidence_items_validated": len(deduplicated),
+            "evidence_items_rejected": rejected_count,
+            "pages_with_evidence": pages_with_evidence,
+            "pages_without_evidence": successful_pages - pages_with_evidence,
+        }
+        with observability.span("extract_company_evidence", **context):
+            observability.event("company_evidence_extraction_completed", **context)
+        for name, value in context.items():
+            observability.record(f"{name}_total", value, workflow="company_research")
+        observability.record("evidence_extraction_calls_total", len(work), workflow="company_research")
+        for company in state["research_companies"]:
+            company_evidence = [
+                item for item in deduplicated if item.company_id == company.id
+            ]
+            fetched_pages = state["company_web_pages"].get(company.id, [])
+            selected_count = len(
+                state.get("selected_company_sources", {}).get(company.id, [])
+            )
+            with observability.context(
+                company_id=str(company.id), company_domain=company.domain
+            ):
+                observability.event(
+                    "company_evidence_funnel",
+                    selected_source_count=selected_count,
+                    fetch_success_count=len(fetched_pages),
+                    fetch_failure_count=selected_count - len(fetched_pages),
+                    pages_with_evidence_count=len(
+                        {item.source_url for item in company_evidence}
+                    ),
+                    validated_evidence_count=len(company_evidence),
+                )
+        return {"validated_evidence": deduplicated}
+
+    async def persist_evidence(self, state: ResearchWorkflowState) -> dict[str, object]:
+        """Persist validated evidence with run-scoped duplicate protection."""
+        research_run_id = state["research_run_id"]
+        if research_run_id is None:
+            raise ValueError("Research run was not created")
+        evidence = [
+            EvidenceCreate(
+                company_id=item.company_id,
+                research_run_id=item.research_run_id,
+                criterion=item.criterion,
+                subject=item.subject,
+                claim=item.claim,
+                evidence_text=item.evidence_text,
+                source_url=item.source_url,
+                source_title=item.source_title,
+            )
+            for item in state["validated_evidence"]
+        ]
+        outcome = await self._research.persist_evidence(
+            research_run_id=research_run_id, evidence=evidence
+        )
+        context = {
+            "evidence_items_persisted": outcome.created_count,
+            "evidence_items_skipped": outcome.skipped_count,
+        }
+        observability = get_observability()
+        with observability.span("persist_evidence", **context):
+            observability.event("company_evidence_persisted", **context)
+        observability.record(
+            "evidence_items_persisted_total", outcome.created_count, workflow="company_research"
+        )
+        return {}
+
     @staticmethod
     def _source_selection_score(result: SearchResult, company: ResearchCompany) -> int:
         """Rank clear first-party and research-relevant result signals conservatively."""
@@ -605,6 +780,86 @@ class ResearchNodes:
                 self._discovery_candidate_max,
             ),
         )
+
+    def _validated_evidence(
+        self,
+        campaign: CampaignCriteria,
+        company: ResearchCompany,
+        research_run_id: UUID,
+        page: WebPage,
+        item: ExtractedEvidence,
+    ) -> ValidatedEvidence | None:
+        """Accept only short excerpts that literally occur in their supplied page."""
+        excerpt = self._normalize_whitespace(item.evidence_text)
+        if not excerpt or len(excerpt) > self._evidence_max_excerpt_chars:
+            return None
+        if excerpt not in self._normalize_whitespace(page.content):
+            return None
+        subject = self._subject_for_criterion(campaign, item)
+        if subject is None and item.criterion is not EvidenceCriterion.COMPANY_SIZE:
+            return None
+        return ValidatedEvidence(
+            company_id=company.id,
+            research_run_id=research_run_id,
+            criterion=item.criterion,
+            subject=subject,
+            claim=item.claim,
+            evidence_text=excerpt,
+            source_url=page.url,
+            source_title=(page.title[:500] if page.title else None),
+        )
+
+    @staticmethod
+    def _normalize_whitespace(value: str) -> str:
+        return " ".join(value.split())
+
+    def _subject_for_criterion(
+        self, campaign: CampaignCriteria, item: ExtractedEvidence
+    ) -> str | None:
+        if item.criterion is EvidenceCriterion.TARGET_MARKET:
+            return campaign.target_market
+        if item.criterion is EvidenceCriterion.INDUSTRY:
+            return campaign.industry
+        if item.criterion is EvidenceCriterion.COMPANY_SIZE:
+            return item.subject
+        technologies = self._campaign_technologies(campaign)
+        subject_key = self._compact(item.subject or "")
+        for technology in technologies:
+            if self._compact(technology) == subject_key:
+                return technology
+        return None
+
+    @staticmethod
+    def _campaign_technologies(campaign: CampaignCriteria) -> list[str]:
+        if isinstance(campaign.technologies, list):
+            return [str(item) for item in campaign.technologies if str(item).strip()]
+        if isinstance(campaign.technologies, dict):
+            return [str(item) for item in campaign.technologies.values() if str(item).strip()]
+        return []
+
+    @staticmethod
+    def _compact(value: str) -> str:
+        return "".join(character for character in value.casefold() if character.isalnum())
+
+    @classmethod
+    def _deduplicate_evidence(
+        cls, evidence: list[ValidatedEvidence]
+    ) -> list[ValidatedEvidence]:
+        seen: set[tuple[str, ...]] = set()
+        deduplicated: list[ValidatedEvidence] = []
+        for item in evidence:
+            key = (
+                str(item.company_id),
+                cls._normalize_whitespace(item.source_url).casefold(),
+                item.criterion.value,
+                cls._normalize_whitespace(item.subject or "").casefold(),
+                cls._normalize_whitespace(item.claim).casefold(),
+                cls._normalize_whitespace(item.evidence_text).casefold(),
+            )
+            if key not in seen:
+                seen.add(key)
+                deduplicated.append(item)
+        return deduplicated
 
     @staticmethod
     def _validated_ranked_companies(

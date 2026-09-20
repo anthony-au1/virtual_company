@@ -7,7 +7,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from virtual_company.research.models import DiscoveredCompany, SearchResult
+from virtual_company.research.models import (
+    DiscoveredCompany,
+    EvidenceCriterion,
+    SearchResult,
+)
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -88,6 +92,19 @@ class GeneratedCompanySearchQueries(BaseModel):
     """Structured LLM output used to locate candidate evidence sources for one company."""
 
     queries: list[NonEmptyString] = Field(min_length=1, max_length=6)
+
+
+class ValidatedEvidence(BaseModel):
+    """Evidence ready to persist, with application-assigned provenance."""
+
+    company_id: UUID
+    research_run_id: UUID
+    criterion: EvidenceCriterion
+    subject: str | None = None
+    claim: NonEmptyString
+    evidence_text: NonEmptyString
+    source_url: NonEmptyString
+    source_title: str | None = None
 
 
 class ResearchWorkflowResult(BaseModel):

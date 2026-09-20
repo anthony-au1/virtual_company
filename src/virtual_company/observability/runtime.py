@@ -230,6 +230,33 @@ class Observability:
             "web_pages_truncated_total": self._meter.create_counter(
                 "web_pages_truncated_total"
             ),
+            "web_pages_considered_total": self._meter.create_counter(
+                "web_pages_considered_total"
+            ),
+            "evidence_extraction_calls_total": self._meter.create_counter(
+                "evidence_extraction_calls_total"
+            ),
+            "evidence_extraction_failures_total": self._meter.create_counter(
+                "evidence_extraction_failures_total"
+            ),
+            "evidence_items_extracted_total": self._meter.create_counter(
+                "evidence_items_extracted_total"
+            ),
+            "evidence_items_validated_total": self._meter.create_counter(
+                "evidence_items_validated_total"
+            ),
+            "evidence_items_rejected_total": self._meter.create_counter(
+                "evidence_items_rejected_total"
+            ),
+            "evidence_items_persisted_total": self._meter.create_counter(
+                "evidence_items_persisted_total"
+            ),
+            "pages_with_evidence_total": self._meter.create_counter(
+                "pages_with_evidence_total"
+            ),
+            "pages_without_evidence_total": self._meter.create_counter(
+                "pages_without_evidence_total"
+            ),
         }
 
 

@@ -10,7 +10,16 @@ import pytest
 
 from virtual_company.config import Settings
 from virtual_company.db.models import Campaign
-from virtual_company.research.models import DiscoveredCompany, SearchResult, WebPage
+from virtual_company.repositories.dtos import EvidenceCreate
+from virtual_company.research.models import (
+    DiscoveredCompany,
+    EvidenceCriterion,
+    ExtractedEvidence,
+    ExtractedEvidenceItems,
+    SearchResult,
+    WebPage,
+)
+from virtual_company.services.research import ResearchService
 from virtual_company.tools.web_fetch import WebFetchError
 from virtual_company.workflows.research.graph import ResearchWorkflow
 from virtual_company.workflows.research.models import (
@@ -22,6 +31,7 @@ from virtual_company.workflows.research.models import (
     ExtractedCompanyIdentity,
     GeneratedCompanySearchQueries,
     GeneratedSearchQueries,
+    ResearchCompany,
 )
 from virtual_company.workflows.research.nodes import (
     CampaignNotFoundError,
@@ -70,6 +80,9 @@ class ResearchServiceFake:
     async def complete_run(self, run_id: UUID, companies_found: int) -> None:
         self.runs[run_id].status = "COMPLETED"
 
+    async def persist_evidence(self, *, research_run_id: UUID, evidence: list[object]) -> SimpleNamespace:
+        return SimpleNamespace(created_count=len(evidence), skipped_count=0)
+
     async def fail_run(self, run_id: UUID, error: str) -> None:
         self.runs[run_id].status = "FAILED"
 
@@ -116,6 +129,20 @@ class ExtractionFake:
             )
         finally:
             self.active -= 1
+
+
+class EvidenceExtractionFake:
+    def __init__(self, values: dict[str, list[ExtractedEvidence] | Exception]) -> None:
+        self.values = values
+        self.prompts: list[str] = []
+
+    async def generate_structured(self, **kwargs: object) -> ExtractedEvidenceItems:
+        prompt = str(kwargs["user_prompt"])
+        self.prompts.append(prompt)
+        value = next(v for url, v in self.values.items() if url in prompt)
+        if isinstance(value, Exception):
+            raise value
+        return ExtractedEvidenceItems(evidence=value)
 
 
 class ResearchFake:
@@ -324,7 +351,7 @@ async def test_unknown_campaign_does_not_create_run() -> None:
 @pytest.mark.asyncio
 async def test_source_selection_deduplicates_and_prefers_first_party_pages() -> None:
     model = campaign()
-    company = SimpleNamespace(id=uuid4(), name="Acme", website=None, domain="acme.example")
+    company = ResearchCompany(id=uuid4(), name="Acme", website=None, domain="acme.example")
     sources = [
         SearchResult(title="Profile", url="https://directory.example/acme", snippet="Company profile"),
         SearchResult(title="Acme", url="https://acme.example/", snippet=None),
@@ -381,3 +408,142 @@ async def test_fetch_sources_retains_partial_successes() -> None:
         "https://a.example/two",
         "https://b.example",
     ]
+
+
+@pytest.mark.asyncio
+async def test_evidence_extraction_validates_provenance_whitespace_and_duplicates() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme", website=None, domain="acme.example")
+    page = WebPage(
+        url="https://acme.example/jobs/backend",
+        title="Backend Engineer",
+        content="We use Java\nand Spring Boot for backend services.",
+    )
+    extracted = ExtractedEvidence(
+        criterion=EvidenceCriterion.TECHNOLOGY,
+        subject="Java",
+        claim="Acme uses Java for backend services.",
+        evidence_text="We use Java and Spring Boot for backend services.",
+    )
+    fake = EvidenceExtractionFake({page.url: [extracted, extracted]})
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._extraction_llm = fake
+    run_id = uuid4()
+    output = await nodes.extract_company_evidence(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_run_id": run_id,
+            "research_companies": [company],
+            "company_web_pages": {company.id: [page]},
+        }
+    )  # type: ignore[arg-type]
+    evidence = output["validated_evidence"]
+    assert len(evidence) == 1
+    assert evidence[0].source_url == page.url
+    assert evidence[0].source_title == page.title
+    assert evidence[0].subject == "Java"
+    assert "\"technologies\":[\"Java\",\"Spring Boot\",\"Kafka\"]" in fake.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_evidence_extraction_rejects_absent_excerpt_and_continues_after_failure() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme", website=None, domain="acme.example")
+    valid_page = WebPage(url="https://acme.example/one", content="We use Java for backend services.")
+    failed_page = WebPage(url="https://acme.example/two", content="Unused")
+    invalid = ExtractedEvidence(
+        criterion=EvidenceCriterion.TECHNOLOGY,
+        subject="Kafka",
+        claim="Acme uses Kafka.",
+        evidence_text="Our platform is built with Java and Kafka.",
+    )
+    fake = EvidenceExtractionFake({valid_page.url: [invalid], failed_page.url: RuntimeError("timeout")})
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._extraction_llm = fake
+    output = await nodes.extract_company_evidence(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_run_id": uuid4(),
+            "research_companies": [company],
+            "company_web_pages": {company.id: [valid_page, failed_page]},
+        }
+    )  # type: ignore[arg-type]
+    assert output["validated_evidence"] == []
+
+
+@pytest.mark.asyncio
+async def test_evidence_extraction_preserves_explicit_size_and_geography_precision() -> None:
+    model = campaign()
+    model.company_size_min = 100
+    model.company_size_max = 500
+    company = ResearchCompany(id=uuid4(), name="Acme", website=None, domain="acme.example")
+    page = WebPage(
+        url="https://acme.example/careers",
+        content="Join our Melbourne engineering team. Our global team has more than 300 employees.",
+    )
+    fake = EvidenceExtractionFake(
+        {
+            page.url: [
+                ExtractedEvidence(
+                    criterion=EvidenceCriterion.TARGET_MARKET,
+                    subject="Australia",
+                    claim="Acme has an engineering presence in Melbourne.",
+                    evidence_text="Join our Melbourne engineering team.",
+                ),
+                ExtractedEvidence(
+                    criterion=EvidenceCriterion.COMPANY_SIZE,
+                    subject="more than 300 employees",
+                    claim="Acme reports a global team of more than 300 employees.",
+                    evidence_text="Our global team has more than 300 employees.",
+                ),
+            ]
+        }
+    )
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._extraction_llm = fake
+    output = await nodes.extract_company_evidence(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_run_id": uuid4(),
+            "research_companies": [company],
+            "company_web_pages": {company.id: [page]},
+            "selected_company_sources": {company.id: [SearchResult(title="Careers", url=page.url)]},
+        }
+    )  # type: ignore[arg-type]
+    assert [(item.criterion, item.subject) for item in output["validated_evidence"]] == [
+        (EvidenceCriterion.TARGET_MARKET, "Australia"),
+        (EvidenceCriterion.COMPANY_SIZE, "more than 300 employees"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_evidence_persistence_is_idempotent_within_one_research_run() -> None:
+    class EvidenceRepositoryFake:
+        def __init__(self) -> None:
+            self.items: list[EvidenceCreate] = []
+
+        async def list_by_research_run_id(self, _: UUID) -> list[EvidenceCreate]:
+            return self.items
+
+        async def create(self, item: EvidenceCreate) -> EvidenceCreate:
+            self.items.append(item)
+            return item
+
+    repository = EvidenceRepositoryFake()
+    service = object.__new__(ResearchService)
+    service._evidence = repository
+    run_id = uuid4()
+    item = EvidenceCreate(
+        company_id=uuid4(),
+        research_run_id=run_id,
+        criterion="technology",
+        subject="Java",
+        claim="Acme uses Java.",
+        evidence_text="We use Java.",
+        source_url="https://acme.example/engineering",
+    )
+    first = await service.persist_evidence(research_run_id=run_id, evidence=[item, item])
+    second = await service.persist_evidence(research_run_id=run_id, evidence=[item])
+    assert (first.created_count, first.skipped_count) == (1, 1)
+    assert (second.created_count, second.skipped_count) == (0, 1)
+    assert repository.items == [item]
