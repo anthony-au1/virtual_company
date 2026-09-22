@@ -6,6 +6,10 @@ import asyncio
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from virtual_company.domain.qualification import (
+    CompanyQualification,
+    QualificationStatus,
+)
 from virtual_company.llm.base import LLMProvider
 from virtual_company.observability import get_observability
 from virtual_company.repositories.dtos import EvidenceCreate
@@ -25,6 +29,10 @@ from virtual_company.research.normalization import (
 )
 from virtual_company.services import CampaignService, ResearchService
 from virtual_company.services.coverage import assess_evidence_coverage
+from virtual_company.services.qualification import (
+    aggregate_qualification,
+    qualify_company,
+)
 from virtual_company.tools.web_fetch import WebFetchError, WebFetchTool
 from virtual_company.tools.web_search import WebSearchTool
 from virtual_company.workflows.research.models import (
@@ -423,7 +431,8 @@ class ResearchNodes:
         for company in self._active_companies(state):
             investigation = investigations[company.id]
             missing = [
-                item for item in investigation.coverage
+                item
+                for item in investigation.coverage
                 if item.status is CoverageStatus.MISSING
             ]
             next_round = investigation.round + 1
@@ -450,7 +459,8 @@ class ResearchNodes:
                     "followup_company_queries_generated",
                     investigation_round=next_round,
                     missing_criteria=[
-                        f"{item.criterion.value}/{item.subject}" if item.subject
+                        f"{item.criterion.value}/{item.subject}"
+                        if item.subject
                         else item.criterion.value
                         for item in missing
                     ],
@@ -582,7 +592,9 @@ class ResearchNodes:
                         investigations.get(
                             company.id,
                             CompanyInvestigationState(company_id=company.id),
-                        ).coverage if adaptive_mode else [],
+                        ).coverage
+                        if adaptive_mode
+                        else [],
                     ),
                     item[0],
                 ),
@@ -646,7 +658,9 @@ class ResearchNodes:
                 except asyncio.QueueEmpty:
                     return
                 try:
-                    with observability.context(company_id=str(company_id), source_url=source.url):
+                    with observability.context(
+                        company_id=str(company_id), source_url=source.url
+                    ):
                         page = await self._web_fetch.fetch(source.url)
                     successes[(company_id, index)] = page.model_copy(
                         update={"title": page.title or source.title}
@@ -732,12 +746,15 @@ class ResearchNodes:
                         error_type=type(error).__name__,
                     )
                     observability.record(
-                        "evidence_extraction_failures_total", workflow="company_research"
+                        "evidence_extraction_failures_total",
+                        workflow="company_research",
                     )
                     return company, page, [], False
             return company, page, evidence, True
 
-        groups = await asyncio.gather(*(extract_page(company, page) for company, page in work))
+        groups = await asyncio.gather(
+            *(extract_page(company, page) for company, page in work)
+        )
         validated: list[ValidatedEvidence] = []
         extracted_count = 0
         rejected_count = 0
@@ -759,15 +776,18 @@ class ResearchNodes:
                 is not None
             ]
             rejected_count += len(extracted) - len(page_validated)
-            with observability.context(
-                company_id=str(company.id),
-                company_domain=company.domain,
-                source_url=page.url,
-            ), observability.span(
-                "validate_company_evidence",
-                extracted_item_count=len(extracted),
-                validated_item_count=len(page_validated),
-                rejected_item_count=len(extracted) - len(page_validated),
+            with (
+                observability.context(
+                    company_id=str(company.id),
+                    company_domain=company.domain,
+                    source_url=page.url,
+                ),
+                observability.span(
+                    "validate_company_evidence",
+                    extracted_item_count=len(extracted),
+                    validated_item_count=len(page_validated),
+                    rejected_item_count=len(extracted) - len(page_validated),
+                ),
             ):
                 observability.event(
                     "company_page_evidence_validated",
@@ -792,7 +812,9 @@ class ResearchNodes:
             observability.event("company_evidence_extraction_completed", **context)
         for name, value in context.items():
             observability.record(f"{name}_total", value, workflow="company_research")
-        observability.record("evidence_extraction_calls_total", len(work), workflow="company_research")
+        observability.record(
+            "evidence_extraction_calls_total", len(work), workflow="company_research"
+        )
         for company in self._active_companies(state):
             company_evidence = [
                 item for item in deduplicated if item.company_id == company.id
@@ -859,10 +881,10 @@ class ResearchNodes:
                 )
                 return company.id, page, result.attributable
 
-        results = await asyncio.gather(*(validate(company, page) for company, page in work))
-        attributable = {
-            company.id: [] for company in self._active_companies(state)
-        }
+        results = await asyncio.gather(
+            *(validate(company, page) for company, page in work)
+        )
+        attributable = {company.id: [] for company in self._active_companies(state)}
         for company_id, page, accepted in results:
             if accepted:
                 attributable[company_id].append(page)
@@ -907,7 +929,9 @@ class ResearchNodes:
         with observability.span("persist_evidence", **context):
             observability.event("company_evidence_persisted", **context)
         observability.record(
-            "evidence_items_persisted_total", outcome.created_count, workflow="company_research"
+            "evidence_items_persisted_total",
+            outcome.created_count,
+            workflow="company_research",
         )
         investigations = dict(state.get("investigations", {}))
         created_by_company = getattr(outcome, "created_by_company", None)
@@ -997,7 +1021,9 @@ class ResearchNodes:
                 "coverage_found_total", len(found_items), workflow="company_research"
             )
             observability.record(
-                "coverage_missing_total", len(missing_items), workflow="company_research"
+                "coverage_missing_total",
+                len(missing_items),
+                workflow="company_research",
             )
         return {
             "investigations": investigations,
@@ -1027,11 +1053,13 @@ class ResearchNodes:
             score += 25
         elif "engineering" in path or "engineering" in text:
             score += 15
-        if any(token in path or token in text for token in ("blog", "technology", "product")):
+        if any(
+            token in path or token in text
+            for token in ("blog", "technology", "product")
+        ):
             score += 8
         missing = [
-            item for item in (coverage or [])
-            if item.status is CoverageStatus.MISSING
+            item for item in (coverage or []) if item.status is CoverageStatus.MISSING
         ]
         for item in missing:
             subject_match = bool(item.subject and item.subject.casefold() in text)
@@ -1055,6 +1083,45 @@ class ResearchNodes:
         }:
             score -= 25
         return score
+
+    async def qualify_companies(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, object]:
+        """Qualify final persisted evidence only after every investigation stops."""
+        if state["active_company_ids"] or any(
+            not state["investigations"][company.id].stopped
+            for company in state["research_companies"]
+        ):
+            raise ValueError("Qualification requires all investigations to be terminal")
+        campaign = self._campaign(state)
+        results: dict[UUID, CompanyQualification] = {}
+        observability = get_observability()
+        for company in state["research_companies"]:
+            evidence = await self._research.list_evidence_for_company(company.id)
+            result = aggregate_qualification(
+                company.id, qualify_company(campaign, evidence)
+            )
+            metadata = {
+                "company_id": str(company.id),
+                "company_name": company.name,
+                "qualification_status": result.status.value,
+                "criteria_total": len(result.criteria),
+                "criteria_match": sum(
+                    item.status is QualificationStatus.MATCH for item in result.criteria
+                ),
+                "criteria_mismatch": sum(
+                    item.status is QualificationStatus.MISMATCH
+                    for item in result.criteria
+                ),
+                "criteria_unknown": sum(
+                    item.status is QualificationStatus.UNKNOWN
+                    for item in result.criteria
+                ),
+            }
+            with observability.span("company_qualification", **metadata):
+                observability.event("company_qualified", **metadata)
+            results[company.id] = result
+        return {"company_qualifications": results}
 
     async def complete_research_run(
         self, state: ResearchWorkflowState
@@ -1082,7 +1149,8 @@ class ResearchNodes:
             )
         )
         return [
-            company for company in state["research_companies"]
+            company
+            for company in state["research_companies"]
             if company.id in active_ids
         ]
 
@@ -1149,12 +1217,18 @@ class ResearchNodes:
         if isinstance(campaign.technologies, list):
             return [str(item) for item in campaign.technologies if str(item).strip()]
         if isinstance(campaign.technologies, dict):
-            return [str(item) for item in campaign.technologies.values() if str(item).strip()]
+            return [
+                str(item)
+                for item in campaign.technologies.values()
+                if str(item).strip()
+            ]
         return []
 
     @staticmethod
     def _compact(value: str) -> str:
-        return "".join(character for character in value.casefold() if character.isalnum())
+        return "".join(
+            character for character in value.casefold() if character.isalnum()
+        )
 
     @classmethod
     def _deduplicate_evidence(

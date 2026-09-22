@@ -51,3 +51,24 @@ fetches a bounded set of company-correlated candidate URLs into readable transie
 it does not create Evidence records. Fetches are limited by `WEB_FETCH_TIMEOUT_SECONDS`,
 `WEB_FETCH_MAX_RESPONSE_BYTES`, `WEB_FETCH_MAX_CONTENT_CHARS`,
 `WEB_FETCH_CONCURRENCY`, and `COMPANY_RESEARCH_MAX_FETCHES_PER_COMPANY`.
+
+## Qualification
+
+After every company investigation is terminal, `qualify_companies` evaluates all
+persisted Evidence for each researched company, including evidence from earlier
+runs. Coverage remains a separate current-run presence check. Both stages share
+conservative subject normalization and the one-way Spring Boot → Spring implication.
+
+Qualification uses no LLM, search, or page fetch. Criteria are MATCH, MISMATCH, or
+UNKNOWN; missing evidence never means mismatch. Any explicit mismatch produces
+NOT_QUALIFIED, otherwise unknown criteria produce INSUFFICIENT_EVIDENCE, otherwise
+QUALIFIED (including a campaign with no configured criteria). Narrow subject-bound
+negative claims are supported; ambiguous wording and contradictory evidence remain
+UNKNOWN. Size qualification accepts exact employee counts and inclusive, optionally
+one-sided bounds; approximate counts and ranges are not interpreted.
+
+Results and supporting evidence IDs are transient in LangGraph's
+`company_qualifications` state. They do not change campaign-target records or the
+public research response. Company qualification spans contain status and criterion
+counts, never source documents. Evidence extraction continues to request positive
+facts; qualification does not add further research or change extraction semantics.

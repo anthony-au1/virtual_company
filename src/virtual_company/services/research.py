@@ -100,7 +100,9 @@ class ResearchService:
             companies=persisted_companies,
         )
 
-    async def complete_run(self, research_run_id: UUID, companies_found: int) -> ResearchRun:
+    async def complete_run(
+        self, research_run_id: UUID, companies_found: int
+    ) -> ResearchRun:
         """Mark a run complete and commit its associated persistence work."""
         run = await self._runs.update(
             research_run_id,
@@ -134,7 +136,9 @@ class ResearchService:
             await self._evidence.create(item)
             seen.add(key)
             created_count += 1
-            created_by_company[item.company_id] = created_by_company.get(item.company_id, 0) + 1
+            created_by_company[item.company_id] = (
+                created_by_company.get(item.company_id, 0) + 1
+            )
         return PersistedEvidence(
             created_count=created_count,
             skipped_count=skipped_count,
@@ -144,6 +148,10 @@ class ResearchService:
     async def list_evidence_for_run(self, research_run_id: UUID) -> list[Evidence]:
         """Load all accumulated Evidence for one research execution."""
         return await self._evidence.list_by_research_run_id(research_run_id)
+
+    async def list_evidence_for_company(self, company_id: UUID) -> list[Evidence]:
+        """Load persisted company evidence across research runs."""
+        return await self._evidence.list_by_company_id(company_id)
 
     async def fail_run(self, research_run_id: UUID, error: str) -> ResearchRun:
         """Discard uncommitted work and persist a failed run."""

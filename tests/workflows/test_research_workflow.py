@@ -86,12 +86,16 @@ class ResearchServiceFake:
     async def complete_run(self, run_id: UUID, companies_found: int) -> None:
         self.runs[run_id].status = "COMPLETED"
 
-    async def persist_evidence(self, *, research_run_id: UUID, evidence: list[object]) -> SimpleNamespace:
+    async def persist_evidence(
+        self, *, research_run_id: UUID, evidence: list[object]
+    ) -> SimpleNamespace:
         created_by_company: dict[UUID, int] = {}
         for item in evidence:
             stored = SimpleNamespace(id=uuid4(), **item.model_dump())
             self.evidence.append(stored)
-            created_by_company[item.company_id] = created_by_company.get(item.company_id, 0) + 1
+            created_by_company[item.company_id] = (
+                created_by_company.get(item.company_id, 0) + 1
+            )
         return SimpleNamespace(
             created_count=len(evidence),
             skipped_count=0,
@@ -100,6 +104,11 @@ class ResearchServiceFake:
 
     async def list_evidence_for_run(self, run_id: UUID) -> list[SimpleNamespace]:
         return [item for item in self.evidence if item.research_run_id == run_id]
+
+    async def list_evidence_for_company(
+        self, company_id: UUID
+    ) -> list[SimpleNamespace]:
+        return [item for item in self.evidence if item.company_id == company_id]
 
     async def fail_run(self, run_id: UUID, error: str) -> None:
         self.runs[run_id].status = "FAILED"
@@ -140,7 +149,9 @@ class ExtractionFake:
         self.prompts.append(prompt)
         model = kwargs["response_model"]
         if model is CompanyPageAttribution:
-            return CompanyPageAttribution(attributable=True, reason="The page concerns the company.")
+            return CompanyPageAttribution(
+                attributable=True, reason="The page concerns the company."
+            )
         if model is ExtractedEvidenceItems:
             return ExtractedEvidenceItems(evidence=[])
         self.active += 1
@@ -374,14 +385,33 @@ async def test_unknown_campaign_does_not_create_run() -> None:
 @pytest.mark.asyncio
 async def test_source_selection_deduplicates_and_prefers_first_party_pages() -> None:
     model = campaign()
-    company = ResearchCompany(id=uuid4(), name="Acme", website=None, domain="acme.example")
+    company = ResearchCompany(
+        id=uuid4(), name="Acme", website=None, domain="acme.example"
+    )
     sources = [
-        SearchResult(title="Profile", url="https://directory.example/acme", snippet="Company profile"),
+        SearchResult(
+            title="Profile",
+            url="https://directory.example/acme",
+            snippet="Company profile",
+        ),
         SearchResult(title="Acme", url="https://acme.example/", snippet=None),
-        SearchResult(title="Backend jobs", url="https://acme.example/careers/backend", snippet="Java"),
-        SearchResult(title="Duplicate", url="https://acme.example/careers/backend?utm_source=search"),
-        SearchResult(title="Engineering", url="https://acme.example/blog/engineering", snippet="Platform"),
-        SearchResult(title="Independent", url="https://news.example/acme", snippet="Funding"),
+        SearchResult(
+            title="Backend jobs",
+            url="https://acme.example/careers/backend",
+            snippet="Java",
+        ),
+        SearchResult(
+            title="Duplicate",
+            url="https://acme.example/careers/backend?utm_source=search",
+        ),
+        SearchResult(
+            title="Engineering",
+            url="https://acme.example/blog/engineering",
+            snippet="Platform",
+        ),
+        SearchResult(
+            title="Independent", url="https://news.example/acme", snippet="Funding"
+        ),
     ]
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
     nodes._company_research_max_fetches_per_company = 3
@@ -422,7 +452,10 @@ async def test_fetch_sources_retains_partial_successes() -> None:
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
     nodes._web_fetch = fetch
     output = await nodes.fetch_company_sources(
-        {"research_companies": [company_a, company_b], "selected_company_sources": sources}
+        {
+            "research_companies": [company_a, company_b],
+            "selected_company_sources": sources,
+        }
     )  # type: ignore[arg-type]
     assert [page.content for page in output["company_web_pages"][company_a.id]] == ["A"]
     assert [page.content for page in output["company_web_pages"][company_b.id]] == ["B"]
@@ -434,9 +467,13 @@ async def test_fetch_sources_retains_partial_successes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_evidence_extraction_validates_provenance_whitespace_and_duplicates() -> None:
+async def test_evidence_extraction_validates_provenance_whitespace_and_duplicates() -> (
+    None
+):
     model = campaign()
-    company = ResearchCompany(id=uuid4(), name="Acme", website=None, domain="acme.example")
+    company = ResearchCompany(
+        id=uuid4(), name="Acme", website=None, domain="acme.example"
+    )
     page = WebPage(
         url="https://acme.example/jobs/backend",
         title="Backend Engineer",
@@ -465,14 +502,20 @@ async def test_evidence_extraction_validates_provenance_whitespace_and_duplicate
     assert evidence[0].source_url == page.url
     assert evidence[0].source_title == page.title
     assert evidence[0].subject == "Java"
-    assert "\"technologies\":[\"Java\",\"Spring Boot\",\"Kafka\"]" in fake.prompts[0]
+    assert '"technologies":["Java","Spring Boot","Kafka"]' in fake.prompts[0]
 
 
 @pytest.mark.asyncio
-async def test_evidence_extraction_rejects_absent_excerpt_and_continues_after_failure() -> None:
+async def test_evidence_extraction_rejects_absent_excerpt_and_continues_after_failure() -> (
+    None
+):
     model = campaign()
-    company = ResearchCompany(id=uuid4(), name="Acme", website=None, domain="acme.example")
-    valid_page = WebPage(url="https://acme.example/one", content="We use Java for backend services.")
+    company = ResearchCompany(
+        id=uuid4(), name="Acme", website=None, domain="acme.example"
+    )
+    valid_page = WebPage(
+        url="https://acme.example/one", content="We use Java for backend services."
+    )
     failed_page = WebPage(url="https://acme.example/two", content="Unused")
     invalid = ExtractedEvidence(
         criterion=EvidenceCriterion.TECHNOLOGY,
@@ -480,7 +523,9 @@ async def test_evidence_extraction_rejects_absent_excerpt_and_continues_after_fa
         claim="Acme uses Kafka.",
         evidence_text="Our platform is built with Java and Kafka.",
     )
-    fake = EvidenceExtractionFake({valid_page.url: [invalid], failed_page.url: RuntimeError("timeout")})
+    fake = EvidenceExtractionFake(
+        {valid_page.url: [invalid], failed_page.url: RuntimeError("timeout")}
+    )
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
     nodes._extraction_llm = fake
     output = await nodes.extract_company_evidence(
@@ -495,11 +540,15 @@ async def test_evidence_extraction_rejects_absent_excerpt_and_continues_after_fa
 
 
 @pytest.mark.asyncio
-async def test_evidence_extraction_preserves_explicit_size_and_geography_precision() -> None:
+async def test_evidence_extraction_preserves_explicit_size_and_geography_precision() -> (
+    None
+):
     model = campaign()
     model.company_size_min = 100
     model.company_size_max = 500
-    company = ResearchCompany(id=uuid4(), name="Acme", website=None, domain="acme.example")
+    company = ResearchCompany(
+        id=uuid4(), name="Acme", website=None, domain="acme.example"
+    )
     page = WebPage(
         url="https://acme.example/careers",
         content="Join our Melbourne engineering team. Our global team has more than 300 employees.",
@@ -530,10 +579,14 @@ async def test_evidence_extraction_preserves_explicit_size_and_geography_precisi
             "research_run_id": uuid4(),
             "research_companies": [company],
             "company_web_pages": {company.id: [page]},
-            "selected_company_sources": {company.id: [SearchResult(title="Careers", url=page.url)]},
+            "selected_company_sources": {
+                company.id: [SearchResult(title="Careers", url=page.url)]
+            },
         }
     )  # type: ignore[arg-type]
-    assert [(item.criterion, item.subject) for item in output["validated_evidence"]] == [
+    assert [
+        (item.criterion, item.subject) for item in output["validated_evidence"]
+    ] == [
         (EvidenceCriterion.TARGET_MARKET, "Australia"),
         (EvidenceCriterion.COMPANY_SIZE, "more than 300 employees"),
     ]
@@ -565,7 +618,9 @@ async def test_evidence_persistence_is_idempotent_within_one_research_run() -> N
         evidence_text="We use Java.",
         source_url="https://acme.example/engineering",
     )
-    first = await service.persist_evidence(research_run_id=run_id, evidence=[item, item])
+    first = await service.persist_evidence(
+        research_run_id=run_id, evidence=[item, item]
+    )
     second = await service.persist_evidence(research_run_id=run_id, evidence=[item])
     assert (first.created_count, first.skipped_count) == (1, 1)
     assert (second.created_count, second.skipped_count) == (0, 1)
@@ -635,7 +690,9 @@ async def test_attempted_urls_are_not_selected_or_fetched_again() -> None:
             },
         }
     )  # type: ignore[arg-type]
-    assert [item.url for item in output["selected_company_sources"][company.id]] == [new_url]
+    assert [item.url for item in output["selected_company_sources"][company.id]] == [
+        new_url
+    ]
     assert output["investigations"][company.id].attempted_urls == {old_url, new_url}
 
 
@@ -652,8 +709,11 @@ async def test_coverage_stops_companies_independently() -> None:
     service = ResearchServiceFake()
     service.evidence = [
         SimpleNamespace(
-            id=uuid4(), company_id=complete.id, research_run_id=run_id,
-            criterion="technology", subject="Kafka"
+            id=uuid4(),
+            company_id=complete.id,
+            research_run_id=run_id,
+            criterion="technology",
+            subject="Kafka",
         )
     ]
     nodes = ResearchNodes(
@@ -673,12 +733,16 @@ async def test_coverage_stops_companies_independently() -> None:
             "investigations": {
                 complete.id: CompanyInvestigationState(company_id=complete.id),
                 stalled.id: CompanyInvestigationState(
-                    company_id=stalled.id, round=1, missing_before=1,
-                    new_evidence_count=0
+                    company_id=stalled.id,
+                    round=1,
+                    missing_before=1,
+                    new_evidence_count=0,
                 ),
                 progressing.id: CompanyInvestigationState(
-                    company_id=progressing.id, round=1, missing_before=2,
-                    new_evidence_count=1
+                    company_id=progressing.id,
+                    round=1,
+                    missing_before=2,
+                    new_evidence_count=1,
                 ),
             },
         }
@@ -749,3 +813,102 @@ async def test_adaptive_pages_must_pass_attribution() -> None:
         }
     )  # type: ignore[arg-type]
     assert output["attributable_company_web_pages"][company.id] == []
+
+
+@pytest.mark.asyncio
+async def test_qualification_reads_all_company_evidence_without_external_calls() -> (
+    None
+):
+    from virtual_company.domain.qualification import CompanyQualificationStatus
+
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = ["spring", "spring boot"]
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    company_id = uuid4()
+    old = SimpleNamespace(
+        id=uuid4(),
+        company_id=company_id,
+        research_run_id=uuid4(),
+        criterion="technology",
+        subject="Spring Boot",
+        claim="Uses Spring Boot.",
+        evidence_text="Uses Spring Boot.",
+    )
+    nodes._research.evidence = [old]
+    state = {
+        "campaign": model,
+        "research_companies": [ResearchCompany(id=company_id, name="Acme")],
+        "investigations": {
+            company_id: CompanyInvestigationState(company_id=company_id, stopped=True)
+        },
+        "active_company_ids": [],
+        "validated_evidence": [],
+        "research_run_id": uuid4(),
+    }
+    result = (await nodes.qualify_companies(state))["company_qualifications"][
+        company_id
+    ]
+    assert result.status is CompanyQualificationStatus.QUALIFIED
+    assert all(item.evidence_ids == [old.id] for item in result.criteria)
+    assert not nodes._research_llm.prompts
+    state["investigations"][company_id].stopped = False
+    with pytest.raises(ValueError, match="terminal"):
+        await nodes.qualify_companies(state)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rounds", [0, 2])
+async def test_graph_qualifies_once_after_terminal_before_completion(
+    monkeypatch: pytest.MonkeyPatch, rounds: int
+) -> None:
+    events = []
+    original = ResearchNodes.qualify_companies
+
+    async def qualify(nodes: ResearchNodes, state: dict) -> dict:
+        assert not state["active_company_ids"]
+        assert all(item.stopped for item in state["investigations"].values())
+        events.append("qualify")
+        result = await original(nodes, state)
+        assert len(result["company_qualifications"]) == 1
+        return result
+
+    async def complete(nodes: ResearchNodes, state: dict) -> dict:
+        assert len(state["company_qualifications"]) == 1
+        events.append("complete")
+        return {"error": None}
+
+    monkeypatch.setattr(ResearchNodes, "qualify_companies", qualify)
+    monkeypatch.setattr(ResearchNodes, "complete_research_run", complete)
+    model = campaign()
+    url = "https://acme.example"
+    workflow = ResearchWorkflow(
+        campaigns=CampaignServiceFake(model),
+        research=ResearchServiceFake(),
+        research_llm=ResearchFake([found("Acme", [url])]),
+        extraction_llm=ExtractionFake({url: [ExtractedCompanyIdentity(name="Acme")]}),
+        web_search=SearchFake([SearchResult(title="Acme", url=url)]),
+        web_fetch=FetchFake({}),
+        settings=Settings(company_research_max_investigation_rounds=rounds),
+    )
+    await workflow.run(model.id)
+    assert events == ["qualify", "complete"]
+
+
+@pytest.mark.asyncio
+async def test_qualification_failure_marks_run_failed() -> None:
+    from virtual_company.workflows.research.graph import _with_failure_handling
+
+    service = ResearchServiceFake()
+    run = await service.create_run(uuid4())
+
+    async def failing_qualification(state: dict) -> dict:
+        raise RuntimeError("Evidence read failed")
+
+    wrapped = _with_failure_handling(
+        failing_qualification, "qualify_companies", service
+    )
+    with pytest.raises(RuntimeError, match="Evidence read failed"):
+        await wrapped({"research_run_id": run.id})
+    assert run.status == "FAILED"

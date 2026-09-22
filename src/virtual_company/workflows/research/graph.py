@@ -108,6 +108,7 @@ class ResearchWorkflow:
                         "investigations": {},
                         "active_company_ids": [],
                         "adaptive_mode": False,
+                        "company_qualifications": {},
                         "error": None,
                     },
                     config={"recursion_limit": 100},
@@ -234,6 +235,10 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         ),
     )
     graph.add_node(
+        "qualify_companies",
+        _with_failure_handling(nodes.qualify_companies, "qualify_companies", research),
+    )
+    graph.add_node(
         "complete_research_run",
         _with_failure_handling(
             nodes.complete_research_run, "complete_research_run", research
@@ -260,10 +265,11 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         route_investigation,
         {
             "follow_up": "generate_followup_queries",
-            "done": "complete_research_run",
+            "done": "qualify_companies",
         },
     )
     graph.add_edge("generate_followup_queries", "search_company_sources")
+    graph.add_edge("qualify_companies", "complete_research_run")
     graph.add_edge("complete_research_run", END)
     return graph.compile()
 

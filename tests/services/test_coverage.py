@@ -68,7 +68,9 @@ def test_sparse_and_zero_evidence_are_missing_without_qualification() -> None:
     coverage = assess_evidence_coverage(
         make_campaign(), evidence, company_id=company_id, research_run_id=run_id
     )
-    assert [result.subject for result in coverage if result.status is CoverageStatus.MISSING] == [
+    assert [
+        result.subject for result in coverage if result.status is CoverageStatus.MISSING
+    ] == [
         "java",
         "spring",
         "spring boot",
@@ -93,10 +95,32 @@ def test_criteria_are_dynamic_and_evidence_is_run_and_company_scoped() -> None:
     coverage = assess_evidence_coverage(
         campaign, evidence, company_id=company_id, research_run_id=run_id
     )
-    technologies = [result.subject for result in coverage if result.criterion == "technology"]
+    technologies = [
+        result.subject for result in coverage if result.criterion == "technology"
+    ]
     assert technologies == ["python", "django", "postgresql"]
     assert all(
         result.status is CoverageStatus.MISSING
         for result in coverage
         if result.criterion == "technology"
     )
+
+
+def test_coverage_implication_is_directional_and_retains_ids() -> None:
+    company_id, run_id = uuid4(), uuid4()
+    for subject, expected in [
+        ("Spring Boot", [CoverageStatus.FOUND, CoverageStatus.FOUND]),
+        ("Spring", [CoverageStatus.FOUND, CoverageStatus.MISSING]),
+    ]:
+        source = item(company_id, run_id, "technology", subject)
+        coverage = assess_evidence_coverage(
+            make_campaign(technologies=["spring", "spring boot"]),
+            [source],
+            company_id=company_id,
+            research_run_id=run_id,
+        )
+        technologies = [
+            result for result in coverage if result.criterion == "technology"
+        ]
+        assert [result.status for result in technologies] == expected
+        assert technologies[0].evidence_ids == [source.id]

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TypedDict
 from uuid import UUID
 
+from virtual_company.domain.qualification import CompanyQualification
 from virtual_company.research.models import DiscoveredCompany, SearchResult, WebPage
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
@@ -38,4 +39,5 @@ class ResearchWorkflowState(TypedDict):
     investigations: dict[UUID, CompanyInvestigationState]
     active_company_ids: list[UUID]
     adaptive_mode: bool
+    company_qualifications: dict[UUID, CompanyQualification]
     error: str | None
