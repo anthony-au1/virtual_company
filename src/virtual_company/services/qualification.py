@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
@@ -37,12 +38,44 @@ _NEGATIVES = {
     "industry": r"\bis not (?:a|an) (.+?) company[.!]?$",
 }
 _NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
-_COUNT = re.compile(rf"(?<![\w.,+−-])({_NUMBER})\s+employees\b", re.IGNORECASE)
-_INEXACT_SIZE = re.compile(
-    r"\b(about|around|approximately|roughly|over|under|more|less|than|at least|"
-    r"at most|between|nearly|up to|not|no|former|previously)\b|[+~<>]|\d\s*[-–—]\s*\d",
+_OPERATOR = r"over|more than|at least|under|fewer than|less than|up to"
+_SIZE_VALUE = rf"(?P<operator>{_OPERATOR})?\s*(?P<count>{_NUMBER})(?P<plus>\+)?"
+_COUNT = re.compile(
+    rf"(?<![\w.,+−-]){_SIZE_VALUE}\s+(?:employees|staff|people)\b",
     re.IGNORECASE,
 )
+_TEAM_COUNT = re.compile(
+    rf"\b(?:team|workforce)\s+of\s+{_SIZE_VALUE}(?![\w,+%−-]|\.\d)",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_SIZE = re.compile(
+    r"\b(about|around|approximately|roughly|at most|between|nearly|"
+    r"not|no|never|without|unknown|unclear|former|formerly|previously|might|may|possibly|"
+    r"million|billion|thousand)\b|[~<>%]|"
+    r"\d\s*(?:[-–—]|to)\s*\d",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class EmployeeCountBounds:
+    lower: int | None
+    upper: int | None
+
+
+def _intersect_bounds(bounds: Sequence[EmployeeCountBounds]) -> EmployeeCountBounds:
+    return EmployeeCountBounds(
+        max((value.lower for value in bounds if value.lower is not None), default=None),
+        min((value.upper for value in bounds if value.upper is not None), default=None),
+    )
+
+
+def _contradictory(bounds: EmployeeCountBounds) -> bool:
+    return (
+        bounds.lower is not None
+        and bounds.upper is not None
+        and bounds.lower > bounds.upper
+    )
 
 
 def _polarity(item: EvidenceForQualification) -> QualificationStatus:
@@ -63,37 +96,105 @@ def _polarity(item: EvidenceForQualification) -> QualificationStatus:
     return signals[0]
 
 
-def _size_counts(item: EvidenceForQualification) -> set[int]:
-    texts = (item.subject or "", item.claim, item.evidence_text)
-    # A numeric subject must not strengthen an explicitly approximate source.
-    if any(_INEXACT_SIZE.search(text) for text in texts):
-        return set()
-    counts: set[int] = set()
+def _parse_size_text(text: str) -> list[EmployeeCountBounds]:
+    values: list[EmployeeCountBounds] = []
+    for pattern in (_COUNT, _TEAM_COUNT):
+        for match in pattern.finditer(text):
+            count = int(match["count"].replace(",", ""))
+            operator = (match["operator"] or "").lower()
+            if operator in {"over", "more than"}:
+                values.append(EmployeeCountBounds(count + 1, None))
+            elif operator == "at least" or match["plus"]:
+                values.append(EmployeeCountBounds(count, None))
+            elif operator in {"under", "fewer than", "less than"}:
+                values.append(EmployeeCountBounds(None, count - 1))
+            elif operator == "up to":
+                values.append(EmployeeCountBounds(None, count))
+            else:
+                values.append(EmployeeCountBounds(count, count))
+    return values
+
+
+def _size_bounds(item: EvidenceForQualification) -> EmployeeCountBounds | None:
     subject = (item.subject or "").strip()
+    texts = tuple(
+        " ".join(text.split()) for text in (item.evidence_text, item.claim, subject)
+    )
+    # Neither extraction summaries nor numeric subjects may erase uncertainty.
+    if any(_UNSUPPORTED_SIZE.search(text) for text in texts):
+        return None
+    values = [value for text in texts for value in _parse_size_text(text)]
     if re.fullmatch(_NUMBER, subject):
-        counts.add(int(subject.replace(",", "")))
-    for text in texts:
-        counts.update(int(match[1].replace(",", "")) for match in _COUNT.finditer(text))
-    return counts
+        count = int(subject.replace(",", ""))
+        # Preserve legacy numeric subjects, but don't strengthen inequalities.
+        if not values or all(value.lower == value.upper for value in values):
+            values.append(EmployeeCountBounds(count, count))
+    return _intersect_bounds(values) if values else None
+
+
+def _describe_size(bounds: EmployeeCountBounds) -> str:
+    if bounds.lower == bounds.upper:
+        return f"{bounds.lower} employees"
+    if bounds.upper is None:
+        return f"at least {bounds.lower} employees"
+    if bounds.lower is None:
+        return f"at most {bounds.upper} employees"
+    return f"between {bounds.lower} and {bounds.upper} employees"
+
+
+def _evaluate_size(
+    campaign: CampaignForQualification, bounds: EmployeeCountBounds
+) -> tuple[QualificationStatus, str]:
+    minimum, maximum = campaign.company_size_min, campaign.company_size_max
+    prefix = f"Validated evidence establishes {_describe_size(bounds)}"
+    if minimum is not None and bounds.upper is not None and bounds.upper < minimum:
+        return (
+            QualificationStatus.MISMATCH,
+            f"{prefix}, below the campaign minimum of {minimum}.",
+        )
+    if maximum is not None and bounds.lower is not None and bounds.lower > maximum:
+        return (
+            QualificationStatus.MISMATCH,
+            f"{prefix}, exceeding the campaign maximum of {maximum}.",
+        )
+    minimum_met = minimum is None or (
+        bounds.lower is not None and bounds.lower >= minimum
+    )
+    maximum_met = maximum is None or (
+        bounds.upper is not None and bounds.upper <= maximum
+    )
+    if minimum_met and maximum_met:
+        constraint = (
+            f"range of {minimum} to {maximum}"
+            if minimum is not None and maximum is not None
+            else f"minimum of {minimum}"
+            if minimum is not None
+            else f"maximum of {maximum}"
+        )
+        return (
+            QualificationStatus.MATCH,
+            f"{prefix}, satisfying the campaign {constraint}.",
+        )
+    return (
+        QualificationStatus.UNKNOWN,
+        "Available company-size evidence does not establish whether the company satisfies the campaign size constraint.",
+    )
 
 
 def _qualify_size(
     campaign: CampaignForQualification, evidence: Sequence[EvidenceForQualification]
 ) -> CriterionQualification:
     ids = sorted({item.id for item in evidence}, key=str)
-    parsed = [_size_counts(item) for item in evidence]
-    counts = {count for values in parsed for count in values}
+    parsed = [_size_bounds(item) for item in evidence]
+    bounds = _intersect_bounds([value for value in parsed if value is not None])
     status = QualificationStatus.UNKNOWN
-    reason = "No validated evidence establishes an exact company employee count."
-    if len(counts) > 1:
+    reason = "Available company-size evidence does not establish whether the company satisfies the campaign size constraint."
+    if not evidence:
+        reason = "No validated company-size evidence is available."
+    elif _contradictory(bounds):
         reason = "Available evidence contains conflicting company-size information."
-    elif counts and all(parsed):
-        count = next(iter(counts))
-        inside = (
-            campaign.company_size_min is None or count >= campaign.company_size_min
-        ) and (campaign.company_size_max is None or count <= campaign.company_size_max)
-        status = QualificationStatus.MATCH if inside else QualificationStatus.MISMATCH
-        reason = f"Explicit employee count {count} is {'within' if inside else 'outside'} the configured bounds."
+    elif all(value is not None for value in parsed):
+        status, reason = _evaluate_size(campaign, bounds)
     return CriterionQualification("company_size", None, status, ids, reason)
 
 

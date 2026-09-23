@@ -167,7 +167,7 @@ def test_negative_does_not_propagate_implication() -> None:
         (["450", "470"], Status.UNKNOWN),
         (["100"], Status.MATCH),
         (["500"], Status.MATCH),
-        (["2300+ employees"], Status.UNKNOWN),
+        (["2300+ employees"], Status.MISMATCH),
         (["more than 300 employees"], Status.UNKNOWN),
         (["100–500 employees"], Status.UNKNOWN),
         (["about 230 employees"], Status.UNKNOWN),
@@ -236,3 +236,171 @@ def test_claim_excerpt_polarity_conflict() -> None:
     item = evidence("technology", "java", "Acme uses Java.")
     item.evidence_text = "Acme does not use Java."
     assert qualify_company(campaign(), [item])[2].status is Status.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "text,lower,upper",
+    [
+        ("1300 employees", 1300, 1300),
+        ("1,300 employees", 1300, 1300),
+        ("1300 staff", 1300, 1300),
+        ("1,300 staff", 1300, 1300),
+        ("2300 people", 2300, 2300),
+        ("2,300 people", 2300, 2300),
+        ("over 2300 employees", 2301, None),
+        ("over 2,300 people", 2301, None),
+        ("more than 2300 employees", 2301, None),
+        ("at least 2300 employees", 2300, None),
+        ("2300+ employees", 2300, None),
+        ("under 500 employees", None, 499),
+        ("fewer than 500 employees", None, 499),
+        ("less than 500 employees", None, 499),
+        ("up to 500 employees", None, 500),
+        ("workforce of 1300", 1300, 1300),
+        ("A team of 1300.", 1300, 1300),
+        ("more than\n2300 employees", 2301, None),
+    ],
+)
+def test_employee_bounds_parser(
+    text: str, lower: int | None, upper: int | None
+) -> None:
+    from virtual_company.services.qualification import EmployeeCountBounds, _size_bounds
+
+    assert _size_bounds(evidence("company_size", None, text)) == EmployeeCountBounds(
+        lower, upper
+    )
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("1300 employees", (Status.MATCH, Status.MISMATCH, Status.MATCH)),
+        ("over 2300 employees", (Status.MATCH, Status.MISMATCH, Status.MISMATCH)),
+        ("500 employees", (Status.MATCH, Status.MATCH, Status.MATCH)),
+        ("100 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
+        ("300 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
+        ("2300 employees", (Status.MATCH, Status.MISMATCH, Status.MISMATCH)),
+        ("under 300 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
+        ("over 100 employees", (Status.UNKNOWN, Status.UNKNOWN, Status.UNKNOWN)),
+        ("under 1000 employees", (Status.UNKNOWN, Status.UNKNOWN, Status.UNKNOWN)),
+        ("over 1000 employees", (Status.MATCH, Status.MISMATCH, Status.UNKNOWN)),
+        ("under 1500 employees", (Status.UNKNOWN, Status.UNKNOWN, Status.UNKNOWN)),
+        ("under 500 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
+        ("up to 500 employees", (Status.UNKNOWN, Status.MATCH, Status.UNKNOWN)),
+        ("at least 500 employees", (Status.MATCH, Status.UNKNOWN, Status.UNKNOWN)),
+        ("over 500 employees", (Status.MATCH, Status.MISMATCH, Status.UNKNOWN)),
+        ("2000 employees", (Status.MATCH, Status.MISMATCH, Status.MATCH)),
+    ],
+)
+def test_size_constraint_matrix(text: str, expected: tuple[Status, ...]) -> None:
+    for (minimum, maximum), status in zip(
+        [(500, None), (None, 500), (500, 2000)], expected, strict=True
+    ):
+        result = qualify_company(
+            campaign(company_size_min=minimum, company_size_max=maximum),
+            [evidence("company_size", None, text)],
+        )[-1]
+        assert result.status is status
+
+
+@pytest.mark.parametrize(
+    "texts,expected",
+    [
+        (["over 1000 employees", "1300 employees"], Status.MATCH),
+        (
+            ["over 2300 employees", "over 2300 people", "2300+ employees"],
+            Status.MISMATCH,
+        ),
+        (["at least 500 employees", "up to 2000 employees"], Status.MATCH),
+        (["230 employees", "2300 employees"], Status.UNKNOWN),
+        (["1300 employees", "unknown workforce"], Status.UNKNOWN),
+    ],
+)
+def test_size_intersection(texts: list[str], expected: Status) -> None:
+    items = [evidence("company_size", None, text) for text in texts]
+    config = campaign(company_size_min=500, company_size_max=2000)
+    result = qualify_company(config, items)[-1]
+    assert result.status is expected
+    assert result.evidence_ids == sorted((item.id for item in items), key=str)
+    assert qualify_company(config, items[::-1])[-1] == result
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Afterpay Australia’s 1300 staff",
+        "we have a team of over 2,300 of the brightest and most innovative people in tech",
+    ],
+)
+def test_real_run_size_regression(text: str) -> None:
+    size = evidence("company_size", None, text)
+    items = [
+        evidence("target_market", "Australia"),
+        evidence("industry", "fin tech"),
+        size,
+    ]
+    items += [
+        evidence("technology", name)
+        for name in ["java", "spring", "spring boot", "kafka"]
+    ]
+    criteria = qualify_company(campaign(company_size_min=500), items)
+    assert criteria[-1].status is Status.MATCH
+    assert criteria[-1].evidence_ids == [size.id]
+    assert aggregate_qualification(uuid4(), criteria).status is Overall.QUALIFIED
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Revenue of 1300 dollars",
+        "100 to 500 employees",
+        "team of 2 million people",
+        "team of 1.300 people",
+        "Founded in 1300",
+        "1.300 employees",
+        "100–500 employees",
+        "about 1300 employees",
+        "around 1300 employees",
+        "approximately 1300 employees",
+        "not over 2300 employees",
+    ],
+)
+def test_unusable_size_text(text: str) -> None:
+    result = qualify_company(
+        campaign(company_size_min=500), [evidence("company_size", None, text)]
+    )[-1]
+    assert result.status is Status.UNKNOWN
+    assert (
+        result.reason
+        == "Available company-size evidence does not establish whether the company satisfies the campaign size constraint."
+    )
+
+
+def test_numeric_subject_does_not_strengthen_bound() -> None:
+    item = evidence("company_size", "1000", "over 1000 employees")
+    assert (
+        qualify_company(campaign(company_size_min=500, company_size_max=2000), [item])[
+            -1
+        ].status
+        is Status.UNKNOWN
+    )
+
+
+def test_size_reasons_and_field_conflict() -> None:
+    config = campaign(company_size_min=500)
+    assert (
+        qualify_company(config, [])[-1].reason
+        == "No validated company-size evidence is available."
+    )
+    item = evidence("company_size", None, "at least 2300 employees")
+    assert (
+        qualify_company(config, [item])[-1].reason
+        == "Validated evidence establishes at least 2300 employees, satisfying the campaign minimum of 500."
+    )
+    item.claim = "230 employees"
+    assert qualify_company(config, [item])[-1].status is Status.UNKNOWN
+    item = evidence("company_size", None, "2300 employees")
+    assert (
+        qualify_company(campaign(company_size_max=500), [item])[-1].reason
+        == "Validated evidence establishes 2300 employees, exceeding the campaign maximum of 500."
+    )
