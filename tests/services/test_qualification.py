@@ -461,3 +461,64 @@ def test_size_reasons_and_field_conflict() -> None:
         qualify_company(campaign(company_size_max=500), [item])[-1].reason
         == "Validated evidence establishes 2300 employees, exceeding the campaign maximum of 500."
     )
+
+
+@pytest.mark.parametrize(
+    "text,lower",
+    [
+        ("+600 employees", 600),
+        ("+600 global employees", 600),
+        ("+2,300 employees", 2300),
+        ("+2,300 people", 2300),
+        ("+2,300 staff", 2300),
+        ("team of +600 people", 600),
+    ],
+)
+def test_prefix_plus_size_bounds(text: str, lower: int) -> None:
+    from virtual_company.services.qualification import EmployeeCountBounds, _size_bounds
+
+    item = evidence("company_size", None, text)
+    assert _size_bounds(item) == EmployeeCountBounds(lower, None)
+    result = qualify_company(campaign(company_size_min=500), [item])[-1]
+    assert result.status is Status.MATCH
+    assert result.evidence_ids == [item.id]
+
+
+def test_prefix_plus_cover_genius_regression() -> None:
+    from virtual_company.services.qualification import (
+        EmployeeCountBounds,
+        _parse_size_text,
+        _size_bounds,
+    )
+
+    item = evidence("company_size", None, "+600 global employees")
+    item.claim = "Cover Genius reports more than 600 global employees."
+    assert _parse_size_text(item.evidence_text) == [EmployeeCountBounds(600, None)]
+    assert _parse_size_text(item.claim) == [EmployeeCountBounds(601, None)]
+    assert _size_bounds(item) == EmployeeCountBounds(601, None)
+    result = qualify_company(campaign(company_size_min=500), [item])[-1]
+    assert result.status is Status.MATCH
+    assert result.evidence_ids == [item.id]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "+600",
+        "+600 revenue",
+        "+27 offices",
+        "++600 employees",
+        "+ 600 employees",
+        "+2,30 employees",
+        "around +600 employees",
+    ],
+)
+def test_prefix_plus_size_guardrails(text: str) -> None:
+    from virtual_company.services.qualification import _size_bounds
+
+    item = evidence("company_size", None, text)
+    assert _size_bounds(item) is None
+    assert (
+        qualify_company(campaign(company_size_min=500), [item])[-1].status
+        is Status.UNKNOWN
+    )

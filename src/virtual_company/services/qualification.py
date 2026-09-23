@@ -39,9 +39,12 @@ _NEGATIVES = {
 }
 _NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
 _OPERATOR = r"over|more than|at least|under|fewer than|less than|up to|at most"
-_SIZE_VALUE = rf"(?P<operator>{_OPERATOR})?\s*(?P<count>{_NUMBER})(?P<plus>\+)?"
+_SIZE_VALUE = (
+    rf"(?P<operator>{_OPERATOR})?\s*(?P<prefix_plus>\+)?"
+    rf"(?P<count>{_NUMBER})(?P<plus>\+)?"
+)
 _COUNT = re.compile(
-    rf"(?<![\w.,+−-]){_SIZE_VALUE}\s+(?:employees|staff|people)\b",
+    rf"(?<![\w.,+−-]){_SIZE_VALUE}\s+(?:global\s+)?(?:employees|staff|people)\b",
     re.IGNORECASE,
 )
 _TEAM_COUNT = re.compile(
@@ -49,7 +52,7 @@ _TEAM_COUNT = re.compile(
     re.IGNORECASE,
 )
 _UNSUPPORTED_SIZE = re.compile(
-    r"\b(about|around(?=\s+\d)|approximately|roughly|between|nearly|"
+    r"\b(about|around(?=\s+\+?\d)|approximately|roughly|between|nearly|"
     r"not|no|never|without|unknown|unclear|former|formerly|previously|might|may|possibly|"
     r"million|billion|thousand)\b|[~<>%]|"
     r"\d\s*(?:[-–—]|to)\s*\d",
@@ -100,11 +103,14 @@ def _parse_size_text(text: str) -> list[EmployeeCountBounds]:
     values: list[EmployeeCountBounds] = []
     for pattern in (_COUNT, _TEAM_COUNT):
         for match in pattern.finditer(text):
+            # A detached plus must not fall through to an exact-count match.
+            if text[: match.start()].rstrip().endswith("+"):
+                continue
             count = int(match["count"].replace(",", ""))
             operator = (match["operator"] or "").lower()
             if operator in {"over", "more than"}:
                 values.append(EmployeeCountBounds(count + 1, None))
-            elif operator == "at least" or match["plus"]:
+            elif operator == "at least" or match["plus"] or match["prefix_plus"]:
                 values.append(EmployeeCountBounds(count, None))
             elif operator in {"under", "fewer than", "less than"}:
                 values.append(EmployeeCountBounds(None, count - 1))
