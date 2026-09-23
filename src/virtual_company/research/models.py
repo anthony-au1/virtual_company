@@ -1,8 +1,9 @@
 """Pydantic data-transfer models for the research workflow."""
 
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SearchResult(BaseModel):
@@ -56,3 +57,29 @@ class ExtractedEvidenceItems(BaseModel):
     """Structured output from one page-scoped evidence extraction call."""
 
     evidence: list[ExtractedEvidence] = Field(default_factory=list)
+
+
+class EmployeeCountFact(BaseModel):
+    """One supported employee-count observation, never a qualification decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: int = Field(ge=0, strict=True)
+    relation: Literal[
+        "exact",
+        "greater_than",
+        "greater_than_or_equal",
+        "less_than",
+        "less_than_or_equal",
+        "approximately",
+    ]
+    year: int | None = Field(default=None, gt=0, strict=True)
+    scope: Literal["global", "regional", "unknown"] = "unknown"
+
+
+class CompanySizeNormalization(BaseModel):
+    """Employee observations extracted from a single validated Evidence record."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    counts: list[EmployeeCountFact] = Field(default_factory=list)

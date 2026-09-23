@@ -991,3 +991,77 @@ async def test_persistence_failure_prevents_run_completion(
         await workflow.run(model.id)
     service.complete_run.assert_not_awaited()
     assert all(run.status == "FAILED" for run in service.runs.values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["facts", "failure", "invalid", "empty"])
+async def test_final_qualification_normalizes_dated_size_without_campaign_failure(
+    outcome: str,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from virtual_company.domain.qualification import QualificationStatus
+    from virtual_company.research.models import (
+        CompanySizeNormalization,
+        EmployeeCountFact,
+    )
+
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = []
+    model.company_size_min = 500
+    provider = SimpleNamespace(generate_structured=AsyncMock())
+    if outcome == "failure":
+        provider.generate_structured.side_effect = RuntimeError("unavailable")
+    else:
+        provider.generate_structured.return_value = (
+            {"counts": [{"value": "bad"}]}
+            if outcome == "invalid"
+            else CompanySizeNormalization(
+                counts=[]
+                if outcome == "empty"
+                else [
+                    EmployeeCountFact(value=714, relation="exact", year=2023),
+                    EmployeeCountFact(value=460, relation="exact", year=2026),
+                ]
+            )
+        )
+    nodes = make_nodes(provider, ResearchFake([]), model)
+    company_id = uuid4()
+    item = SimpleNamespace(
+        id=uuid4(),
+        company_id=company_id,
+        research_run_id=uuid4(),
+        criterion="company_size",
+        subject=None,
+        claim="Afterpay had approximately 714 employees in 2023.",
+        evidence_text="from 714 employees in 2023 to 460 in 2026",
+    )
+    nodes._research.evidence = [item]
+    state = {
+        "campaign": model,
+        "research_companies": [ResearchCompany(id=company_id, name="Afterpay")],
+        "investigations": {
+            company_id: CompanyInvestigationState(company_id=company_id, stopped=True)
+        },
+        "active_company_ids": [],
+    }
+    result = (await nodes.qualify_companies(state))["company_qualifications"][
+        company_id
+    ]
+    assert result.criteria[0].status is (
+        QualificationStatus.MISMATCH
+        if outcome == "facts"
+        else QualificationStatus.UNKNOWN
+    )
+    assert result.criteria[0].evidence_ids == [item.id]
+    provider.generate_structured.assert_awaited_once()
+    assert not nodes._research_llm.prompts
+    assert not nodes._web_search.calls
+    assert not nodes._web_fetch.calls
+
+    provider.generate_structured.reset_mock()
+    model.company_size_min = None
+    await nodes.qualify_companies(state)
+    provider.generate_structured.assert_not_awaited()

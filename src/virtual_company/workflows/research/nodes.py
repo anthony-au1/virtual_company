@@ -28,6 +28,7 @@ from virtual_company.research.normalization import (
     normalize_url,
 )
 from virtual_company.services import CampaignService, ResearchService
+from virtual_company.services.company_size_normalizer import CompanySizeNormalizer
 from virtual_company.services.coverage import assess_evidence_coverage
 from virtual_company.services.qualification import (
     aggregate_qualification,
@@ -116,6 +117,9 @@ class ResearchNodes:
         self._extraction_llm = extraction_llm or llm
         if self._research_llm is None or self._extraction_llm is None:
             raise ValueError("Research and extraction LLM providers are required")
+        self._size_normalizer = CompanySizeNormalizer(
+            self._extraction_llm, concurrency=evidence_extraction_concurrency
+        )
         self._web_search = web_search
         self._web_fetch = web_fetch
         self._web_search_max_results = web_search_max_results
@@ -1098,8 +1102,15 @@ class ResearchNodes:
         observability = get_observability()
         for company in state["research_companies"]:
             evidence = await self._research.list_evidence_for_company(company.id)
+            normalizations = (
+                await self._size_normalizer.normalize_evidence(evidence)
+                if campaign.company_size_min is not None
+                or campaign.company_size_max is not None
+                else {}
+            )
             result = aggregate_qualification(
-                company.id, qualify_company(campaign, evidence)
+                company.id,
+                qualify_company(campaign, evidence, size_normalizations=normalizations),
             )
             metadata = {
                 "company_id": str(company.id),
