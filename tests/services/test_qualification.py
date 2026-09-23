@@ -365,6 +365,50 @@ def test_real_run_size_regression(text: str) -> None:
 @pytest.mark.parametrize(
     "text",
     [
+        (
+            "we have a team of over 2,300 of the brightest and most innovative "
+            "people in tech across 27 offices around the globe."
+        ),
+        "over 2,300 employees around the globe",
+        "over 2,300 people across offices around the world",
+        "over 2,300 employees located around the world",
+        "over 2,300 people in teams distributed around multiple offices",
+    ],
+)
+def test_size_unrelated_around_wording(text: str) -> None:
+    from virtual_company.services.qualification import EmployeeCountBounds, _size_bounds
+
+    item = evidence("company_size", None, text)
+    item.claim = "Airwallex has over 2,300 employees."
+    assert _size_bounds(item) == EmployeeCountBounds(2301, None)
+    config = campaign(company_size_min=500)
+    result = qualify_company(config, [item])[-1]
+    assert result.status is Status.MATCH
+    assert result.evidence_ids == [item.id]
+
+    compatible = evidence("company_size", None, "over 2,300 employees")
+    result = qualify_company(config, [item, compatible])[-1]
+    assert result.status is Status.MATCH
+    assert result.evidence_ids == sorted([item.id, compatible.id], key=str)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["around 2,300 employees", "around 500 people", "around 1000 staff"],
+)
+def test_size_around_numeric_count_stays_unknown(text: str) -> None:
+    from virtual_company.services.qualification import _size_bounds
+
+    item = evidence("company_size", None, text)
+    assert _size_bounds(item) is None
+    result = qualify_company(campaign(company_size_min=500), [item])[-1]
+    assert result.status is Status.UNKNOWN
+    assert result.evidence_ids == [item.id]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "Revenue of 1300 dollars",
         "100 to 500 employees",
         "team of 2 million people",

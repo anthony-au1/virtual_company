@@ -49,7 +49,7 @@ _TEAM_COUNT = re.compile(
     re.IGNORECASE,
 )
 _UNSUPPORTED_SIZE = re.compile(
-    r"\b(about|around|approximately|roughly|between|nearly|"
+    r"\b(about|around(?=\s+\d)|approximately|roughly|between|nearly|"
     r"not|no|never|without|unknown|unclear|former|formerly|previously|might|may|possibly|"
     r"million|billion|thousand)\b|[~<>%]|"
     r"\d\s*(?:[-–—]|to)\s*\d",
