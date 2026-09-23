@@ -108,3 +108,11 @@ class ResearchRunUpdate(BaseModel):
     completed_at: datetime | None = None
     error: str | None = None
     companies_found: int | None = None
+
+
+class CompanyQualificationUpsert(BaseModel):
+    research_run_id: UUID
+    campaign_id: UUID
+    company_id: UUID
+    status: str
+    criteria_results: dict[str, Any]

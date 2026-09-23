@@ -5,6 +5,7 @@ from virtual_company.db.models import (
     Campaign,
     CampaignTarget,
     Company,
+    CompanyQualificationSnapshot,
     Evidence,
     ResearchRun,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "Campaign",
     "CampaignTarget",
     "Company",
+    "CompanyQualificationSnapshot",
     "Evidence",
     "ResearchRun",
 ]

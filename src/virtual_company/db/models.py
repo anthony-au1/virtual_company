@@ -7,7 +7,16 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -156,3 +165,34 @@ class ResearchRun(Base):
 
     campaign: Mapped[Campaign] = relationship(back_populates="research_runs")
     evidence: Mapped[list[Evidence]] = relationship(back_populates="research_run")
+
+
+class CompanyQualificationSnapshot(Base):
+    """One final qualification result per company and research run."""
+
+    __tablename__ = "company_qualifications"
+    __table_args__ = (
+        UniqueConstraint(
+            "research_run_id",
+            "company_id",
+            name="uq_company_qualifications_run_company",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    research_run_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("research_run.id"), nullable=False
+    )
+    campaign_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("campaign.id"), nullable=False
+    )
+    company_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("company.id"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    criteria_results: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

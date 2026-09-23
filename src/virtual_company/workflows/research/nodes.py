@@ -1123,6 +1123,36 @@ class ResearchNodes:
             results[company.id] = result
         return {"company_qualifications": results}
 
+    async def persist_company_qualifications(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, object]:
+        """Persist already calculated final results before committing the run."""
+        run_id = state["research_run_id"]
+        if run_id is None:
+            raise ValueError("Research run was not created")
+        company_ids = {company.id for company in state["research_companies"]}
+        if state["active_company_ids"] or any(
+            company_id not in state["investigations"]
+            or not state["investigations"][company_id].stopped
+            for company_id in company_ids
+        ):
+            raise ValueError(
+                "Qualification persistence requires terminal investigations"
+            )
+        results = state["company_qualifications"]
+        if set(results) != company_ids or any(
+            result.company_id != company_id for company_id, result in results.items()
+        ):
+            raise ValueError(
+                "Every researched company must have one final qualification"
+            )
+        await self._research.persist_company_qualifications(
+            campaign_id=state["campaign_id"],
+            research_run_id=run_id,
+            qualifications=list(results.values()),
+        )
+        return {}
+
     async def complete_research_run(
         self, state: ResearchWorkflowState
     ) -> dict[str, str]:

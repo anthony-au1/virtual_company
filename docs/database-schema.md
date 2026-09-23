@@ -121,3 +121,25 @@ Indexes:
 
 - PK(id)
 - FK(company_id) -> company(id) 
+
+
+## Final qualification snapshots
+
+Table: `company_qualifications`
+
+| Column             | PostgreSQL type | Nullable | Description                                     |
+| ------------------ | --------------- | -------- | ----------------------------------------------- |
+| `id`               | UUID            | NO       | Snapshot ID                                     |
+| `research_run_id`  | UUID            | NO       | FK to research_run(id)                          |
+| `campaign_id`      | UUID            | NO       | FK to campaign(id)                              |
+| `company_id`       | UUID            | NO       | FK to company(id)                               |
+| `status`           | VARCHAR(30)     | NO       | QUALIFIED, NOT_QUALIFIED, INSUFFICIENT_EVIDENCE |
+| `criteria_results` | JSONB           | NO       | Object containing a criteria array              |
+| `created_at`       | TIMESTAMPTZ     | NO       | Database timestamp, default now()               |
+
+Unique constraint: `uq_company_qualifications_run_company` on
+`(research_run_id, company_id)`, also supporting lookups by run.
+Each criterion includes criterion, subject, status, evidence_ids (UUID strings),
+and reason. No Evidence content is copied. Retries replace status and JSON while
+preserving ID and created_at. Snapshots commit with research-run completion; no
+intermediate rounds or legacy-run backfill are stored.

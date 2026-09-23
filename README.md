@@ -67,8 +67,29 @@ negative claims are supported; ambiguous wording and contradictory evidence rema
 UNKNOWN. Size qualification accepts exact employee counts and inclusive, optionally
 one-sided bounds; approximate counts and ranges are not interpreted.
 
-Results and supporting evidence IDs are transient in LangGraph's
-`company_qualifications` state. They do not change campaign-target records or the
-public research response. Company qualification spans contain status and criterion
+Results and supporting evidence IDs remain in LangGraph's
+`company_qualifications` state and are persisted once all investigations terminate.
+The `company_qualifications` table stores one final snapshot per run/company; retries
+replace its status and criterion results without changing its ID or creation time.
+Snapshots commit with run completion. They do not change campaign-target records
+or the public research response. Company qualification spans contain status and criterion
 counts, never source documents. Evidence extraction continues to request positive
 facts; qualification does not add further research or change extraction semantics.
+
+Inspect a completed run using the existing singular company table:
+
+```sql
+SELECT c.name, q.status, q.criteria_results
+FROM company_qualifications q
+JOIN company c ON c.id = q.company_id
+WHERE q.research_run_id = :research_run_id
+ORDER BY c.name;
+```
+
+Apply the snapshot migration with `uv run alembic upgrade head`. Existing completed
+runs are not backfilled. Criterion JSON contains Evidence IDs, not source content.
+
+Run the opt-in PostgreSQL snapshot test with
+`RUN_QUALIFICATION_DB_TESTS=true uv run pytest tests/integration/test_qualification_postgres.py`.
+It uses an isolated temporary schema and removes it after the test. Set
+`QUALIFICATION_TEST_DATABASE_URL` to override the default local PostgreSQL URL.

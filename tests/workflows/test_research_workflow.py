@@ -62,6 +62,7 @@ class ResearchServiceFake:
     def __init__(self) -> None:
         self.runs: dict[UUID, SimpleNamespace] = {}
         self.targets: list[str] = []
+        self.qualifications: dict = {}
         self.evidence: list[SimpleNamespace] = []
 
     async def create_run(self, campaign_id: UUID) -> SimpleNamespace:
@@ -82,6 +83,12 @@ class ResearchServiceFake:
                 for c in companies
             ],
         )
+
+    async def persist_company_qualifications(
+        self, *, campaign_id: UUID, research_run_id: UUID, qualifications: list
+    ) -> None:
+        for result in qualifications:
+            self.qualifications[(research_run_id, result.company_id)] = result
 
     async def complete_run(self, run_id: UUID, companies_found: int) -> None:
         self.runs[run_id].status = "COMPLETED"
@@ -865,6 +872,7 @@ async def test_graph_qualifies_once_after_terminal_before_completion(
 ) -> None:
     events = []
     original = ResearchNodes.qualify_companies
+    original_persist = ResearchNodes.persist_company_qualifications
 
     async def qualify(nodes: ResearchNodes, state: dict) -> dict:
         assert not state["active_company_ids"]
@@ -874,12 +882,17 @@ async def test_graph_qualifies_once_after_terminal_before_completion(
         assert len(result["company_qualifications"]) == 1
         return result
 
+    async def persist(nodes: ResearchNodes, state: dict) -> dict:
+        events.append("persist")
+        return await original_persist(nodes, state)
+
     async def complete(nodes: ResearchNodes, state: dict) -> dict:
         assert len(state["company_qualifications"]) == 1
         events.append("complete")
         return {"error": None}
 
     monkeypatch.setattr(ResearchNodes, "qualify_companies", qualify)
+    monkeypatch.setattr(ResearchNodes, "persist_company_qualifications", persist)
     monkeypatch.setattr(ResearchNodes, "complete_research_run", complete)
     model = campaign()
     url = "https://acme.example"
@@ -893,7 +906,7 @@ async def test_graph_qualifies_once_after_terminal_before_completion(
         settings=Settings(company_research_max_investigation_rounds=rounds),
     )
     await workflow.run(model.id)
-    assert events == ["qualify", "complete"]
+    assert events == ["qualify", "persist", "complete"]
 
 
 @pytest.mark.asyncio
@@ -912,3 +925,69 @@ async def test_qualification_failure_marks_run_failed() -> None:
     with pytest.raises(RuntimeError, match="Evidence read failed"):
         await wrapped({"research_run_id": run.id})
     assert run.status == "FAILED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid", ["missing_result", "wrong_company", "active", "missing_run"]
+)
+async def test_persistence_rejects_incomplete_final_state(invalid: str) -> None:
+    from unittest.mock import AsyncMock
+
+    from virtual_company.domain.qualification import (
+        CompanyQualification,
+        CompanyQualificationStatus,
+    )
+
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), campaign())
+    nodes._research.persist_company_qualifications = AsyncMock()
+    company_id = uuid4()
+    result = CompanyQualification(company_id, CompanyQualificationStatus.QUALIFIED, [])
+    state = {
+        "campaign_id": uuid4(),
+        "research_run_id": uuid4(),
+        "research_companies": [ResearchCompany(id=company_id, name="Acme")],
+        "active_company_ids": [],
+        "investigations": {
+            company_id: CompanyInvestigationState(company_id=company_id, stopped=True)
+        },
+        "company_qualifications": {company_id: result},
+    }
+    if invalid == "missing_result":
+        state["company_qualifications"] = {}
+    elif invalid == "wrong_company":
+        state["company_qualifications"] = {uuid4(): result}
+    elif invalid == "active":
+        state["active_company_ids"] = [company_id]
+    else:
+        state["research_run_id"] = None
+    with pytest.raises(ValueError):
+        await nodes.persist_company_qualifications(state)
+    nodes._research.persist_company_qualifications.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persistence_failure_prevents_run_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    model = campaign()
+    service = ResearchServiceFake()
+    service.persist_company_qualifications = AsyncMock(
+        side_effect=RuntimeError("Snapshot write failed")
+    )
+    service.complete_run = AsyncMock()
+    workflow = ResearchWorkflow(
+        campaigns=CampaignServiceFake(model),
+        research=service,
+        research_llm=ResearchFake([]),
+        extraction_llm=ExtractionFake({}),
+        web_search=SearchFake([]),
+        web_fetch=FetchFake({}),
+        settings=Settings(company_research_max_investigation_rounds=0),
+    )
+    with pytest.raises(RuntimeError, match="Snapshot write failed"):
+        await workflow.run(model.id)
+    service.complete_run.assert_not_awaited()
+    assert all(run.status == "FAILED" for run in service.runs.values())

@@ -239,6 +239,14 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         _with_failure_handling(nodes.qualify_companies, "qualify_companies", research),
     )
     graph.add_node(
+        "persist_company_qualifications",
+        _with_failure_handling(
+            nodes.persist_company_qualifications,
+            "persist_company_qualifications",
+            research,
+        ),
+    )
+    graph.add_node(
         "complete_research_run",
         _with_failure_handling(
             nodes.complete_research_run, "complete_research_run", research
@@ -269,7 +277,8 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         },
     )
     graph.add_edge("generate_followup_queries", "search_company_sources")
-    graph.add_edge("qualify_companies", "complete_research_run")
+    graph.add_edge("qualify_companies", "persist_company_qualifications")
+    graph.add_edge("persist_company_qualifications", "complete_research_run")
     graph.add_edge("complete_research_run", END)
     return graph.compile()
 

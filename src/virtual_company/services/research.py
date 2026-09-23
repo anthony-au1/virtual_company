@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -9,11 +10,16 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import Company, Evidence, ResearchRun
+from virtual_company.domain.qualification import CompanyQualification
 from virtual_company.repositories.campaign_target import CampaignTargetRepository
 from virtual_company.repositories.company import CompanyRepository
+from virtual_company.repositories.company_qualification import (
+    CompanyQualificationRepository,
+)
 from virtual_company.repositories.dtos import (
     CampaignTargetCreate,
     CompanyCreate,
+    CompanyQualificationUpsert,
     EvidenceCreate,
     ResearchRunCreate,
     ResearchRunUpdate,
@@ -50,6 +56,7 @@ class ResearchService:
         self._targets = CampaignTargetRepository(session)
         self._runs = ResearchRunRepository(session)
         self._evidence = EvidenceRepository(session)
+        self._qualifications = CompanyQualificationRepository(session)
 
     async def create_run(self, campaign_id: UUID) -> ResearchRun:
         """Create and commit a running research execution."""
@@ -144,6 +151,38 @@ class ResearchService:
             skipped_count=skipped_count,
             created_by_company=created_by_company,
         )
+
+    async def persist_company_qualifications(
+        self,
+        *,
+        campaign_id: UUID,
+        research_run_id: UUID,
+        qualifications: Sequence[CompanyQualification],
+    ) -> None:
+        """Stage final snapshots for the same transaction as run completion."""
+        for result in qualifications:
+            await self._qualifications.upsert(
+                CompanyQualificationUpsert(
+                    campaign_id=campaign_id,
+                    research_run_id=research_run_id,
+                    company_id=result.company_id,
+                    status=result.status.value,
+                    criteria_results={
+                        "criteria": [
+                            {
+                                "criterion": item.criterion,
+                                "subject": item.subject,
+                                "status": item.status.value,
+                                "evidence_ids": [
+                                    str(value) for value in item.evidence_ids
+                                ],
+                                "reason": item.reason,
+                            }
+                            for item in result.criteria
+                        ]
+                    },
+                )
+            )
 
     async def list_evidence_for_run(self, research_run_id: UUID) -> list[Evidence]:
         """Load all accumulated Evidence for one research execution."""

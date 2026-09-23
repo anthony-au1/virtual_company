@@ -3,12 +3,16 @@
 from virtual_company.repositories.campaign import CampaignRepository
 from virtual_company.repositories.campaign_target import CampaignTargetRepository
 from virtual_company.repositories.company import CompanyRepository
+from virtual_company.repositories.company_qualification import (
+    CompanyQualificationRepository,
+)
 from virtual_company.repositories.dtos import (
     CampaignCreate,
     CampaignTargetCreate,
     CampaignTargetUpdate,
     CampaignUpdate,
     CompanyCreate,
+    CompanyQualificationUpsert,
     CompanyUpdate,
     EvidenceCreate,
     EvidenceUpdate,
@@ -26,6 +30,8 @@ __all__ = [
     "CampaignTargetUpdate",
     "CampaignUpdate",
     "CompanyCreate",
+    "CompanyQualificationRepository",
+    "CompanyQualificationUpsert",
     "CompanyRepository",
     "CompanyUpdate",
     "EvidenceCreate",
