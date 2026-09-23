@@ -38,7 +38,7 @@ _NEGATIVES = {
     "industry": r"\bis not (?:a|an) (.+?) company[.!]?$",
 }
 _NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
-_OPERATOR = r"over|more than|at least|under|fewer than|less than|up to"
+_OPERATOR = r"over|more than|at least|under|fewer than|less than|up to|at most"
 _SIZE_VALUE = rf"(?P<operator>{_OPERATOR})?\s*(?P<count>{_NUMBER})(?P<plus>\+)?"
 _COUNT = re.compile(
     rf"(?<![\w.,+−-]){_SIZE_VALUE}\s+(?:employees|staff|people)\b",
@@ -49,7 +49,7 @@ _TEAM_COUNT = re.compile(
     re.IGNORECASE,
 )
 _UNSUPPORTED_SIZE = re.compile(
-    r"\b(about|around|approximately|roughly|at most|between|nearly|"
+    r"\b(about|around|approximately|roughly|between|nearly|"
     r"not|no|never|without|unknown|unclear|former|formerly|previously|might|may|possibly|"
     r"million|billion|thousand)\b|[~<>%]|"
     r"\d\s*(?:[-–—]|to)\s*\d",
@@ -108,7 +108,7 @@ def _parse_size_text(text: str) -> list[EmployeeCountBounds]:
                 values.append(EmployeeCountBounds(count, None))
             elif operator in {"under", "fewer than", "less than"}:
                 values.append(EmployeeCountBounds(None, count - 1))
-            elif operator == "up to":
+            elif operator in {"up to", "at most"}:
                 values.append(EmployeeCountBounds(None, count))
             else:
                 values.append(EmployeeCountBounds(count, count))

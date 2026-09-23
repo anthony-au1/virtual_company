@@ -256,6 +256,7 @@ def test_claim_excerpt_polarity_conflict() -> None:
         ("fewer than 500 employees", None, 499),
         ("less than 500 employees", None, 499),
         ("up to 500 employees", None, 500),
+        ("at most 500 employees", None, 500),
         ("workforce of 1300", 1300, 1300),
         ("A team of 1300.", 1300, 1300),
         ("more than\n2300 employees", 2301, None),
@@ -275,6 +276,9 @@ def test_employee_bounds_parser(
     "text,expected",
     [
         ("1300 employees", (Status.MATCH, Status.MISMATCH, Status.MATCH)),
+        ("1300 staff", (Status.MATCH, Status.MISMATCH, Status.MATCH)),
+        ("2,300+ employees", (Status.MATCH, Status.MISMATCH, Status.MISMATCH)),
+        ("team of over 2,300 people", (Status.MATCH, Status.MISMATCH, Status.MISMATCH)),
         ("over 2300 employees", (Status.MATCH, Status.MISMATCH, Status.MISMATCH)),
         ("500 employees", (Status.MATCH, Status.MATCH, Status.MATCH)),
         ("100 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
@@ -287,6 +291,8 @@ def test_employee_bounds_parser(
         ("under 1500 employees", (Status.UNKNOWN, Status.UNKNOWN, Status.UNKNOWN)),
         ("under 500 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
         ("up to 500 employees", (Status.UNKNOWN, Status.MATCH, Status.UNKNOWN)),
+        ("at most 500 employees", (Status.UNKNOWN, Status.MATCH, Status.UNKNOWN)),
+        ("at most 300 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
         ("at least 500 employees", (Status.MATCH, Status.UNKNOWN, Status.UNKNOWN)),
         ("over 500 employees", (Status.MATCH, Status.MISMATCH, Status.UNKNOWN)),
         ("2000 employees", (Status.MATCH, Status.MISMATCH, Status.MATCH)),
@@ -301,6 +307,13 @@ def test_size_constraint_matrix(text: str, expected: tuple[Status, ...]) -> None
             [evidence("company_size", None, text)],
         )[-1]
         assert result.status is status
+
+
+def test_lower_bound_exceeds_campaign_maximum() -> None:
+    item = evidence("company_size", None, "over 2300 employees")
+    result = qualify_company(campaign(company_size_max=2000), [item])[-1]
+    assert result.status is Status.MISMATCH
+    assert result.evidence_ids == [item.id]
 
 
 @pytest.mark.parametrize(
