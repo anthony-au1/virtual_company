@@ -463,9 +463,11 @@ class ResearchNodes:
                     "followup_company_queries_generated",
                     investigation_round=next_round,
                     missing_criteria=[
-                        f"{item.criterion.value}/{item.subject}"
-                        if item.subject
-                        else item.criterion.value
+                        (
+                            f"{item.criterion.value}/{item.subject}"
+                            if item.subject
+                            else item.criterion.value
+                        )
                         for item in missing
                     ],
                     query_count=len(queries),
@@ -593,12 +595,14 @@ class ResearchNodes:
                     -self._source_selection_score(
                         item[1],
                         company,
-                        investigations.get(
-                            company.id,
-                            CompanyInvestigationState(company_id=company.id),
-                        ).coverage
-                        if adaptive_mode
-                        else [],
+                        (
+                            investigations.get(
+                                company.id,
+                                CompanyInvestigationState(company_id=company.id),
+                            ).coverage
+                            if adaptive_mode
+                            else []
+                        ),
                     ),
                     item[0],
                 ),
@@ -744,7 +748,9 @@ class ResearchNodes:
                             response_model=ExtractedEvidenceItems,
                         )
                     evidence = response.evidence
-                except Exception as error:  # noqa: BLE001 - one page must not abort the run
+                except (
+                    Exception
+                ) as error:  # noqa: BLE001 - one page must not abort the run
                     observability.event(
                         "company_evidence_extraction_failed",
                         error_type=type(error).__name__,
@@ -1046,37 +1052,69 @@ class ResearchNodes:
             host = normalize_domain(parsed.hostname)
         except ValueError:
             return -100
+
         path = parsed.path.casefold()
         text = " ".join(
             value for value in (result.title, result.snippet or "") if value
         ).casefold()
+
         score = 0
+
         if company.domain and host == normalize_domain(company.domain):
             score += 30
+
         if any(token in path or token in text for token in ("career", "job")):
-            score += 25
+            score += 20
         elif "engineering" in path or "engineering" in text:
             score += 15
+
         if any(
             token in path or token in text
-            for token in ("blog", "technology", "product")
+            for token in ("technology", "tech-stack", "developer")
         ):
-            score += 8
+            score += 10
+
+        if "blog" in path:
+            score += 5
+
         missing = [
             item for item in (coverage or []) if item.status is CoverageStatus.MISSING
         ]
+
         for item in missing:
-            subject_match = bool(item.subject and item.subject.casefold() in text)
-            size_match = item.criterion is EvidenceCriterion.COMPANY_SIZE and any(
-                token in text or token in path
-                for token in ("employee", "people", "team", "about", "company-size")
-            )
-            if subject_match or size_match:
+            if item.subject and item.subject.casefold() in text:
                 score += 12
+
+            if item.criterion is EvidenceCriterion.COMPANY_SIZE:
+                if any(
+                    token in text
+                    for token in (
+                        "employee",
+                        "employees",
+                        "workforce",
+                        "people",
+                        "headcount",
+                    )
+                ):
+                    score += 12
+
+                if any(
+                    token in path
+                    for token in (
+                        "/about",
+                        "/company",
+                        "/our-company",
+                        "/who-we-are",
+                    )
+                ):
+                    score += 5
+
         if result.snippet:
             score += 3
+
         if path in {"", "/"} and not result.snippet:
             score -= 30
+
         if host in {
             "google.com",
             "linkedin.com",
@@ -1086,6 +1124,7 @@ class ResearchNodes:
             "twitter.com",
         }:
             score -= 25
+
         return score
 
     async def qualify_companies(
@@ -1196,7 +1235,7 @@ class ResearchNodes:
         ]
 
     def _discovery_candidate_limit(self, target_count: int) -> int:
-        """Return the bounded investigation pool size for a campaign."""
+        """Return the bounded discovery candidate pool size for a campaign."""
         return max(
             target_count,
             min(
@@ -1213,7 +1252,8 @@ class ResearchNodes:
         page: WebPage,
         item: ExtractedEvidence,
     ) -> ValidatedEvidence | None:
-        """Accept only short excerpts that literally occur in their supplied page."""
+        """Validate that extracted evidence is grounded in the supplied page."""
+
         excerpt = self._normalize_whitespace(item.evidence_text)
         if not excerpt or len(excerpt) > self._evidence_max_excerpt_chars:
             return None
