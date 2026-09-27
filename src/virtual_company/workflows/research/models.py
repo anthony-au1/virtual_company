@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from virtual_company.domain.criteria import (
+    CompanySizeCriteria,
+    CriterionRequirement,
+    TechnologyCriteria,
+)
 from virtual_company.research.models import (
     DiscoveredCompany,
     EvidenceCriterion,
@@ -27,9 +32,8 @@ class CampaignCriteria(BaseModel):
     description: str | None
     target_market: str | None
     industry: str | None
-    technologies: dict[str, Any] | list[Any] | None
-    company_size_min: int | None
-    company_size_max: int | None
+    technologies: TechnologyCriteria
+    company_size: CompanySizeCriteria | None
     target_count: int
 
 
@@ -110,6 +114,7 @@ class CoverageStatus(StrEnum):
 class CriterionCoverage(BaseModel):
     criterion: EvidenceCriterion
     subject: str | None = None
+    requirement: CriterionRequirement
     status: CoverageStatus
     evidence_ids: list[UUID] = Field(default_factory=list)
 
@@ -122,6 +127,7 @@ class CoverageSummary(BaseModel):
 
 class InvestigationStopReason(StrEnum):
     COVERAGE_COMPLETE = "coverage_complete"
+    REQUIRED_MISMATCH = "required_mismatch"
     MAX_ROUNDS = "max_rounds"
     NO_PROGRESS = "no_progress"
 
@@ -135,11 +141,14 @@ class CompanyInvestigationState(BaseModel):
     new_evidence_count: int = 0
     stopped: bool = False
     stop_reason: InvestigationStopReason | None = None
+    priority: CriterionRequirement = CriterionRequirement.REQUIRED
 
     @property
     def summary(self) -> CoverageSummary:
         found = sum(item.status is CoverageStatus.FOUND for item in self.coverage)
-        return CoverageSummary(total=len(self.coverage), found=found, missing=len(self.coverage) - found)
+        return CoverageSummary(
+            total=len(self.coverage), found=found, missing=len(self.coverage) - found
+        )
 
 
 class ValidatedEvidence(BaseModel):

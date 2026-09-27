@@ -54,15 +54,16 @@ it does not create Evidence records. Fetches are limited by `WEB_FETCH_TIMEOUT_S
 
 ## Qualification
 
-After every company investigation is terminal, `qualify_companies` evaluates all
-persisted Evidence for each researched company, including evidence from earlier
-runs. Coverage remains a separate current-run presence check. Both stages share
+After every company investigation is terminal, `qualify_companies` evaluates validated
+Evidence from the current research run for each company. Coverage remains a separate
+presence check. Both stages share
 conservative subject normalization and the one-way Spring Boot → Spring implication.
 
 Qualification uses no LLM, search, or page fetch. Criteria are MATCH, MISMATCH, or
-UNKNOWN; missing evidence never means mismatch. Any explicit mismatch produces
-NOT_QUALIFIED, otherwise unknown criteria produce INSUFFICIENT_EVIDENCE, otherwise
-QUALIFIED (including a campaign with no configured criteria). Narrow subject-bound
+UNKNOWN; missing evidence never means mismatch. Only required criteria determine
+eligibility: any required mismatch produces NOT_QUALIFIED, otherwise a required
+unknown produces INSUFFICIENT_EVIDENCE, otherwise the company is QUALIFIED. Preferred
+results remain in the snapshot without changing status. Narrow subject-bound
 negative claims are supported; ambiguous wording and contradictory evidence remain
 UNKNOWN. Size qualification accepts exact employee counts and inclusive, optionally
 one-sided bounds; approximate counts and ranges are not interpreted.
@@ -73,8 +74,11 @@ The `company_qualifications` table stores one final snapshot per run/company; re
 replace its status and criterion results without changing its ID or creation time.
 Snapshots commit with run completion. They do not change campaign-target records
 or the public research response. Company qualification spans contain status and criterion
-counts, never source documents. Evidence extraction continues to request positive
-facts; qualification does not add further research or change extraction semantics.
+counts, never source documents. Discovery sources pass through the normal attribution
+and Evidence validation gates before company-specific searches. A required mismatch
+stops that company's search; unknown required criteria receive priority, followed by
+preferred enrichment within the configured investigation rounds. Evidence extraction
+continues to request positive facts and qualification remains deterministic.
 
 Inspect a completed run using the existing singular company table:
 
@@ -86,10 +90,12 @@ WHERE q.research_run_id = :research_run_id
 ORDER BY c.name;
 ```
 
-Apply the snapshot migration with `uv run alembic upgrade head`. Existing completed
-runs are not backfilled. Criterion JSON contains Evidence IDs, not source content.
+Apply the initial schema with `uv run alembic upgrade head` against an empty database.
+Criterion JSON contains requirement levels and Evidence IDs, not source content.
 
 Run the opt-in PostgreSQL snapshot test with
 `RUN_QUALIFICATION_DB_TESTS=true uv run pytest tests/integration/test_qualification_postgres.py`.
 It uses an isolated temporary schema and removes it after the test. Set
 `QUALIFICATION_TEST_DATABASE_URL` to override the default local PostgreSQL URL.
+Run the isolated initial-migration check with
+`RUN_MIGRATION_DB_TESTS=true uv run pytest tests/integration/test_initial_migration_postgres.py`.

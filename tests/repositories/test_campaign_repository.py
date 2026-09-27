@@ -6,9 +6,11 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from virtual_company.api.models import CampaignCreateRequest
 from virtual_company.db.models import Campaign
 from virtual_company.repositories.campaign import CampaignRepository
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
+from virtual_company.workflows.research.models import CampaignCriteria
 
 
 def session_mock() -> MagicMock:
@@ -34,6 +36,33 @@ async def test_create_flushes_and_refreshes_without_committing() -> None:
     session.flush.assert_awaited_once()
     session.refresh.assert_awaited_once_with(campaign)
     session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_campaign_criteria_survive_repository_and_workflow_loading() -> None:
+    session = session_mock()
+    payload = CampaignCreateRequest.model_validate({
+        "name": "Australian Fintech Java Research",
+        "target_count": 3,
+        "status": "DRAFT",
+        "target_market": "Australia",
+        "industry": "fin tech",
+        "technologies": {"required": ["java"], "preferred": ["kafka"]},
+        "company_size": {
+            "min": {"value": 100, "requirement": "required"},
+            "max": {"value": 500, "requirement": "preferred"},
+        },
+    })
+    campaign = await CampaignRepository(session).create(payload)
+    campaign.id = uuid4()
+    assert campaign.technologies == {"required": ["java"], "preferred": ["kafka"]}
+    assert campaign.company_size == {
+        "min": {"value": 100, "requirement": "required"},
+        "max": {"value": 500, "requirement": "preferred"},
+    }
+    loaded = CampaignCriteria.model_validate(campaign)
+    assert loaded.technologies.required == ["java"]
+    assert loaded.company_size.max.requirement.value == "preferred"
 
 
 @pytest.mark.asyncio

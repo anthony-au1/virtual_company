@@ -5,6 +5,12 @@ from uuid import uuid4
 
 import pytest
 
+from virtual_company.domain.criteria import (
+    CompanySizeBound,
+    CompanySizeCriteria,
+    CriterionRequirement,
+    TechnologyCriteria,
+)
 from virtual_company.domain.qualification import CompanyQualificationStatus as Overall
 from virtual_company.domain.qualification import QualificationStatus as Status
 from virtual_company.services.qualification import (
@@ -14,13 +20,33 @@ from virtual_company.services.qualification import (
 
 
 def campaign(**changes: object) -> SimpleNamespace:
+    minimum = changes.pop("minimum", None)
+    maximum = changes.pop("maximum", None)
+    technologies = changes.pop(
+        "technologies", ["java", "spring", "spring boot", "kafka"]
+    )
+    size = (
+        CompanySizeCriteria(
+            min=CompanySizeBound(
+                value=minimum, requirement=CriterionRequirement.REQUIRED
+            )
+            if minimum is not None
+            else None,
+            max=CompanySizeBound(
+                value=maximum, requirement=CriterionRequirement.REQUIRED
+            )
+            if maximum is not None
+            else None,
+        )
+        if minimum is not None or maximum is not None
+        else None
+    )
     return SimpleNamespace(
         **{
             "target_market": "Australia",
             "industry": "fin tech",
-            "technologies": ["java", "spring", "spring boot", "kafka"],
-            "company_size_min": None,
-            "company_size_max": None,
+            "technologies": TechnologyCriteria(required=technologies),
+            "company_size": size,
             **changes,
         }
     )
@@ -175,9 +201,7 @@ def test_negative_does_not_propagate_implication() -> None:
 )
 def test_size(subjects: list[str], expected: Status) -> None:
     items = [evidence("company_size", subject, subject) for subject in subjects]
-    result = qualify_company(
-        campaign(company_size_min=100, company_size_max=500), items
-    )[-1]
+    result = qualify_company(campaign(minimum=100, maximum=500), items)[-1]
     assert result.status is expected
     assert set(result.evidence_ids) == {item.id for item in items}
 
@@ -188,7 +212,7 @@ def test_size(subjects: list[str], expected: Status) -> None:
 def test_one_sided_size(minimum: int | None, maximum: int | None, count: str) -> None:
     assert (
         qualify_company(
-            campaign(company_size_min=minimum, company_size_max=maximum),
+            campaign(minimum=minimum, maximum=maximum),
             [evidence("company_size", count)],
         )[-1].status
         is Status.MATCH
@@ -197,15 +221,9 @@ def test_one_sided_size(minimum: int | None, maximum: int | None, count: str) ->
 
 def test_size_source_qualification_and_claim_conflict() -> None:
     item = evidence("company_size", "230", "About 230 employees")
-    assert (
-        qualify_company(campaign(company_size_min=100), [item])[-1].status
-        is Status.UNKNOWN
-    )
+    assert qualify_company(campaign(minimum=100), [item])[-1].status is Status.UNKNOWN
     item = evidence("company_size", "230", "Acme has 2300 employees.")
-    assert (
-        qualify_company(campaign(company_size_min=100), [item])[-1].status
-        is Status.UNKNOWN
-    )
+    assert qualify_company(campaign(minimum=100), [item])[-1].status is Status.UNKNOWN
 
 
 def test_no_geography_or_industry_inference() -> None:
@@ -225,9 +243,7 @@ def test_unparsed_size_does_not_hide_potential_conflict() -> None:
         evidence("company_size", "230"),
         evidence("company_size", "more than 3000 employees"),
     ]
-    result = qualify_company(
-        campaign(company_size_min=100, company_size_max=500), items
-    )[-1]
+    result = qualify_company(campaign(minimum=100, maximum=500), items)[-1]
     assert result.status is Status.UNKNOWN
     assert set(result.evidence_ids) == {item.id for item in items}
 
@@ -302,16 +318,26 @@ def test_size_constraint_matrix(text: str, expected: tuple[Status, ...]) -> None
     for (minimum, maximum), status in zip(
         [(500, None), (None, 500), (500, 2000)], expected, strict=True
     ):
-        result = qualify_company(
-            campaign(company_size_min=minimum, company_size_max=maximum),
+        results = qualify_company(
+            campaign(minimum=minimum, maximum=maximum),
             [evidence("company_size", None, text)],
-        )[-1]
-        assert result.status is status
+        )
+        size_statuses = {
+            item.status for item in results if item.criterion == "company_size"
+        }
+        actual = (
+            Status.MISMATCH
+            if Status.MISMATCH in size_statuses
+            else Status.UNKNOWN
+            if Status.UNKNOWN in size_statuses
+            else Status.MATCH
+        )
+        assert actual is status
 
 
 def test_lower_bound_exceeds_campaign_maximum() -> None:
     item = evidence("company_size", None, "over 2300 employees")
-    result = qualify_company(campaign(company_size_max=2000), [item])[-1]
+    result = qualify_company(campaign(maximum=2000), [item])[-1]
     assert result.status is Status.MISMATCH
     assert result.evidence_ids == [item.id]
 
@@ -331,7 +357,7 @@ def test_lower_bound_exceeds_campaign_maximum() -> None:
 )
 def test_size_intersection(texts: list[str], expected: Status) -> None:
     items = [evidence("company_size", None, text) for text in texts]
-    config = campaign(company_size_min=500, company_size_max=2000)
+    config = campaign(minimum=500, maximum=2000)
     result = qualify_company(config, items)[-1]
     assert result.status is expected
     assert result.evidence_ids == sorted((item.id for item in items), key=str)
@@ -356,7 +382,7 @@ def test_real_run_size_regression(text: str) -> None:
         evidence("technology", name)
         for name in ["java", "spring", "spring boot", "kafka"]
     ]
-    criteria = qualify_company(campaign(company_size_min=500), items)
+    criteria = qualify_company(campaign(minimum=500), items)
     assert criteria[-1].status is Status.MATCH
     assert criteria[-1].evidence_ids == [size.id]
     assert aggregate_qualification(uuid4(), criteria).status is Overall.QUALIFIED
@@ -381,7 +407,7 @@ def test_size_unrelated_around_wording(text: str) -> None:
     item = evidence("company_size", None, text)
     item.claim = "Airwallex has over 2,300 employees."
     assert _size_bounds(item) == EmployeeCountBounds(2301, None)
-    config = campaign(company_size_min=500)
+    config = campaign(minimum=500)
     result = qualify_company(config, [item])[-1]
     assert result.status is Status.MATCH
     assert result.evidence_ids == [item.id]
@@ -401,7 +427,7 @@ def test_size_around_numeric_count_stays_unknown(text: str) -> None:
 
     item = evidence("company_size", None, text)
     assert _size_bounds(item) is None
-    result = qualify_company(campaign(company_size_min=500), [item])[-1]
+    result = qualify_company(campaign(minimum=500), [item])[-1]
     assert result.status is Status.UNKNOWN
     assert result.evidence_ids == [item.id]
 
@@ -424,7 +450,7 @@ def test_size_around_numeric_count_stays_unknown(text: str) -> None:
 )
 def test_unusable_size_text(text: str) -> None:
     result = qualify_company(
-        campaign(company_size_min=500), [evidence("company_size", None, text)]
+        campaign(minimum=500), [evidence("company_size", None, text)]
     )[-1]
     assert result.status is Status.UNKNOWN
     assert (
@@ -436,15 +462,13 @@ def test_unusable_size_text(text: str) -> None:
 def test_numeric_subject_does_not_strengthen_bound() -> None:
     item = evidence("company_size", "1000", "over 1000 employees")
     assert (
-        qualify_company(campaign(company_size_min=500, company_size_max=2000), [item])[
-            -1
-        ].status
+        qualify_company(campaign(minimum=500, maximum=2000), [item])[-1].status
         is Status.UNKNOWN
     )
 
 
 def test_size_reasons_and_field_conflict() -> None:
-    config = campaign(company_size_min=500)
+    config = campaign(minimum=500)
     assert (
         qualify_company(config, [])[-1].reason
         == "No validated company-size evidence is available."
@@ -458,7 +482,7 @@ def test_size_reasons_and_field_conflict() -> None:
     assert qualify_company(config, [item])[-1].status is Status.UNKNOWN
     item = evidence("company_size", None, "2300 employees")
     assert (
-        qualify_company(campaign(company_size_max=500), [item])[-1].reason
+        qualify_company(campaign(maximum=500), [item])[-1].reason
         == "Validated evidence establishes 2300 employees, exceeding the campaign maximum of 500."
     )
 
@@ -479,7 +503,7 @@ def test_prefix_plus_size_bounds(text: str, lower: int) -> None:
 
     item = evidence("company_size", None, text)
     assert _size_bounds(item) == EmployeeCountBounds(lower, None)
-    result = qualify_company(campaign(company_size_min=500), [item])[-1]
+    result = qualify_company(campaign(minimum=500), [item])[-1]
     assert result.status is Status.MATCH
     assert result.evidence_ids == [item.id]
 
@@ -496,7 +520,7 @@ def test_prefix_plus_cover_genius_regression() -> None:
     assert _parse_size_text(item.evidence_text) == [EmployeeCountBounds(600, None)]
     assert _parse_size_text(item.claim) == [EmployeeCountBounds(601, None)]
     assert _size_bounds(item) == EmployeeCountBounds(601, None)
-    result = qualify_company(campaign(company_size_min=500), [item])[-1]
+    result = qualify_company(campaign(minimum=500), [item])[-1]
     assert result.status is Status.MATCH
     assert result.evidence_ids == [item.id]
 
@@ -518,7 +542,4 @@ def test_prefix_plus_size_guardrails(text: str) -> None:
 
     item = evidence("company_size", None, text)
     assert _size_bounds(item) is None
-    assert (
-        qualify_company(campaign(company_size_min=500), [item])[-1].status
-        is Status.UNKNOWN
-    )
+    assert qualify_company(campaign(minimum=500), [item])[-1].status is Status.UNKNOWN

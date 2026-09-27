@@ -6,20 +6,19 @@ Represents a software entity discovered during analysis.
 
 Table: campaign
 
-| Column             | PostgreSQL type | Nullable | Description                             |
-| ------------------ | --------------- | -------: | --------------------------------------- |
-| `id`               | `UUID`          |       NO | unique ID campaign                      |
-| `name`             | `VARCHAR(255)`  |       NO | name                                    |
-| `description`      | `TEXT`          |      YES | detailed description                    |
-| `target_market`    | `VARCHAR(255)`  |      YES | geographical market                     |
-| `industry`         | `VARCHAR(255)`  |      YES | targeted industry                       |
-| `technologies`     | `JSONB`         |      YES | technologies used                       |
-| `company_size_min` | `INTEGER`       |      YES | minimum company size                    |
-| `company_size_max` | `INTEGER`       |      YES | maximum company size                    |
-| `target_count`     | `INTEGER`       |       NO | desired eventual qualified-target count |
-| `status`           | `VARCHAR(30)`   |       NO | campaign status                         |
-| `created_at`       | `TIMESTAMPTZ`   |       NO | created date                            |
-| `updated_at`       | `TIMESTAMPTZ`   |       NO | last change date                        |
+| Column          | PostgreSQL type | Nullable | Description                                 |
+|-----------------|-----------------|---------:|---------------------------------------------|
+| `id`            | `UUID`          |       NO | unique ID campaign                          |
+| `name`          | `VARCHAR(255)`  |       NO | name                                        |
+| `description`   | `TEXT`          |      YES | detailed description                        |
+| `target_market` | `VARCHAR(255)`  |      YES | geographical market                         |
+| `industry`      | `VARCHAR(255)`  |      YES | targeted industry                           |
+| `technologies`  | `JSONB`         |       NO | required and preferred technology lists     |
+| `company_size`  | `JSONB`         |      YES | independent min/max bounds and requirements |
+| `target_count`  | `INTEGER`       |       NO | desired eventual qualified-target count     |
+| `status`        | `VARCHAR(30)`   |       NO | campaign status                             |
+| `created_at`    | `TIMESTAMPTZ`   |       NO | created date                                |
+| `updated_at`    | `TIMESTAMPTZ`   |       NO | last change date                            |
 
 status:
 
@@ -31,13 +30,12 @@ status:
 
 Indexes:
 
-- PK(id)
-
+- PK (id)
 
 Table: company
 
 | Column            | PostgreSQL type | Nullable | Description          |
-| ----------------- | --------------- | -------: | -------------------- |
+|-------------------|-----------------|---------:|----------------------|
 | `id`              | `UUID`          |       NO | Internal ID          |
 | `name`            | `VARCHAR(500)`  |       NO | company name         |
 | `website`         | `VARCHAR(1000)` |      YES | web site             |
@@ -52,13 +50,12 @@ Table: company
 
 Indexes:
 
-- PK(id)
-
+- PK (id)
 
 Table: campaign_targets
 
 | Column        | Type        | Description                  |
-| ------------- | ----------- | ---------------------------- |
+|---------------|-------------|------------------------------|
 | `campaign_id` | UUID        | campaign                     |
 | `company_id`  | UUID        | company                      |
 | `score`       | NUMERIC     | future qualification score   |
@@ -67,15 +64,14 @@ Table: campaign_targets
 
 Indexes:
 
-- UNIQUE(campaign_id, company_id)
-- FK(campaign_id) -> campaign(id) 
-- FK(company_id) -> company(id) 
-
+- UNIQUE (campaign_id, company_id)
+- FK (campaign_id) -> campaign (id)
+- FK (company_id) -> company (id)
 
 Table: evidence
 
 | Column            | PostgreSQL type | Nullable | Description                                     |
-| ----------------- | --------------- | -------: | ----------------------------------------------- |
+|-------------------|-----------------|---------:|-------------------------------------------------|
 | `id`              | UUID            |       NO | Internal ID                                     |
 | `company_id`      | UUID            |       NO | company                                         |
 | `research_run_id` | UUID            |      YES | research execution that extracted this evidence |
@@ -90,18 +86,16 @@ Table: evidence
 | `observed_at`     | TIMESTAMPTZ     |       NO | when information was found                      |
 | `created_at`      | TIMESTAMPTZ     |       NO | when evidence was saved                         |
 
-
 Indexes:
 
-- PK(id)
-- FK(company_id) -> company(id) 
-- FK(research_run_id) -> research_run(id)
-
+- PK (id)
+- FK (company_id) -> company (id)
+- FK (research_run_id) -> research_run (id)
 
 Table: research_run
 
 | Column            | PostgreSQL type | Nullable | Description              |
-| ----------------- | --------------- | -------: | ------------------------ |
+|-------------------|-----------------|---------:|--------------------------|
 | `id`              | UUID            |       NO | ID execution             |
 | `campaign_id`     | UUID            |       NO | campaign                 |
 | `status`          | VARCHAR(30)     |       NO | RUNNING/COMPLETED/FAILED |
@@ -119,16 +113,15 @@ status:
 
 Indexes:
 
-- PK(id)
-- FK(company_id) -> company(id) 
-
+- PK (id)
+- FK (company_id) -> company (id)
 
 ## Final qualification snapshots
 
 Table: `company_qualifications`
 
 | Column             | PostgreSQL type | Nullable | Description                                     |
-| ------------------ | --------------- | -------- | ----------------------------------------------- |
+|--------------------|-----------------|----------|-------------------------------------------------|
 | `id`               | UUID            | NO       | Snapshot ID                                     |
 | `research_run_id`  | UUID            | NO       | FK to research_run(id)                          |
 | `campaign_id`      | UUID            | NO       | FK to campaign(id)                              |
@@ -139,7 +132,7 @@ Table: `company_qualifications`
 
 Unique constraint: `uq_company_qualifications_run_company` on
 `(research_run_id, company_id)`, also supporting lookups by run.
-Each criterion includes criterion, subject, status, evidence_ids (UUID strings),
+Each criterion includes criterion, subject, requirement, status, evidence_ids (UUID strings),
 and reason. No Evidence content is copied. Retries replace status and JSON while
 preserving ID and created_at. Snapshots commit with research-run completion; no
 intermediate rounds or legacy-run backfill are stored.

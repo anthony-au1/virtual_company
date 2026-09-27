@@ -5,8 +5,16 @@ from __future__ import annotations
 from typing import TypedDict
 from uuid import UUID
 
-from virtual_company.domain.qualification import CompanyQualification
-from virtual_company.research.models import DiscoveredCompany, SearchResult, WebPage
+from virtual_company.domain.qualification import (
+    CompanyQualification,
+    CriterionQualification,
+)
+from virtual_company.research.models import (
+    CompanySizeNormalization,
+    DiscoveredCompany,
+    SearchResult,
+    WebPage,
+)
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
@@ -39,5 +47,8 @@ class ResearchWorkflowState(TypedDict):
     investigations: dict[UUID, CompanyInvestigationState]
     active_company_ids: list[UUID]
     adaptive_mode: bool
+    company_search_started: bool
+    criterion_qualifications: dict[UUID, list[CriterionQualification]]
+    size_normalizations: dict[UUID, CompanySizeNormalization | None]
     company_qualifications: dict[UUID, CompanyQualification]
     error: str | None

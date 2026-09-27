@@ -7,7 +7,9 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from virtual_company.domain.criteria import CompanySizeCriteria, TechnologyCriteria
 
 
 class CampaignCreate(BaseModel):
@@ -17,9 +19,8 @@ class CampaignCreate(BaseModel):
     description: str | None = None
     target_market: str | None = None
     industry: str | None = None
-    technologies: dict[str, Any] | list[Any] | None = None
-    company_size_min: int | None = None
-    company_size_max: int | None = None
+    technologies: TechnologyCriteria = Field(default_factory=TechnologyCriteria)
+    company_size: CompanySizeCriteria | None = None
 
 
 class CampaignUpdate(BaseModel):
@@ -27,9 +28,8 @@ class CampaignUpdate(BaseModel):
     description: str | None = None
     target_market: str | None = None
     industry: str | None = None
-    technologies: dict[str, Any] | list[Any] | None = None
-    company_size_min: int | None = None
-    company_size_max: int | None = None
+    technologies: TechnologyCriteria | None = None
+    company_size: CompanySizeCriteria | None = None
     target_count: int | None = None
     status: str | None = None
 

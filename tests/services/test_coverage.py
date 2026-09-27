@@ -17,9 +17,14 @@ def make_campaign(*, technologies: list[str] | None = None) -> CampaignCriteria:
         description=None,
         target_market="Australia",
         industry="fin tech",
-        technologies=technologies or ["java", "spring", "spring boot", "kafka"],
-        company_size_min=100,
-        company_size_max=500,
+        technologies={
+            "required": technologies or ["java", "spring", "spring boot", "kafka"],
+            "preferred": [],
+        },
+        company_size={
+            "min": {"value": 100, "requirement": "required"},
+            "max": {"value": 500, "requirement": "preferred"},
+        },
         target_count=3,
     )
 
@@ -53,7 +58,7 @@ def test_full_coverage_retains_matching_evidence_ids() -> None:
     coverage = assess_evidence_coverage(
         make_campaign(), evidence, company_id=company_id, research_run_id=run_id
     )
-    assert len(coverage) == 7
+    assert len(coverage) == 8
     assert all(result.status is CoverageStatus.FOUND for result in coverage)
     assert all(result.evidence_ids for result in coverage)
 
@@ -81,7 +86,7 @@ def test_sparse_and_zero_evidence_are_missing_without_qualification() -> None:
     empty = assess_evidence_coverage(
         make_campaign(), [], company_id=company_id, research_run_id=run_id
     )
-    assert len(empty) == 7
+    assert len(empty) == 8
     assert all(result.status is CoverageStatus.MISSING for result in empty)
 
 

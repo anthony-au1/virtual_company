@@ -36,9 +36,8 @@ class Campaign(Base):
     description: Mapped[str | None] = mapped_column(Text)
     target_market: Mapped[str | None] = mapped_column(String(255))
     industry: Mapped[str | None] = mapped_column(String(255))
-    technologies: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSONB)
-    company_size_min: Mapped[int | None] = mapped_column(Integer)
-    company_size_max: Mapped[int | None] = mapped_column(Integer)
+    technologies: Mapped[dict[str, list[str]]] = mapped_column(JSONB, nullable=False)
+    company_size: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     target_count: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

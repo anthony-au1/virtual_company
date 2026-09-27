@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from uuid import UUID
 
+from virtual_company.domain.criteria import CriterionRequirement
+
 
 class QualificationStatus(StrEnum):
     MATCH = "MATCH"
@@ -21,6 +23,7 @@ class CompanyQualificationStatus(StrEnum):
 class CriterionQualification:
     criterion: str
     subject: str | None
+    requirement: CriterionRequirement
     status: QualificationStatus
     evidence_ids: list[UUID]
     reason: str

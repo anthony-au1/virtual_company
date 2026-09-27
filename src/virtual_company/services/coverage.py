@@ -54,7 +54,8 @@ def assess_evidence_coverage(
             matches[(criterion, subject_key)].append(item.id)
 
     coverage: list[CriterionCoverage] = []
-    for criterion, subject in expected:
+    for expected_criterion in expected:
+        criterion, subject = expected_criterion.criterion, expected_criterion.subject
         key = (
             criterion,
             ""
@@ -66,6 +67,7 @@ def assess_evidence_coverage(
             CriterionCoverage(
                 criterion=EvidenceCriterion(criterion),
                 subject=subject,
+                requirement=expected_criterion.requirement,
                 status=CoverageStatus.FOUND if evidence_ids else CoverageStatus.MISSING,
                 evidence_ids=evidence_ids,
             )

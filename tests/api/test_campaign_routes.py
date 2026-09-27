@@ -73,6 +73,7 @@ def campaign() -> Campaign:
         name="APAC SaaS",
         target_count=25,
         status="DRAFT",
+        technologies={"required": [], "preferred": []},
         created_at=now,
         updated_at=now,
     )
@@ -91,9 +92,42 @@ def test_create_campaign_returns_created_response() -> None:
     assert response.status_code == 201
     assert response.json()["id"] == str(model.id)
     assert isinstance(service.create_data, CampaignCreate)
-    assert service.create_data.model_dump() == CampaignCreate(
-        name="APAC SaaS", target_count=25, status="DRAFT"
-    ).model_dump()
+    assert (
+        service.create_data.model_dump()
+        == CampaignCreate(
+            name="APAC SaaS", target_count=25, status="DRAFT"
+        ).model_dump()
+    )
+
+
+def test_create_campaign_accepts_required_and_preferred_criteria() -> None:
+    model = campaign()
+    model.target_market = "Australia"
+    model.industry = "fin tech"
+    model.technologies = {"required": ["java"], "preferred": ["kafka"]}
+    model.company_size = {
+        "min": {"value": 100, "requirement": "required"},
+        "max": {"value": 500, "requirement": "preferred"},
+    }
+    service = CampaignServiceStub(model)
+    app.dependency_overrides[get_campaign_service] = lambda: service
+    response = TestClient(app).post(
+        "/api/v1/campaigns",
+        json={
+            "name": model.name,
+            "target_count": model.target_count,
+            "status": model.status,
+            "target_market": model.target_market,
+            "industry": model.industry,
+            "technologies": model.technologies,
+            "company_size": model.company_size,
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["technologies"] == model.technologies
+    assert response.json()["company_size"] == model.company_size
+    assert service.create_data is not None
+    assert service.create_data.company_size.min.requirement.value == "required"
 
 
 def test_patch_null_clears_nullable_field_and_keeps_omitted_fields_unchanged() -> None:
@@ -116,6 +150,17 @@ def test_campaign_status_validation_and_missing_campaign_return_errors() -> None
         json={"name": "APAC SaaS", "target_count": 25, "status": "UNKNOWN"},
     )
     assert invalid.status_code == 422
+
+    old_size = TestClient(app).post(
+        "/api/v1/campaigns",
+        json={
+            "name": "APAC SaaS",
+            "target_count": 25,
+            "status": "DRAFT",
+            "company_size_min": 100,
+        },
+    )
+    assert old_size.status_code == 422
 
     app.dependency_overrides[get_campaign_service] = lambda: CampaignServiceStub(None)
     missing = TestClient(app).get(f"/api/v1/campaigns/{uuid4()}")
@@ -150,7 +195,9 @@ def test_research_campaign_returns_workflow_result() -> None:
 def test_research_campaign_maps_expected_workflow_errors(
     error: Exception, status_code: int
 ) -> None:
-    app.dependency_overrides[get_research_workflow] = lambda: ResearchWorkflowStub(error)
+    app.dependency_overrides[get_research_workflow] = lambda: ResearchWorkflowStub(
+        error
+    )
 
     response = TestClient(app).post(f"/api/v1/campaigns/{uuid4()}/research")
 

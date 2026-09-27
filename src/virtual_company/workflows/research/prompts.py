@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from virtual_company.domain.qualification import CriterionQualification
 from virtual_company.research.models import SearchResult, WebPage
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
-    CriterionCoverage,
     ResearchCompany,
 )
 
@@ -25,9 +25,11 @@ class PromptIdentity:
 SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
 EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v1")
 RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v1")
-COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v1")
+COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v2")
 EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v1")
-FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity("generate_followup_company_queries", "v1")
+FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity(
+    "generate_followup_company_queries", "v2"
+)
 VALIDATE_COMPANY_PAGE_ATTRIBUTION_PROMPT = PromptIdentity(
     "validate_company_page_attribution", "v1"
 )
@@ -124,8 +126,9 @@ def rank_company_candidates_user_prompt(
 def company_query_system_prompt() -> str:
     """Return instructions for source-discovery queries about one known company."""
     return (
-        "Generate 4 to 6 web-search queries to find candidate sources of evidence about "
-        "whether this company matches the campaign. You are generating research queries, "
+        "Generate concise web-search queries for ONLY the supplied evidence targets. "
+        "The application has already selected REQUIRED or PREFERRED priority. Combine "
+        "related targets when one source can establish several. You are generating research queries, "
         "not asserting facts: queries may investigate and disprove hypotheses. When a company "
         "domain is supplied, include some official-domain site: queries and some relevant "
         "third-party queries. Favor engineering, careers, job advertisements, technical blogs, "
@@ -134,12 +137,15 @@ def company_query_system_prompt() -> str:
 
 
 def company_query_user_prompt(
-    campaign: CampaignCriteria, company: ResearchCompany
+    campaign: CampaignCriteria,
+    company: ResearchCompany,
+    targets: list[CriterionQualification],
 ) -> str:
     """Serialize campaign criteria and one company for source-query generation."""
     return (
         f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"
-        f"Company context:\n{company.model_dump_json()}"
+        f"Company context:\n{company.model_dump_json()}\n\n"
+        f"Evidence targets:\n{_targets_json(targets)}"
     )
 
 
@@ -147,7 +153,8 @@ def followup_company_query_system_prompt() -> str:
     """Return instructions for targeted searches for missing coverage only."""
     return (
         "Generate a small set of concise web-search queries designed to find source-grounded "
-        "evidence for ONLY the listed missing campaign criteria for this company. Include the "
+        "evidence for ONLY the listed unresolved campaign criteria for this company. "
+        "The application determines their requirement level and priority. Include the "
         "company name in every query. Combine related criteria when sensible. Prefer queries "
         "likely to surface official careers, engineering, technical, company, or credible "
         "business sources. Do not target already-found criteria except as necessary context. "
@@ -159,13 +166,27 @@ def followup_company_query_system_prompt() -> str:
 def followup_company_query_user_prompt(
     campaign: CampaignCriteria,
     company: ResearchCompany,
-    missing: list[CriterionCoverage],
+    missing: list[CriterionQualification],
 ) -> str:
     """Serialize one company and only its missing coverage expectations."""
     return (
         f"Company:\n{company.model_dump_json()}\n\n"
         f"Campaign context:\n{campaign.model_dump_json()}\n\n"
-        f"Missing criteria:\n{json.dumps([item.model_dump(mode='json') for item in missing])}"
+        f"Unresolved criteria:\n{_targets_json(missing)}"
+    )
+
+
+def _targets_json(targets: list[CriterionQualification]) -> str:
+    return json.dumps(
+        [
+            {
+                "criterion": item.criterion,
+                "subject": item.subject,
+                "requirement": item.requirement.value,
+                "status": item.status.value,
+            }
+            for item in targets
+        ]
     )
 
 
@@ -216,7 +237,6 @@ def extract_company_evidence_user_prompt(
         f"Company:\n{company.model_dump_json()}\n\n"
         f"Page:\n{json.dumps(page.model_dump())}"
     )
-
 
 
 def normalize_company_size_system_prompt() -> str:

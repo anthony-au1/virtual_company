@@ -8,7 +8,9 @@ from typing import Protocol
 from uuid import UUID
 
 from virtual_company.domain.criteria import (
+    CampaignCriterion,
     CampaignForQualification,
+    CriterionRequirement,
     campaign_criteria,
     normalize_subject,
     technology_subjects,
@@ -234,34 +236,37 @@ def _describe_size(bounds: EmployeeCountBounds) -> str:
 
 
 def _evaluate_size(
-    campaign: CampaignForQualification, bounds: EmployeeCountBounds
+    criterion: CampaignCriterion, bounds: EmployeeCountBounds
 ) -> tuple[QualificationStatus, str]:
-    minimum, maximum = campaign.company_size_min, campaign.company_size_max
+    threshold = criterion.size_value
+    if threshold is None:
+        raise ValueError("Company-size criterion needs a threshold")
     prefix = f"Validated evidence establishes {_describe_size(bounds)}"
-    if minimum is not None and bounds.upper is not None and bounds.upper < minimum:
+    if (
+        criterion.size_bound == "min"
+        and bounds.upper is not None
+        and bounds.upper < threshold
+    ):
         return (
             QualificationStatus.MISMATCH,
-            f"{prefix}, below the campaign minimum of {minimum}.",
+            f"{prefix}, below the campaign minimum of {threshold}.",
         )
-    if maximum is not None and bounds.lower is not None and bounds.lower > maximum:
+    if (
+        criterion.size_bound == "max"
+        and bounds.lower is not None
+        and bounds.lower > threshold
+    ):
         return (
             QualificationStatus.MISMATCH,
-            f"{prefix}, exceeding the campaign maximum of {maximum}.",
+            f"{prefix}, exceeding the campaign maximum of {threshold}.",
         )
-    minimum_met = minimum is None or (
-        bounds.lower is not None and bounds.lower >= minimum
+    bound_met = (
+        bounds.lower is not None and bounds.lower >= threshold
+        if criterion.size_bound == "min"
+        else bounds.upper is not None and bounds.upper <= threshold
     )
-    maximum_met = maximum is None or (
-        bounds.upper is not None and bounds.upper <= maximum
-    )
-    if minimum_met and maximum_met:
-        constraint = (
-            f"range of {minimum} to {maximum}"
-            if minimum is not None and maximum is not None
-            else f"minimum of {minimum}"
-            if minimum is not None
-            else f"maximum of {maximum}"
-        )
+    if bound_met:
+        constraint = f"{'minimum' if criterion.size_bound == 'min' else 'maximum'} of {threshold}"
         return (
             QualificationStatus.MATCH,
             f"{prefix}, satisfying the campaign {constraint}.",
@@ -273,7 +278,7 @@ def _evaluate_size(
 
 
 def _qualify_size(
-    campaign: CampaignForQualification,
+    criterion: CampaignCriterion,
     evidence: Sequence[EvidenceForQualification],
     normalizations: Mapping[UUID, CompanySizeNormalization | None],
     as_of_year: int,
@@ -305,22 +310,25 @@ def _qualify_size(
                     "Available evidence contains conflicting company-size information."
                 )
             elif all(value is not None for value in parsed):
-                status, reason = _evaluate_size(campaign, bounds)
+                status, reason = _evaluate_size(criterion, bounds)
             reason += note
-    return CriterionQualification("company_size", None, status, ids, reason)
+    return CriterionQualification(
+        "company_size", criterion.subject, criterion.requirement, status, ids, reason
+    )
 
 
 def _qualify_category(
-    criterion: str, subject: str | None, evidence: Sequence[EvidenceForQualification]
+    criterion: CampaignCriterion, evidence: Sequence[EvidenceForQualification]
 ) -> CriterionQualification:
-    key = normalize_subject(criterion, subject)
+    key = normalize_subject(criterion.criterion, criterion.subject)
     signals: list[QualificationStatus] = []
     ids: list[UUID] = []
     implied = False
     for item in evidence:
-        direct = normalize_subject(criterion, item.subject) == key
-        implication = criterion == "technology" and key in technology_subjects(
-            item.subject
+        direct = normalize_subject(criterion.criterion, item.subject) == key
+        implication = (
+            criterion.criterion == "technology"
+            and key in technology_subjects(item.subject)
         )
         if not direct and not implication:
             continue
@@ -349,7 +357,12 @@ def _qualify_category(
         else:
             reason = "Available evidence contains conflicting or ambiguous information."
     return CriterionQualification(
-        criterion, subject, status, sorted(set(ids), key=str), reason
+        criterion.criterion,
+        criterion.subject,
+        criterion.requirement,
+        status,
+        sorted(set(ids), key=str),
+        reason,
     )
 
 
@@ -362,17 +375,17 @@ def qualify_company(
 ) -> list[CriterionQualification]:
     """Evaluate one company's persisted evidence; callers enforce company scope."""
     results: list[CriterionQualification] = []
-    for criterion, subject in campaign_criteria(campaign):
-        relevant = [item for item in evidence if item.criterion == criterion]
+    for criterion in campaign_criteria(campaign):
+        relevant = [item for item in evidence if item.criterion == criterion.criterion]
         results.append(
             _qualify_size(
-                campaign,
+                criterion,
                 relevant,
                 size_normalizations or {},
                 as_of_year if as_of_year is not None else datetime.now(UTC).year,
             )
-            if criterion == "company_size"
-            else _qualify_category(criterion, subject, relevant)
+            if criterion.criterion == "company_size"
+            else _qualify_category(criterion, relevant)
         )
     return results
 
@@ -380,7 +393,11 @@ def qualify_company(
 def aggregate_qualification(
     company_id: UUID, criteria: list[CriterionQualification]
 ) -> CompanyQualification:
-    statuses = {item.status for item in criteria}
+    statuses = {
+        item.status
+        for item in criteria
+        if item.requirement is CriterionRequirement.REQUIRED
+    }
     if QualificationStatus.MISMATCH in statuses:
         status = CompanyQualificationStatus.NOT_QUALIFIED
     elif QualificationStatus.UNKNOWN in statuses:

@@ -172,6 +172,7 @@ class ResearchService:
                             {
                                 "criterion": item.criterion,
                                 "subject": item.subject,
+                                "requirement": item.requirement.value,
                                 "status": item.status.value,
                                 "evidence_ids": [
                                     str(value) for value in item.evidence_ids

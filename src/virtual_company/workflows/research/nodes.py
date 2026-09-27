@@ -6,8 +6,10 @@ import asyncio
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from virtual_company.domain.criteria import CriterionRequirement
 from virtual_company.domain.qualification import (
     CompanyQualification,
+    CriterionQualification,
     QualificationStatus,
 )
 from virtual_company.llm.base import LLMProvider
@@ -32,6 +34,7 @@ from virtual_company.services.company_size_normalizer import CompanySizeNormaliz
 from virtual_company.services.coverage import assess_evidence_coverage
 from virtual_company.services.qualification import (
     aggregate_qualification,
+    needs_size_normalization,
     qualify_company,
 )
 from virtual_company.tools.web_fetch import WebFetchError, WebFetchTool
@@ -392,14 +395,50 @@ class ResearchNodes:
             },
         }
 
+    async def reuse_discovery_sources(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, object]:
+        """Offer selected original discovery results to the normal evidence pipeline."""
+        candidates = {
+            (
+                normalize_company_name(item.name),
+                normalize_domain(item.domain or item.website),
+            ): item
+            for item in state["aggregated_company_candidates"]
+        }
+        results: dict[UUID, list[SearchResult]] = {}
+        for company, discovered in zip(
+            state["research_companies"], state["discovered_companies"], strict=True
+        ):
+            candidate = candidates.get(
+                (
+                    normalize_company_name(discovered.name),
+                    normalize_domain(discovered.domain or discovered.website),
+                )
+            )
+            by_url = (
+                {item.url: item for item in candidate.supporting_results}
+                if candidate
+                else {}
+            )
+            results[company.id] = [
+                by_url[url] for url in discovered.supporting_urls if url in by_url
+            ]
+        get_observability().event(
+            "discovery_sources_reused",
+            source_count=sum(len(items) for items in results.values()),
+        )
+        return {"company_search_results": results, "adaptive_mode": False}
+
     async def generate_company_queries(
         self, state: ResearchWorkflowState
-    ) -> dict[str, dict[UUID, list[str]]]:
+    ) -> dict[str, object]:
         """Generate bounded, evidence-seeking queries for each persisted company."""
         campaign = self._campaign(state)
         observability = get_observability()
         company_queries: dict[UUID, list[str]] = {}
-        for company in state["research_companies"]:
+        for company in self._active_companies(state):
+            targets = self._investigation_targets(state, company.id)
             with observability.context(
                 company_id=str(company.id),
                 company_name=company.name,
@@ -409,10 +448,19 @@ class ResearchNodes:
             ):
                 response = await self._research_llm.generate_structured(
                     system_prompt=company_query_system_prompt(),
-                    user_prompt=company_query_user_prompt(campaign, company),
+                    user_prompt=company_query_user_prompt(campaign, company, targets),
                     response_model=GeneratedCompanySearchQueries,
                 )
-                queries = response.queries[: self._company_research_query_count]
+                query_limit = (
+                    min(
+                        self._company_research_query_count,
+                        self._company_research_followup_search_queries_per_company,
+                    )
+                    if state["investigations"][company.id].priority
+                    is CriterionRequirement.PREFERRED
+                    else self._company_research_query_count
+                )
+                queries = response.queries[:query_limit]
                 company_queries[company.id] = queries
                 observability.event(
                     "company_research_queries_generated", query_count=len(queries)
@@ -422,7 +470,11 @@ class ResearchNodes:
                     len(queries),
                     workflow="company_research",
                 )
-        return {"company_research_queries": company_queries}
+        return {
+            "company_research_queries": company_queries,
+            "company_search_started": True,
+            "adaptive_mode": False,
+        }
 
     async def generate_followup_queries(
         self, state: ResearchWorkflowState
@@ -434,11 +486,7 @@ class ResearchNodes:
         observability = get_observability()
         for company in self._active_companies(state):
             investigation = investigations[company.id]
-            missing = [
-                item
-                for item in investigation.coverage
-                if item.status is CoverageStatus.MISSING
-            ]
+            missing = self._investigation_targets(state, company.id)
             next_round = investigation.round + 1
             with observability.context(
                 company_id=str(company.id),
@@ -464,9 +512,9 @@ class ResearchNodes:
                     investigation_round=next_round,
                     missing_criteria=[
                         (
-                            f"{item.criterion.value}/{item.subject}"
+                            f"{item.criterion}/{item.subject}"
                             if item.subject
-                            else item.criterion.value
+                            else item.criterion
                         )
                         for item in missing
                     ],
@@ -595,14 +643,10 @@ class ResearchNodes:
                     -self._source_selection_score(
                         item[1],
                         company,
-                        (
-                            investigations.get(
-                                company.id,
-                                CompanyInvestigationState(company_id=company.id),
-                            ).coverage
-                            if adaptive_mode
-                            else []
-                        ),
+                        investigations.get(
+                            company.id,
+                            CompanyInvestigationState(company_id=company.id),
+                        ).coverage,
                     ),
                     item[0],
                 ),
@@ -748,9 +792,7 @@ class ResearchNodes:
                             response_model=ExtractedEvidenceItems,
                         )
                     evidence = response.evidence
-                except (
-                    Exception
-                ) as error:  # noqa: BLE001 - one page must not abort the run
+                except Exception as error:  # noqa: BLE001 - one page must not abort the run
                     observability.event(
                         "company_evidence_extraction_failed",
                         error_type=type(error).__name__,
@@ -969,7 +1011,20 @@ class ResearchNodes:
         if research_run_id is None:
             raise ValueError("Research run was not created")
         evidence = await self._research.list_evidence_for_run(research_run_id)
+        normalizations = dict(state.get("size_normalizations", {}))
+        if campaign.company_size and (
+            campaign.company_size.min or campaign.company_size.max
+        ):
+            pending = [
+                item
+                for item in evidence
+                if item.id not in normalizations and needs_size_normalization(item)
+            ]
+            normalizations.update(
+                await self._size_normalizer.normalize_evidence(pending)
+            )
         investigations = dict(state["investigations"])
+        criterion_qualifications = dict(state.get("criterion_qualifications", {}))
         active_company_ids: list[UUID] = []
         observability = get_observability()
         for company in state["research_companies"]:
@@ -982,9 +1037,41 @@ class ResearchNodes:
                 company_id=company.id,
                 research_run_id=research_run_id,
             )
-            missing = sum(item.status is CoverageStatus.MISSING for item in coverage)
+            company_evidence = [
+                item for item in evidence if item.company_id == company.id
+            ]
+            criteria = qualify_company(
+                campaign, company_evidence, size_normalizations=normalizations
+            )
+            criterion_qualifications[company.id] = criteria
+            required = [
+                item
+                for item in criteria
+                if item.requirement is CriterionRequirement.REQUIRED
+            ]
+            preferred = [
+                item
+                for item in criteria
+                if item.requirement is CriterionRequirement.PREFERRED
+            ]
+            unresolved_required = [
+                item for item in required if item.status is QualificationStatus.UNKNOWN
+            ]
+            unresolved_preferred = [
+                item for item in preferred if item.status is QualificationStatus.UNKNOWN
+            ]
+            priority = (
+                CriterionRequirement.REQUIRED
+                if unresolved_required
+                else CriterionRequirement.PREFERRED
+            )
+            missing = len(unresolved_required or unresolved_preferred)
             stop_reason: InvestigationStopReason | None = None
-            if missing == 0:
+            if any(item.status is QualificationStatus.MISMATCH for item in required):
+                stop_reason = InvestigationStopReason.REQUIRED_MISMATCH
+            elif not unresolved_required and all(
+                item.status is CoverageStatus.FOUND for item in coverage
+            ):
                 stop_reason = InvestigationStopReason.COVERAGE_COMPLETE
             elif (
                 previous.round > 0
@@ -997,6 +1084,7 @@ class ResearchNodes:
             investigation = previous.model_copy(
                 update={
                     "coverage": coverage,
+                    "priority": priority,
                     "stopped": stop_reason is not None,
                     "stop_reason": stop_reason,
                 }
@@ -1022,6 +1110,24 @@ class ResearchNodes:
                     found=[item.model_dump(mode="json") for item in found_items],
                     missing=[item.model_dump(mode="json") for item in missing_items],
                     new_evidence_items=previous.new_evidence_count,
+                    investigation_priority=priority.value,
+                    required_total=len(required),
+                    required_match=sum(
+                        item.status is QualificationStatus.MATCH for item in required
+                    ),
+                    required_mismatch=sum(
+                        item.status is QualificationStatus.MISMATCH for item in required
+                    ),
+                    required_unknown=len(unresolved_required),
+                    preferred_total=len(preferred),
+                    preferred_match=sum(
+                        item.status is QualificationStatus.MATCH for item in preferred
+                    ),
+                    preferred_mismatch=sum(
+                        item.status is QualificationStatus.MISMATCH
+                        for item in preferred
+                    ),
+                    preferred_unknown=len(unresolved_preferred),
                     stop_reason=stop_reason.value if stop_reason else None,
                 )
             observability.record(
@@ -1038,6 +1144,8 @@ class ResearchNodes:
         return {
             "investigations": investigations,
             "active_company_ids": active_company_ids,
+            "criterion_qualifications": criterion_qualifications,
+            "size_normalizations": normalizations,
         }
 
     @staticmethod
@@ -1082,8 +1190,9 @@ class ResearchNodes:
         ]
 
         for item in missing:
+            weight = 12 if item.requirement is CriterionRequirement.REQUIRED else 4
             if item.subject and item.subject.casefold() in text:
-                score += 12
+                score += weight
 
             if item.criterion is EvidenceCriterion.COMPANY_SIZE:
                 if any(
@@ -1096,7 +1205,7 @@ class ResearchNodes:
                         "headcount",
                     )
                 ):
-                    score += 12
+                    score += weight
 
                 if any(
                     token in path
@@ -1107,7 +1216,9 @@ class ResearchNodes:
                         "/who-we-are",
                     )
                 ):
-                    score += 5
+                    score += (
+                        5 if item.requirement is CriterionRequirement.REQUIRED else 2
+                    )
 
         if result.snippet:
             score += 3
@@ -1139,17 +1250,19 @@ class ResearchNodes:
         campaign = self._campaign(state)
         results: dict[UUID, CompanyQualification] = {}
         observability = get_observability()
+        run_id = state["research_run_id"]
+        if run_id is None:
+            raise ValueError("Research run was not created")
+        run_evidence = await self._research.list_evidence_for_run(run_id)
         for company in state["research_companies"]:
-            evidence = await self._research.list_evidence_for_company(company.id)
-            normalizations = (
-                await self._size_normalizer.normalize_evidence(evidence)
-                if campaign.company_size_min is not None
-                or campaign.company_size_max is not None
-                else {}
-            )
+            evidence = [item for item in run_evidence if item.company_id == company.id]
             result = aggregate_qualification(
                 company.id,
-                qualify_company(campaign, evidence, size_normalizations=normalizations),
+                qualify_company(
+                    campaign,
+                    evidence,
+                    size_normalizations=state.get("size_normalizations", {}),
+                ),
             )
             metadata = {
                 "company_id": str(company.id),
@@ -1168,6 +1281,15 @@ class ResearchNodes:
                     for item in result.criteria
                 ),
             }
+            for requirement in CriterionRequirement:
+                group = [
+                    item for item in result.criteria if item.requirement is requirement
+                ]
+                metadata[f"{requirement.value}_total"] = len(group)
+                for status in QualificationStatus:
+                    metadata[f"{requirement.value}_{status.value.casefold()}"] = sum(
+                        item.status is status for item in group
+                    )
             with observability.span("company_qualification", **metadata):
                 observability.event("company_qualified", **metadata)
             results[company.id] = result
@@ -1234,6 +1356,26 @@ class ResearchNodes:
             if company.id in active_ids
         ]
 
+    @staticmethod
+    def _investigation_targets(
+        state: ResearchWorkflowState, company_id: UUID
+    ) -> list[CriterionQualification]:
+        criteria = state.get("criterion_qualifications", {}).get(company_id, [])
+        required = [
+            item
+            for item in criteria
+            if item.requirement is CriterionRequirement.REQUIRED
+            and item.status is QualificationStatus.UNKNOWN
+        ]
+        if required:
+            return required
+        return [
+            item
+            for item in criteria
+            if item.requirement is CriterionRequirement.PREFERRED
+            and item.status is QualificationStatus.UNKNOWN
+        ]
+
     def _discovery_candidate_limit(self, target_count: int) -> int:
         """Return the bounded discovery candidate pool size for a campaign."""
         return max(
@@ -1295,15 +1437,7 @@ class ResearchNodes:
 
     @staticmethod
     def _campaign_technologies(campaign: CampaignCriteria) -> list[str]:
-        if isinstance(campaign.technologies, list):
-            return [str(item) for item in campaign.technologies if str(item).strip()]
-        if isinstance(campaign.technologies, dict):
-            return [
-                str(item)
-                for item in campaign.technologies.values()
-                if str(item).strip()
-            ]
-        return []
+        return campaign.technologies.required + campaign.technologies.preferred
 
     @staticmethod
     def _compact(value: str) -> str:

@@ -8,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import Campaign
-from virtual_company.repositories._helpers import apply_updates, create_values
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
 
 
@@ -19,7 +18,7 @@ class CampaignRepository:
         self._session = session
 
     async def create(self, data: CampaignCreate) -> Campaign:
-        campaign = Campaign(**create_values(data))
+        campaign = Campaign(**data.model_dump(mode="json", exclude_none=True))
         self._session.add(campaign)
         await self._session.flush()
         await self._session.refresh(campaign)
@@ -36,7 +35,10 @@ class CampaignRepository:
         if campaign is None:
             return None
 
-        apply_updates(campaign, data)
+        for field_name, value in data.model_dump(
+            mode="json", exclude_unset=True
+        ).items():
+            setattr(campaign, field_name, value)
         await self._session.flush()
         await self._session.refresh(campaign)
         return campaign

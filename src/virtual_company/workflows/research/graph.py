@@ -108,6 +108,9 @@ class ResearchWorkflow:
                         "investigations": {},
                         "active_company_ids": [],
                         "adaptive_mode": False,
+                        "company_search_started": False,
+                        "criterion_qualifications": {},
+                        "size_normalizations": {},
                         "company_qualifications": {},
                         "error": None,
                     },
@@ -187,6 +190,12 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         ),
     )
     graph.add_node(
+        "reuse_discovery_sources",
+        _with_failure_handling(
+            nodes.reuse_discovery_sources, "reuse_discovery_sources", research
+        ),
+    )
+    graph.add_node(
         "search_company_sources",
         _with_failure_handling(
             nodes.search_company_sources, "search_company_sources", research
@@ -260,7 +269,8 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     graph.add_edge("extract_company_candidates", "aggregate_company_candidates")
     graph.add_edge("aggregate_company_candidates", "rank_company_candidates")
     graph.add_edge("rank_company_candidates", "persist_companies")
-    graph.add_edge("persist_companies", "generate_company_queries")
+    graph.add_edge("persist_companies", "reuse_discovery_sources")
+    graph.add_edge("reuse_discovery_sources", "select_company_sources")
     graph.add_edge("generate_company_queries", "search_company_sources")
     graph.add_edge("search_company_sources", "select_company_sources")
     graph.add_edge("select_company_sources", "fetch_company_sources")
@@ -272,6 +282,7 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         "check_evidence_coverage",
         route_investigation,
         {
+            "initial_search": "generate_company_queries",
             "follow_up": "generate_followup_queries",
             "done": "qualify_companies",
         },
@@ -285,7 +296,9 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
 
 def route_investigation(state: ResearchWorkflowState) -> str:
     """Continue only while at least one company remains independently active."""
-    return "follow_up" if state["active_company_ids"] else "done"
+    if not state["active_company_ids"]:
+        return "done"
+    return "follow_up" if state["company_search_started"] else "initial_search"
 
 
 def _with_failure_handling(

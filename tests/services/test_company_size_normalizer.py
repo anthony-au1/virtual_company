@@ -9,6 +9,12 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from virtual_company.domain.criteria import (
+    CompanySizeBound,
+    CompanySizeCriteria,
+    CriterionRequirement,
+    TechnologyCriteria,
+)
 from virtual_company.domain.qualification import QualificationStatus as Status
 from virtual_company.research.models import CompanySizeNormalization, EmployeeCountFact
 from virtual_company.services.company_size_normalizer import CompanySizeNormalizer
@@ -59,9 +65,10 @@ def campaign() -> SimpleNamespace:
     return SimpleNamespace(
         target_market=None,
         industry=None,
-        technologies=[],
-        company_size_min=500,
-        company_size_max=None,
+        technologies=TechnologyCriteria(),
+        company_size=CompanySizeCriteria(
+            min=CompanySizeBound(value=500, requirement=CriterionRequirement.REQUIRED)
+        ),
     )
 
 
@@ -119,7 +126,7 @@ async def test_named_company_normalization(
         "claim": claim,
         "evidence_text": text,
     }
-    assert "company_size_min" not in str(provider.calls)
+    assert "campaign minimum" not in str(provider.calls)
     if expected is Status.MISMATCH:
         assert "460 employees" in decision.reason and "2026" in decision.reason
         assert "superseded" in decision.reason
