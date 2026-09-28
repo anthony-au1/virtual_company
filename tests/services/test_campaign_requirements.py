@@ -186,7 +186,7 @@ def test_size_coverage_found_can_still_be_required_mismatch() -> None:
     assert size_results[0].status is QualificationStatus.MISMATCH
 
 
-def test_preferred_technology_mismatch_does_not_reject() -> None:
+def test_preferred_technology_evidence_matches_regardless_of_wording() -> None:
     config = campaign()
     config.technologies.preferred = ["kafka"]
     config.company_size = None
@@ -197,7 +197,7 @@ def test_preferred_technology_mismatch_does_not_reject() -> None:
         evidence("technology", "kafka", "Does not use Kafka."),
     ]
     criteria = qualify_company(config, items)
-    assert criteria[-1].status is QualificationStatus.MISMATCH
+    assert criteria[-1].status is QualificationStatus.MATCH
     assert (
         aggregate_qualification(uuid4(), criteria).status
         is CompanyQualificationStatus.QUALIFIED

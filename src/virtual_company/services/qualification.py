@@ -4,7 +4,6 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Protocol
 from uuid import UUID
 
@@ -33,15 +32,6 @@ class EvidenceForQualification(Protocol):
     evidence_text: str
 
 
-_AMBIGUOUS = re.compile(
-    r"\b(no|not|never|without|unknown|unclear|might|may|possibly|lacks?|formerly)\b|n't\b",
-    re.IGNORECASE,
-)
-_NEGATIVES = {
-    "technology": r"\bdoes not (?:use|require) (.+?)[.!]?$",
-    "target_market": r"\bdoes not operate in (.+?)[.!]?$",
-    "industry": r"\bis not (?:a|an) (.+?) company[.!]?$",
-}
 _NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
 _OPERATOR = r"over|more than|at least|under|fewer than|less than|up to|at most"
 _SIZE_VALUE = (
@@ -65,14 +55,6 @@ _UNSUPPORTED_SIZE = re.compile(
 )
 
 
-class _TechnologySignal(Enum):
-    STRONG_POSITIVE = "strong_positive"
-    WEAK_POSITIVE = "weak_positive"
-    NEGATIVE = "negative"
-    AMBIGUOUS = "ambiguous"
-    CONFLICT = "conflict"
-
-
 @dataclass(frozen=True)
 class EmployeeCountBounds:
     lower: int | None
@@ -92,76 +74,6 @@ def _contradictory(bounds: EmployeeCountBounds) -> bool:
         and bounds.upper is not None
         and bounds.lower > bounds.upper
     )
-
-
-def _polarity(item: EvidenceForQualification) -> QualificationStatus:
-    """Trust structured positive extraction; narrowly recognize explicit negatives."""
-    criterion = item.criterion or ""
-    subject = normalize_subject(criterion, item.subject)
-    signals: list[QualificationStatus] = []
-    for text in (item.claim, item.evidence_text):
-        match = re.search(_NEGATIVES[criterion], text.strip(), re.IGNORECASE)
-        if match and normalize_subject(criterion, match[1]) == subject:
-            signals.append(QualificationStatus.MISMATCH)
-        elif _AMBIGUOUS.search(text):
-            return QualificationStatus.UNKNOWN
-        else:
-            signals.append(QualificationStatus.MATCH)
-    if len(set(signals)) != 1:
-        return QualificationStatus.UNKNOWN
-    return signals[0]
-
-
-def _technology_alternative(text: str, subject: str) -> bool:
-    """Recognize alternatives that actually contain the subject being qualified."""
-    if not subject:
-        return False
-    subject_pattern = re.escape(subject).replace(r"\ ", r"\s+")
-    token = r"[a-z0-9][a-z0-9+#.\-]*(?:\s+[a-z0-9][a-z0-9+#.\-]*)?"
-    direct_patterns = (
-        rf"\b{subject_pattern}\b\s*(?:/|\band/or\b|\bor\b)\s*{token}",
-        rf"{token}\s*(?:/|\band/or\b|\bor\b)\s*\b{subject_pattern}\b",
-    )
-    if any(re.search(pattern, text, re.IGNORECASE) for pattern in direct_patterns):
-        return True
-
-    # A comma-separated list is an alternative only when it closes with "or".
-    # Do not let an earlier, completed alternative ("Kotlin and/or Java") make
-    # every later item in the sentence ambiguous (", Spring Boot, AWS").
-    alternative_list = re.compile(
-        rf"\b{token}(?:\s*,\s*{token})+\s+or\s+{token}\b",
-        re.IGNORECASE,
-    )
-    return any(
-        re.search(rf"\b{subject_pattern}\b", match.group(), re.IGNORECASE)
-        for match in alternative_list.finditer(text)
-    )
-
-
-def _technology_signal(item: EvidenceForQualification) -> _TechnologySignal:
-    """Classify one technology record while preserving source-text uncertainty."""
-    subject = normalize_subject("technology", item.subject)
-    signals: list[_TechnologySignal] = []
-    for text in (item.claim, item.evidence_text):
-        match = re.search(_NEGATIVES["technology"], text.strip(), re.IGNORECASE)
-        if match and normalize_subject("technology", match[1]) == subject:
-            signals.append(_TechnologySignal.NEGATIVE)
-        elif _AMBIGUOUS.search(text):
-            signals.append(_TechnologySignal.AMBIGUOUS)
-        elif _technology_alternative(text, subject):
-            signals.append(_TechnologySignal.WEAK_POSITIVE)
-        else:
-            signals.append(_TechnologySignal.STRONG_POSITIVE)
-    unique = set(signals)
-    if len(unique) == 1:
-        return signals[0]
-    if _TechnologySignal.NEGATIVE in unique:
-        return _TechnologySignal.CONFLICT
-    if _TechnologySignal.AMBIGUOUS in unique:
-        return _TechnologySignal.AMBIGUOUS
-    if _TechnologySignal.WEAK_POSITIVE in unique:
-        return _TechnologySignal.WEAK_POSITIVE
-    return _TechnologySignal.STRONG_POSITIVE
 
 
 def _parse_size_text(text: str) -> list[EmployeeCountBounds]:
@@ -381,11 +293,10 @@ def _qualify_size(
 def _qualify_category(
     criterion: CampaignCriterion, evidence: Sequence[EvidenceForQualification]
 ) -> CriterionQualification:
+    """Treat validated fact-like Evidence as affirmative semantic support."""
     key = normalize_subject(criterion.criterion, criterion.subject)
-    signals: list[QualificationStatus] = []
-    technology_signals: list[_TechnologySignal] = []
     ids: list[UUID] = []
-    implied = False
+    has_direct = False
     for item in evidence:
         direct = normalize_subject(criterion.criterion, item.subject) == key
         implication = (
@@ -394,76 +305,18 @@ def _qualify_category(
         )
         if not direct and not implication:
             continue
-        technology_signal = (
-            _technology_signal(item)
-            if criterion.criterion == "technology"
-            else None
-        )
-        polarity = (
-            QualificationStatus.MATCH
-            if technology_signal is _TechnologySignal.STRONG_POSITIVE
-            else QualificationStatus.MISMATCH
-            if technology_signal is _TechnologySignal.NEGATIVE
-            else QualificationStatus.UNKNOWN
-            if technology_signal is not None
-            else _polarity(item)
-        )
-        # Implications apply only to explicit positive support, never negatives.
-        if not direct and polarity is not QualificationStatus.MATCH:
-            continue
         ids.append(item.id)
-        signals.append(polarity)
-        if technology_signal is not None:
-            technology_signals.append(technology_signal)
-        implied |= not direct
-    status = QualificationStatus.UNKNOWN
-    reason = "No validated evidence establishes whether the company satisfies this criterion."
-    if technology_signals:
-        unique_technology = set(technology_signals)
-        has_strong = _TechnologySignal.STRONG_POSITIVE in unique_technology
-        has_negative = bool(
-            unique_technology
-            & {_TechnologySignal.NEGATIVE, _TechnologySignal.CONFLICT}
+        has_direct |= direct
+    if ids:
+        status = QualificationStatus.MATCH
+        reason = (
+            "Validated evidence supports this criterion."
+            if has_direct
+            else "Validated evidence supports this criterion through a technology implication."
         )
-        has_uncertain = bool(
-            unique_technology
-            & {
-                _TechnologySignal.WEAK_POSITIVE,
-                _TechnologySignal.AMBIGUOUS,
-                _TechnologySignal.CONFLICT,
-            }
-        )
-        if has_strong and not has_negative:
-            status = QualificationStatus.MATCH
-            reason = (
-                "Validated strong positive evidence supports this criterion through a technology implication."
-                if implied
-                else "Validated strong positive evidence explicitly supports this criterion."
-            )
-        elif (
-            _TechnologySignal.NEGATIVE in unique_technology
-            and not has_strong
-            and not has_uncertain
-        ):
-            status = QualificationStatus.MISMATCH
-            reason = "Validated evidence explicitly states that the company does not satisfy this criterion."
-        else:
-            reason = "Available evidence contains conflicting or ambiguous information."
-    elif signals:
-        unique = set(signals)
-        if len(unique) == 1 and QualificationStatus.UNKNOWN not in unique:
-            status = signals[0]
-            reason = (
-                (
-                    "Validated evidence supports this criterion through a technology implication."
-                    if implied
-                    else "Validated evidence explicitly supports this criterion."
-                )
-                if status is QualificationStatus.MATCH
-                else "Validated evidence explicitly states that the company does not satisfy this criterion."
-            )
-        else:
-            reason = "Available evidence contains conflicting or ambiguous information."
+    else:
+        status = QualificationStatus.UNKNOWN
+        reason = "No validated evidence is available for this criterion."
     return CriterionQualification(
         criterion.criterion,
         criterion.subject,

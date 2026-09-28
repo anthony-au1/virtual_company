@@ -63,10 +63,10 @@ Qualification uses no LLM, search, or page fetch. Criteria are MATCH, MISMATCH, 
 UNKNOWN; missing evidence never means mismatch. Only required criteria determine
 eligibility: any required mismatch produces NOT_QUALIFIED, otherwise a required
 unknown produces INSUFFICIENT_EVIDENCE, otherwise the company is QUALIFIED. Preferred
-results remain in the snapshot without changing status. Narrow subject-bound
-negative claims are supported; ambiguous wording and contradictory evidence remain
-UNKNOWN. Size qualification accepts exact employee counts and inclusive, optionally
-one-sided bounds; approximate counts and ranges are not interpreted.
+results remain in the snapshot without changing status. Validated target-market,
+industry, and technology Evidence satisfies its normalized criterion/subject without
+reinterpreting claim or excerpt wording. Size qualification remains a deterministic
+comparison over normalized employee-count facts and conservative bounds.
 
 Results and supporting evidence IDs remain in LangGraph's
 `company_qualifications` state and are persisted once all investigations terminate.

@@ -1667,6 +1667,11 @@ async def test_multi_company_workflow_bounds_searches_required_first() -> None:
                                 claim="Uses Spring.",
                                 evidence_text="Uses Spring.",
                             ),
+                            ExtractedEvidence(
+                                criterion=EvidenceCriterion.COMPANY_SIZE,
+                                claim="700 employees.",
+                                evidence_text="700 employees.",
+                            ),
                         ]
                     )
                 if discovery_required in prompt:
@@ -1690,9 +1695,20 @@ async def test_multi_company_workflow_bounds_searches_required_first() -> None:
                             ExtractedEvidence(
                                 criterion=EvidenceCriterion.TECHNOLOGY,
                                 subject="Java",
-                                claim="RequiredCo does not use Java.",
-                                evidence_text="RequiredCo does not use Java.",
-                            )
+                                claim="Uses Java.",
+                                evidence_text="Uses Java.",
+                            ),
+                            ExtractedEvidence(
+                                criterion=EvidenceCriterion.TECHNOLOGY,
+                                subject="Spring",
+                                claim="Uses Spring.",
+                                evidence_text="Uses Spring.",
+                            ),
+                            ExtractedEvidence(
+                                criterion=EvidenceCriterion.COMPANY_SIZE,
+                                claim="230 employees.",
+                                evidence_text="230 employees.",
+                            ),
                         ]
                     )
                 if preferred_page in prompt:
@@ -1719,6 +1735,7 @@ async def test_multi_company_workflow_bounds_searches_required_first() -> None:
         "required": ["Java", "Spring"],
         "preferred": ["Kafka"],
     }
+    model.company_size = {"min": {"value": 500, "requirement": "required"}}
     search = CostSearchFake([])
     research = CostResearchFake([])
     service = ResearchServiceFake()
@@ -1726,7 +1743,8 @@ async def test_multi_company_workflow_bounds_searches_required_first() -> None:
         discovery_complete: WebPage(
             url=discovery_complete,
             content=(
-                "Operates in Australia. A fintech company. Uses Java. Uses Spring."
+                "Operates in Australia. A fintech company. Uses Java. Uses Spring. "
+                "700 employees."
             ),
         ),
         discovery_required: WebPage(
@@ -1734,7 +1752,7 @@ async def test_multi_company_workflow_bounds_searches_required_first() -> None:
             content="Operates in Australia. A fintech company.",
         ),
         required_page: WebPage(
-            url=required_page, content="RequiredCo does not use Java."
+            url=required_page, content="Uses Java. Uses Spring. 230 employees."
         ),
         preferred_page: WebPage(url=preferred_page, content="Uses Kafka."),
     }

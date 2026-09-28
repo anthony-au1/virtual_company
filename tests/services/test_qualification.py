@@ -103,6 +103,53 @@ def test_empty_evidence_and_empty_campaign() -> None:
     )
 
 
+def test_realistic_required_and_preferred_qualification() -> None:
+    config = SimpleNamespace(
+        target_market="Australia",
+        industry="fin tech",
+        technologies=TechnologyCriteria(
+            required=["java", "spring"], preferred=["spring boot", "kafka"]
+        ),
+        company_size=CompanySizeCriteria(
+            min=CompanySizeBound(
+                value=500, requirement=CriterionRequirement.PREFERRED
+            )
+        ),
+    )
+    required = [
+        evidence("target_market", "Australia"),
+        evidence("industry", "fintech"),
+        evidence("technology", "java", "Java or Kotlin"),
+        evidence("technology", "spring"),
+    ]
+
+    company_a = qualify_company(config, required)
+    assert aggregate_qualification(uuid4(), company_a).status is Overall.QUALIFIED
+    assert all(
+        item.status is Status.UNKNOWN
+        for item in company_a
+        if item.requirement is CriterionRequirement.PREFERRED
+    )
+
+    company_b = qualify_company(config, required[:-1])
+    assert (
+        aggregate_qualification(uuid4(), company_b).status
+        is Overall.INSUFFICIENT_EVIDENCE
+    )
+
+    company_c = qualify_company(
+        config,
+        required
+        + [
+            evidence("technology", "spring boot"),
+            evidence("technology", "kafka"),
+            evidence("company_size", None, "2,300 employees"),
+        ],
+    )
+    assert aggregate_qualification(uuid4(), company_c).status is Overall.QUALIFIED
+    assert all(item.status is Status.MATCH for item in company_c)
+
+
 @pytest.mark.parametrize(
     "labels,subjects,expected",
     [
@@ -133,116 +180,36 @@ def test_dynamic_normalized_technologies(
         ("technology", "java", "Acme does not use Java."),
         ("target_market", "Australia", "Acme does not operate in Australia."),
         ("industry", "fin tech", "Acme is not a fintech company."),
+        ("technology", "java", "Java or Kotlin"),
+        ("technology", "java", "Java/Kotlin"),
+        ("technology", "java", "recent focus on Java or Kotlin"),
+        ("technology", "java", "develop microservices in Java/Kotlin"),
     ],
 )
-def test_explicit_negative_and_conflict(
+def test_fact_like_qualification_uses_validated_evidence_not_wording(
     criterion: str, subject: str, text: str
 ) -> None:
-    negative = evidence(criterion, subject, text)
-    criteria = qualify_company(campaign(), [negative])
+    item = evidence(criterion, subject, text)
+    item.claim = "Contradictory or ambiguous summary text is irrelevant."
+    criteria = qualify_company(campaign(), [item])
     result = next(
-        item
-        for item in criteria
-        if item.criterion == criterion and item.subject == subject
+        criterion_result
+        for criterion_result in criteria
+        if criterion_result.criterion == criterion
+        and criterion_result.subject == subject
     )
-    assert result.status is Status.MISMATCH
-    assert aggregate_qualification(uuid4(), criteria).status is Overall.NOT_QUALIFIED
-    positive = evidence(criterion, subject)
-    criteria = qualify_company(campaign(), [negative, positive])
-    result = next(
-        item
-        for item in criteria
-        if item.criterion == criterion and item.subject == subject
-    )
-    assert result.status is Status.UNKNOWN
-    assert set(result.evidence_ids) == {negative.id, positive.id}
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Acme may use Java.",
-        "No Java evidence was found.",
-        "Acme does not use Java exclusively.",
-    ],
-)
-def test_ambiguous_negatives(text: str) -> None:
-    assert (
-        qualify_company(campaign(), [evidence("technology", "java", text)])[2].status
-        is Status.UNKNOWN
-    )
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Java or Kotlin",
-        "Java, Kotlin, Go or Python",
-        "Java/Kotlin/Go/Python",
-    ],
-)
-def test_alternative_technology_evidence_alone_is_unknown(text: str) -> None:
-    result = qualify_company(campaign(), [evidence("technology", "java", text)])[2]
-    assert result.status is Status.UNKNOWN
-    assert "ambiguous" in result.reason
-
-
-@pytest.mark.parametrize(
-    "weaker_text",
-    [
-        "Java or Kotlin",
-        "Java, Kotlin, Go or Python",
-        "Java/Kotlin/Go/Python",
-    ],
-)
-def test_strong_technology_evidence_is_not_downgraded_by_alternatives(
-    weaker_text: str,
-) -> None:
-    strong = evidence("technology", "java", "Strong proficiency in Java.")
-    weaker = evidence("technology", "java", weaker_text)
-    result = qualify_company(campaign(), [strong, weaker])[2]
     assert result.status is Status.MATCH
-    assert set(result.evidence_ids) == {strong.id, weaker.id}
+    assert result.evidence_ids == [item.id]
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Experience with Kotlin and/or Java, Spring Boot, AWS.",
-        "Our stack includes Kotlin or Java; Spring Boot, AWS and SQL.",
-    ],
-)
-def test_alternative_ambiguity_is_scoped_to_the_relevant_technology(
-    text: str,
-) -> None:
+def test_fact_like_qualification_retains_all_matching_evidence_ids() -> None:
     items = [
-        evidence("technology", "java", text),
-        evidence("technology", "spring boot", text),
+        evidence("technology", "Java", "Java or Kotlin"),
+        evidence("technology", " java ", "Strong proficiency in Java"),
     ]
-    criteria = qualify_company(campaign(), items)
-    results = {
-        (item.criterion, item.subject): item.status for item in criteria
-    }
-    assert results[("technology", "java")] is Status.UNKNOWN
-    assert results[("technology", "spring boot")] is Status.MATCH
-    assert results[("technology", "spring")] is Status.MATCH
-
-
-def test_strong_technology_evidence_still_conflicts_with_explicit_negative() -> None:
-    strong = evidence("technology", "java", "Strong proficiency in Java.")
-    negative = evidence("technology", "java", "Acme does not use Java.")
-    result = qualify_company(campaign(), [strong, negative])[2]
-    assert result.status is Status.UNKNOWN
-    assert "conflicting" in result.reason
-
-
-def test_negative_does_not_propagate_implication() -> None:
-    criteria = qualify_company(
-        campaign(),
-        [evidence("technology", "spring boot", "Acme does not use Spring Boot.")],
-    )
-    assert criteria[3].status is Status.UNKNOWN
-    assert criteria[4].status is Status.MISMATCH
+    result = qualify_company(campaign(), items)[2]
+    assert result.status is Status.MATCH
+    assert result.evidence_ids == sorted((item.id for item in items), key=str)
 
 
 @pytest.mark.parametrize(
@@ -311,10 +278,10 @@ def test_unparsed_size_does_not_hide_potential_conflict() -> None:
     assert set(result.evidence_ids) == {item.id for item in items}
 
 
-def test_claim_excerpt_polarity_conflict() -> None:
+def test_fact_like_claim_and_excerpt_are_not_reinterpreted() -> None:
     item = evidence("technology", "java", "Acme uses Java.")
     item.evidence_text = "Acme does not use Java."
-    assert qualify_company(campaign(), [item])[2].status is Status.UNKNOWN
+    assert qualify_company(campaign(), [item])[2].status is Status.MATCH
 
 
 @pytest.mark.parametrize(
