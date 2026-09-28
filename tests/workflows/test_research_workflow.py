@@ -645,6 +645,46 @@ async def test_evidence_persistence_is_idempotent_within_one_research_run() -> N
 
 
 @pytest.mark.asyncio
+async def test_evidence_persistence_collapses_same_statement_across_sources() -> None:
+    class EvidenceRepositoryFake:
+        def __init__(self) -> None:
+            self.items: list[EvidenceCreate] = []
+
+        async def list_by_research_run_id(self, _: UUID) -> list[EvidenceCreate]:
+            return self.items
+
+        async def create(self, item: EvidenceCreate) -> EvidenceCreate:
+            self.items.append(item)
+            return item
+
+    repository = EvidenceRepositoryFake()
+    service = object.__new__(ResearchService)
+    service._evidence = repository
+    run_id = uuid4()
+    company_id = uuid4()
+    first = EvidenceCreate(
+        company_id=company_id,
+        research_run_id=run_id,
+        criterion="technology",
+        subject="Java",
+        claim="Acme uses Java.",
+        evidence_text="Strong proficiency in Java.",
+        source_url="https://acme.example/jobs/one",
+    )
+    duplicate = first.model_copy(
+        update={
+            "claim": "Java is used at Acme.",
+            "source_url": "https://acme.example/jobs/two",
+        }
+    )
+    outcome = await service.persist_evidence(
+        research_run_id=run_id, evidence=[first, duplicate]
+    )
+    assert (outcome.created_count, outcome.skipped_count) == (1, 1)
+    assert repository.items == [first]
+
+
+@pytest.mark.asyncio
 async def test_followup_queries_contain_only_missing_criteria() -> None:
     model = campaign()
     company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
@@ -768,13 +808,12 @@ async def test_coverage_stops_companies_independently() -> None:
                 stalled.id: CompanyInvestigationState(
                     company_id=stalled.id,
                     round=1,
-                    missing_before=1,
-                    new_evidence_count=0,
+                    unresolved_before={"required|technology|kafka"},
+                    new_evidence_count=3,
                 ),
                 progressing.id: CompanyInvestigationState(
                     company_id=progressing.id,
                     round=1,
-                    missing_before=2,
                     new_evidence_count=1,
                 ),
             },
@@ -814,7 +853,6 @@ async def test_coverage_stops_at_maximum_adaptive_rounds() -> None:
                 company.id: CompanyInvestigationState(
                     company_id=company.id,
                     round=2,
-                    missing_before=2,
                     new_evidence_count=1,
                 )
             },
@@ -1228,10 +1266,111 @@ async def test_required_unknown_is_targeted_before_preferred() -> None:
     }
     state.update(await nodes.check_evidence_coverage(state))
     assert state["investigations"][company.id].priority is CriterionRequirement.REQUIRED
-    await nodes.generate_company_queries(state)
+    output = await nodes.generate_company_queries(state)
     targets = research.prompts[-1].split("Evidence targets:", 1)[1]
     assert "Java" in targets
     assert "Kafka" not in targets
+    assert output["investigations"][company.id].round == 1
+    assert output["adaptive_mode"] is False
+
+
+@pytest.mark.asyncio
+async def test_required_unknown_companies_are_scheduled_before_preferred_only() -> None:
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = {
+        "required": ["Java", "Spring"],
+        "preferred": ["Kafka"],
+    }
+    complete = ResearchCompany(id=uuid4(), name="Complete")
+    unresolved = ResearchCompany(id=uuid4(), name="Unresolved")
+    run_id = uuid4()
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._research.evidence = [
+        SimpleNamespace(
+            id=uuid4(),
+            company_id=complete.id,
+            research_run_id=run_id,
+            criterion="technology",
+            subject=subject,
+            claim=f"Uses {subject}.",
+            evidence_text=f"Uses {subject}.",
+        )
+        for subject in ("Java", "Spring")
+    ]
+    state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "research_run_id": run_id,
+        "research_companies": [complete, unresolved],
+        "investigations": {
+            complete.id: CompanyInvestigationState(company_id=complete.id),
+            unresolved.id: CompanyInvestigationState(company_id=unresolved.id),
+        },
+    }
+    output = await nodes.check_evidence_coverage(state)  # type: ignore[arg-type]
+    assert output["active_company_ids"] == [unresolved.id]
+    assert (
+        output["investigations"][complete.id].priority
+        is CriterionRequirement.PREFERRED
+    )
+    assert output["investigations"][complete.id].stopped is False
+
+
+@pytest.mark.asyncio
+async def test_source_selection_scores_unresolved_qualification_not_raw_coverage() -> (
+    None
+):
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = {"required": ["Spring"], "preferred": []}
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    generic = SearchResult(
+        title="Careers", url="https://acme.example/careers", snippet="Open roles"
+    )
+    targeted = SearchResult(
+        title="Engineering",
+        url="https://acme.example/engineering",
+        snippet="Spring platform roles",
+    )
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._company_research_followup_max_fetches_per_company = 1
+    output = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "adaptive_mode": True,
+            "company_search_results": {company.id: [generic, targeted]},
+            "criterion_qualifications": {
+                company.id: [
+                    CriterionQualification(
+                        "technology",
+                        "Spring",
+                        CriterionRequirement.REQUIRED,
+                        QualificationStatus.UNKNOWN,
+                        [uuid4()],
+                        "Covered but inconclusive",
+                    )
+                ]
+            },
+            "investigations": {
+                company.id: CompanyInvestigationState(
+                    company_id=company.id,
+                    coverage=[
+                        CriterionCoverage(
+                            criterion=EvidenceCriterion.TECHNOLOGY,
+                            subject="Spring",
+                            requirement="required",
+                            status=CoverageStatus.FOUND,
+                            evidence_ids=[uuid4()],
+                        )
+                    ],
+                )
+            },
+        }
+    )  # type: ignore[arg-type]
+    assert output["selected_company_sources"][company.id] == [targeted]
 
 
 @pytest.mark.asyncio
@@ -1269,13 +1408,14 @@ async def test_preferred_unknown_uses_remaining_rounds_then_qualifies() -> None:
     assert (
         state["investigations"][company.id].priority is CriterionRequirement.PREFERRED
     )
-    await nodes.generate_company_queries(state)
+    state.update(await nodes.generate_company_queries(state))
     assert "Kafka" in research.prompts[-1].split("Evidence targets:", 1)[1]
-    state["investigations"][company.id].round = 1
+    assert state["investigations"][company.id].round == 1
+    assert state["adaptive_mode"] is True
     state.update(await nodes.check_evidence_coverage(state))
     assert (
         state["investigations"][company.id].stop_reason
-        is InvestigationStopReason.MAX_ROUNDS
+        is InvestigationStopReason.NO_PROGRESS
     )
     result = (await nodes.qualify_companies(state))["company_qualifications"][
         company.id
@@ -1333,6 +1473,171 @@ async def test_preferred_size_mismatch_does_not_stop_as_required_mismatch() -> N
     ]
     assert result.status.value == "QUALIFIED"
     assert result.criteria[-1].status is QualificationStatus.MISMATCH
+
+
+@pytest.mark.asyncio
+async def test_multi_company_workflow_bounds_searches_required_first() -> None:
+    discovery_complete = "https://complete.example/discovery"
+    discovery_required = "https://required.example/discovery"
+    required_page = "https://required.example/engineering"
+    preferred_page = "https://complete.example/kafka"
+
+    class CostResearchFake(ResearchFake):
+        async def generate_structured(self, **kwargs: object) -> object:
+            prompt = str(kwargs["user_prompt"])
+            model_type = kwargs["response_model"]
+            self.prompts.append(prompt)
+            self.models.append(model_type)
+            if model_type is GeneratedSearchQueries:
+                return GeneratedSearchQueries(queries=["Australian fintech companies"])
+            if model_type is GeneratedCompanySearchQueries:
+                query = (
+                    "RequiredCo Java Spring evidence"
+                    if "RequiredCo" in prompt
+                    else "CompleteCo Kafka evidence"
+                )
+                return GeneratedCompanySearchQueries(queries=[query])
+            return DiscoveredCompanies(
+                companies=[
+                    found("CompleteCo", [discovery_complete]),
+                    found("RequiredCo", [discovery_required]),
+                ]
+            )
+
+    class CostSearchFake(SearchFake):
+        async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+            self.calls.append((query, limit))
+            if query == "Australian fintech companies":
+                return [
+                    SearchResult(title="CompleteCo", url=discovery_complete),
+                    SearchResult(title="RequiredCo", url=discovery_required),
+                ]
+            if query == "RequiredCo Java Spring evidence":
+                return [SearchResult(title="Engineering", url=required_page)]
+            if query == "CompleteCo Kafka evidence":
+                return [SearchResult(title="Kafka", url=preferred_page)]
+            raise AssertionError(f"Unexpected search query: {query}")
+
+    class CostExtractionFake(ExtractionFake):
+        async def generate_structured(self, **kwargs: object) -> object:
+            prompt = str(kwargs["user_prompt"])
+            model_type = kwargs["response_model"]
+            if model_type is CompanyPageAttribution:
+                return CompanyPageAttribution(attributable=True, reason="Matched")
+            if model_type is ExtractedEvidenceItems:
+                if discovery_complete in prompt:
+                    return ExtractedEvidenceItems(
+                        evidence=[
+                            ExtractedEvidence(
+                                criterion=EvidenceCriterion.TARGET_MARKET,
+                                claim="Operates in Australia.",
+                                evidence_text="Operates in Australia.",
+                            ),
+                            ExtractedEvidence(
+                                criterion=EvidenceCriterion.INDUSTRY,
+                                claim="A fintech company.",
+                                evidence_text="A fintech company.",
+                            ),
+                            ExtractedEvidence(
+                                criterion=EvidenceCriterion.TECHNOLOGY,
+                                subject="Java",
+                                claim="Uses Java.",
+                                evidence_text="Uses Java.",
+                            ),
+                            ExtractedEvidence(
+                                criterion=EvidenceCriterion.TECHNOLOGY,
+                                subject="Spring",
+                                claim="Uses Spring.",
+                                evidence_text="Uses Spring.",
+                            ),
+                        ]
+                    )
+                if discovery_required in prompt:
+                    return ExtractedEvidenceItems(
+                        evidence=[
+                            ExtractedEvidence(
+                                criterion=EvidenceCriterion.TARGET_MARKET,
+                                claim="Operates in Australia.",
+                                evidence_text="Operates in Australia.",
+                            ),
+                            ExtractedEvidence(
+                                criterion=EvidenceCriterion.INDUSTRY,
+                                claim="A fintech company.",
+                                evidence_text="A fintech company.",
+                            ),
+                        ]
+                    )
+                if required_page in prompt:
+                    return ExtractedEvidenceItems(
+                        evidence=[
+                            ExtractedEvidence(
+                                criterion=EvidenceCriterion.TECHNOLOGY,
+                                subject="Java",
+                                claim="RequiredCo does not use Java.",
+                                evidence_text="RequiredCo does not use Java.",
+                            )
+                        ]
+                    )
+                if preferred_page in prompt:
+                    return ExtractedEvidenceItems(
+                        evidence=[
+                            ExtractedEvidence(
+                                criterion=EvidenceCriterion.TECHNOLOGY,
+                                subject="Kafka",
+                                claim="Uses Kafka.",
+                                evidence_text="Uses Kafka.",
+                            )
+                        ]
+                    )
+                return ExtractedEvidenceItems(evidence=[])
+            if model_type is ExtractedCompanyIdentities:
+                name = "CompleteCo" if discovery_complete in prompt else "RequiredCo"
+                return ExtractedCompanyIdentities(
+                    companies=[ExtractedCompanyIdentity(name=name)]
+                )
+            raise AssertionError(f"Unexpected extraction model: {model_type}")
+
+    model = campaign()
+    model.technologies = {
+        "required": ["Java", "Spring"],
+        "preferred": ["Kafka"],
+    }
+    search = CostSearchFake([])
+    research = CostResearchFake([])
+    service = ResearchServiceFake()
+    pages = {
+        discovery_complete: WebPage(
+            url=discovery_complete,
+            content=(
+                "Operates in Australia. A fintech company. Uses Java. Uses Spring."
+            ),
+        ),
+        discovery_required: WebPage(
+            url=discovery_required,
+            content="Operates in Australia. A fintech company.",
+        ),
+        required_page: WebPage(
+            url=required_page, content="RequiredCo does not use Java."
+        ),
+        preferred_page: WebPage(url=preferred_page, content="Uses Kafka."),
+    }
+    workflow = ResearchWorkflow(
+        campaigns=CampaignServiceFake(model),
+        research=service,
+        research_llm=research,
+        extraction_llm=CostExtractionFake({}),
+        web_search=search,
+        web_fetch=FetchFake(pages),
+        settings=Settings(company_research_max_investigation_rounds=2),
+    )
+    await workflow.run(model.id)
+    assert [query for query, _ in search.calls] == [
+        "Australian fintech companies",
+        "RequiredCo Java Spring evidence",
+        "CompleteCo Kafka evidence",
+    ]
+    statuses = {result.status.value for result in service.qualifications.values()}
+    assert statuses == {"QUALIFIED", "NOT_QUALIFIED"}
 
 
 @pytest.mark.asyncio

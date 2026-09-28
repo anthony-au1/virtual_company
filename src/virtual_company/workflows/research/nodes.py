@@ -6,7 +6,7 @@ import asyncio
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from virtual_company.domain.criteria import CriterionRequirement
+from virtual_company.domain.criteria import CriterionRequirement, normalize_subject
 from virtual_company.domain.qualification import (
     CompanyQualification,
     CriterionQualification,
@@ -45,7 +45,6 @@ from virtual_company.workflows.research.models import (
     CompanyInvestigationState,
     CompanyPageAttribution,
     CoverageStatus,
-    CriterionCoverage,
     DiscoveredCompanies,
     ExtractedCompanyCandidate,
     ExtractedCompanyIdentities,
@@ -437,8 +436,12 @@ class ResearchNodes:
         campaign = self._campaign(state)
         observability = get_observability()
         company_queries: dict[UUID, list[str]] = {}
-        for company in self._active_companies(state):
+        investigations = dict(state["investigations"])
+        active_companies = self._active_companies(state)
+        for company in active_companies:
             targets = self._investigation_targets(state, company.id)
+            investigation = investigations[company.id]
+            next_round = investigation.round + 1
             with observability.context(
                 company_id=str(company.id),
                 company_name=company.name,
@@ -470,10 +473,23 @@ class ResearchNodes:
                     len(queries),
                     workflow="company_research",
                 )
+            investigations[company.id] = investigation.model_copy(
+                update={
+                    "round": next_round,
+                    "unresolved_before": self._target_keys(targets),
+                    "new_evidence_count": 0,
+                }
+            )
         return {
             "company_research_queries": company_queries,
+            "investigations": investigations,
             "company_search_started": True,
-            "adaptive_mode": False,
+            "adaptive_mode": bool(active_companies)
+            and all(
+                investigations[company.id].priority
+                is CriterionRequirement.PREFERRED
+                for company in active_companies
+            ),
         }
 
     async def generate_followup_queries(
@@ -528,7 +544,7 @@ class ResearchNodes:
             investigations[company.id] = investigation.model_copy(
                 update={
                     "round": next_round,
-                    "missing_before": len(missing),
+                    "unresolved_before": self._target_keys(missing),
                     "new_evidence_count": 0,
                 }
             )
@@ -643,10 +659,7 @@ class ResearchNodes:
                     -self._source_selection_score(
                         item[1],
                         company,
-                        investigations.get(
-                            company.id,
-                            CompanyInvestigationState(company_id=company.id),
-                        ).coverage,
+                        self._investigation_targets(state, company.id),
                     ),
                     item[0],
                 ),
@@ -1025,7 +1038,8 @@ class ResearchNodes:
             )
         investigations = dict(state["investigations"])
         criterion_qualifications = dict(state.get("criterion_qualifications", {}))
-        active_company_ids: list[UUID] = []
+        required_company_ids: list[UUID] = []
+        preferred_company_ids: list[UUID] = []
         observability = get_observability()
         for company in state["research_companies"]:
             previous = investigations[company.id]
@@ -1065,7 +1079,9 @@ class ResearchNodes:
                 if unresolved_required
                 else CriterionRequirement.PREFERRED
             )
-            missing = len(unresolved_required or unresolved_preferred)
+            unresolved_keys = self._target_keys(
+                unresolved_required or unresolved_preferred
+            )
             stop_reason: InvestigationStopReason | None = None
             if any(item.status is QualificationStatus.MISMATCH for item in required):
                 stop_reason = InvestigationStopReason.REQUIRED_MISMATCH
@@ -1075,8 +1091,8 @@ class ResearchNodes:
                 stop_reason = InvestigationStopReason.COVERAGE_COMPLETE
             elif (
                 previous.round > 0
-                and previous.missing_before == missing
-                and previous.new_evidence_count == 0
+                and previous.unresolved_before
+                and previous.unresolved_before == unresolved_keys
             ):
                 stop_reason = InvestigationStopReason.NO_PROGRESS
             elif previous.round >= self._company_research_max_investigation_rounds:
@@ -1091,7 +1107,10 @@ class ResearchNodes:
             )
             investigations[company.id] = investigation
             if stop_reason is None:
-                active_company_ids.append(company.id)
+                if priority is CriterionRequirement.REQUIRED:
+                    required_company_ids.append(company.id)
+                else:
+                    preferred_company_ids.append(company.id)
             found_items = [
                 item for item in coverage if item.status is CoverageStatus.FOUND
             ]
@@ -1141,6 +1160,7 @@ class ResearchNodes:
                 len(missing_items),
                 workflow="company_research",
             )
+        active_company_ids = required_company_ids or preferred_company_ids
         return {
             "investigations": investigations,
             "active_company_ids": active_company_ids,
@@ -1152,7 +1172,7 @@ class ResearchNodes:
     def _source_selection_score(
         result: SearchResult,
         company: ResearchCompany,
-        coverage: list[CriterionCoverage] | None = None,
+        targets: list[CriterionQualification] | None = None,
     ) -> int:
         """Rank clear first-party and research-relevant result signals conservatively."""
         try:
@@ -1185,16 +1205,12 @@ class ResearchNodes:
         if "blog" in path:
             score += 5
 
-        missing = [
-            item for item in (coverage or []) if item.status is CoverageStatus.MISSING
-        ]
-
-        for item in missing:
+        for item in targets or []:
             weight = 12 if item.requirement is CriterionRequirement.REQUIRED else 4
             if item.subject and item.subject.casefold() in text:
                 score += weight
 
-            if item.criterion is EvidenceCriterion.COMPANY_SIZE:
+            if item.criterion == EvidenceCriterion.COMPANY_SIZE.value:
                 if any(
                     token in text
                     for token in (
@@ -1376,6 +1392,19 @@ class ResearchNodes:
             and item.status is QualificationStatus.UNKNOWN
         ]
 
+    @staticmethod
+    def _target_keys(criteria: list[CriterionQualification]) -> set[str]:
+        return {
+            "|".join(
+                (
+                    item.requirement.value,
+                    item.criterion,
+                    normalize_subject(item.criterion, item.subject),
+                )
+            )
+            for item in criteria
+        }
+
     def _discovery_candidate_limit(self, target_count: int) -> int:
         """Return the bounded discovery candidate pool size for a campaign."""
         return max(
@@ -1454,10 +1483,8 @@ class ResearchNodes:
         for item in evidence:
             key = (
                 str(item.company_id),
-                cls._normalize_whitespace(item.source_url).casefold(),
                 item.criterion.value,
                 cls._normalize_whitespace(item.subject or "").casefold(),
-                cls._normalize_whitespace(item.claim).casefold(),
                 cls._normalize_whitespace(item.evidence_text).casefold(),
             )
             if key not in seen:

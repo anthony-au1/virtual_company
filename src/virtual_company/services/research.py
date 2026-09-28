@@ -216,9 +216,7 @@ class ResearchService:
 
         return (
             str(evidence.company_id),
-            normalized(evidence.source_url),
             normalized(evidence.criterion),
             normalized(evidence.subject),
-            normalized(evidence.claim),
             normalized(evidence.evidence_text),
         )

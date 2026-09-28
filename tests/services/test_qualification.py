@@ -173,6 +173,46 @@ def test_ambiguous_negatives(text: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Java or Kotlin",
+        "Java, Kotlin, Go or Python",
+        "Java/Kotlin/Go/Python",
+    ],
+)
+def test_alternative_technology_evidence_alone_is_unknown(text: str) -> None:
+    result = qualify_company(campaign(), [evidence("technology", "java", text)])[2]
+    assert result.status is Status.UNKNOWN
+    assert "ambiguous" in result.reason
+
+
+@pytest.mark.parametrize(
+    "weaker_text",
+    [
+        "Java or Kotlin",
+        "Java, Kotlin, Go or Python",
+        "Java/Kotlin/Go/Python",
+    ],
+)
+def test_strong_technology_evidence_is_not_downgraded_by_alternatives(
+    weaker_text: str,
+) -> None:
+    strong = evidence("technology", "java", "Strong proficiency in Java.")
+    weaker = evidence("technology", "java", weaker_text)
+    result = qualify_company(campaign(), [strong, weaker])[2]
+    assert result.status is Status.MATCH
+    assert set(result.evidence_ids) == {strong.id, weaker.id}
+
+
+def test_strong_technology_evidence_still_conflicts_with_explicit_negative() -> None:
+    strong = evidence("technology", "java", "Strong proficiency in Java.")
+    negative = evidence("technology", "java", "Acme does not use Java.")
+    result = qualify_company(campaign(), [strong, negative])[2]
+    assert result.status is Status.UNKNOWN
+    assert "conflicting" in result.reason
+
+
 def test_negative_does_not_propagate_implication() -> None:
     criteria = qualify_company(
         campaign(),
