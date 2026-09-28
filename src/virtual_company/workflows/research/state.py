@@ -38,6 +38,7 @@ class ResearchWorkflowState(TypedDict):
     discovered_companies: list[DiscoveredCompany]
     companies_found: int
     research_companies: list[ResearchCompany]
+    discovered_companies_by_id: dict[UUID, DiscoveredCompany]
     company_research_queries: dict[UUID, list[str]]
     company_search_results: dict[UUID, list[SearchResult]]
     selected_company_sources: dict[UUID, list[SearchResult]]

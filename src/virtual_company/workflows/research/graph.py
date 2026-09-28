@@ -99,6 +99,7 @@ class ResearchWorkflow:
                         "discovered_companies": [],
                         "companies_found": 0,
                         "research_companies": [],
+                        "discovered_companies_by_id": {},
                         "company_research_queries": {},
                         "company_search_results": {},
                         "selected_company_sources": {},

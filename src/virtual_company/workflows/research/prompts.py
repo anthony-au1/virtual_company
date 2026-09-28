@@ -25,7 +25,7 @@ class PromptIdentity:
 SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
 EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v1")
 RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v1")
-COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v2")
+COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v3")
 EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v1")
 FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity(
     "generate_followup_company_queries", "v2"
@@ -128,6 +128,7 @@ def company_query_system_prompt() -> str:
     return (
         "Generate concise web-search queries for ONLY the supplied evidence targets. "
         "The application has already selected REQUIRED or PREFERRED priority. Combine "
+        "Include the supplied company name in every query so results stay attributable. "
         "related targets when one source can establish several. You are generating research queries, "
         "not asserting facts: queries may investigate and disprove hypotheses. When a company "
         "domain is supplied, include some official-domain site: queries and some relevant "

@@ -36,6 +36,7 @@ class PersistedCompanies:
 
     companies_found: int
     companies: list[Company]
+    discovered_by_company_id: dict[UUID, DiscoveredCompany]
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,7 @@ class ResearchService:
         """Persist discovery candidates and return their resolved records for this run."""
         created_targets = 0
         persisted_companies: list[Company] = []
+        discovered_by_company_id: dict[UUID, DiscoveredCompany] = {}
         for discovered in companies:
             domain = normalize_domain(discovered.domain or discovered.website)
             company = (
@@ -102,9 +104,11 @@ class ResearchService:
                 )
                 created_targets += 1
             persisted_companies.append(company)
+            discovered_by_company_id[company.id] = discovered
         return PersistedCompanies(
             companies_found=created_targets,
             companies=persisted_companies,
+            discovered_by_company_id=discovered_by_company_id,
         )
 
     async def complete_run(

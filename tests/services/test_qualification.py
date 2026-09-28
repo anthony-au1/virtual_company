@@ -205,6 +205,29 @@ def test_strong_technology_evidence_is_not_downgraded_by_alternatives(
     assert set(result.evidence_ids) == {strong.id, weaker.id}
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Experience with Kotlin and/or Java, Spring Boot, AWS.",
+        "Our stack includes Kotlin or Java; Spring Boot, AWS and SQL.",
+    ],
+)
+def test_alternative_ambiguity_is_scoped_to_the_relevant_technology(
+    text: str,
+) -> None:
+    items = [
+        evidence("technology", "java", text),
+        evidence("technology", "spring boot", text),
+    ]
+    criteria = qualify_company(campaign(), items)
+    results = {
+        (item.criterion, item.subject): item.status for item in criteria
+    }
+    assert results[("technology", "java")] is Status.UNKNOWN
+    assert results[("technology", "spring boot")] is Status.MATCH
+    assert results[("technology", "spring")] is Status.MATCH
+
+
 def test_strong_technology_evidence_still_conflicts_with_explicit_negative() -> None:
     strong = evidence("technology", "java", "Strong proficiency in Java.")
     negative = evidence("technology", "java", "Acme does not use Java.")

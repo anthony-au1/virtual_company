@@ -79,14 +79,19 @@ class ResearchServiceFake:
         self, *, campaign_id: UUID, companies: list[DiscoveredCompany]
     ) -> SimpleNamespace:
         self.targets = [c.name for c in companies]
+        persisted = [
+            SimpleNamespace(
+                id=uuid4(), name=c.name, website=c.website, domain=c.domain
+            )
+            for c in companies
+        ]
         return SimpleNamespace(
             companies_found=len(companies),
-            companies=[
-                SimpleNamespace(
-                    id=uuid4(), name=c.name, website=c.website, domain=c.domain
-                )
-                for c in companies
-            ],
+            companies=persisted,
+            discovered_by_company_id={
+                company.id: discovered
+                for company, discovered in zip(persisted, companies, strict=True)
+            },
         )
 
     async def persist_company_qualifications(
@@ -443,6 +448,41 @@ async def test_source_selection_deduplicates_and_prefers_first_party_pages() -> 
 
 
 @pytest.mark.asyncio
+async def test_discovery_sources_are_reused_by_company_identity_not_position() -> None:
+    model = campaign()
+    first = found("Afterpay Limited", ["https://source.example/afterpay"])
+    second = found("Perpetual", ["https://source.example/perpetual"])
+    afterpay = ResearchCompany(id=uuid4(), name="Afterpay Limited")
+    perpetual = ResearchCompany(id=uuid4(), name="Perpetual")
+    aggregates = [
+        AggregatedCompanyCandidate(
+            name=company.name,
+            mention_count=1,
+            supporting_urls=discovered.supporting_urls,
+            supporting_results=[
+                SearchResult(title=company.name, url=discovered.supporting_urls[0])
+            ],
+        )
+        for company, discovered in ((afterpay, first), (perpetual, second))
+    ]
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    output = await nodes.reuse_discovery_sources(
+        {
+            "research_companies": [perpetual, afterpay],
+            "discovered_companies_by_id": {
+                afterpay.id: first,
+                perpetual.id: second,
+            },
+            "aggregated_company_candidates": aggregates,
+        }
+    )  # type: ignore[arg-type]
+    assert output["company_search_results"][afterpay.id][0].url.endswith("afterpay")
+    assert output["company_search_results"][perpetual.id][0].url.endswith(
+        "perpetual"
+    )
+
+
+@pytest.mark.asyncio
 async def test_fetch_sources_retains_partial_successes() -> None:
     model = campaign()
     company_a = SimpleNamespace(id=uuid4(), name="A", website=None, domain="a.example")
@@ -568,7 +608,11 @@ async def test_evidence_extraction_preserves_explicit_size_and_geography_precisi
     )
     page = WebPage(
         url="https://acme.example/careers",
-        content="Join our Melbourne engineering team. Our global team has more than 300 employees.",
+        content=(
+            "Join our Melbourne engineering team. The Java platform supports it. "
+            "Acme is a fintech company. "
+            "Our global team has more than 300 employees."
+        ),
     )
     fake = EvidenceExtractionFake(
         {
@@ -578,6 +622,12 @@ async def test_evidence_extraction_preserves_explicit_size_and_geography_precisi
                     subject="Australia",
                     claim="Acme has an engineering presence in Melbourne.",
                     evidence_text="Join our Melbourne engineering team.",
+                ),
+                ExtractedEvidence(
+                    criterion=EvidenceCriterion.INDUSTRY,
+                    subject="Fintech",
+                    claim="Acme is a fintech company.",
+                    evidence_text="Acme is a fintech company.",
                 ),
                 ExtractedEvidence(
                     criterion=EvidenceCriterion.COMPANY_SIZE,
@@ -605,6 +655,7 @@ async def test_evidence_extraction_preserves_explicit_size_and_geography_precisi
         (item.criterion, item.subject) for item in output["validated_evidence"]
     ] == [
         (EvidenceCriterion.TARGET_MARKET, "Australia"),
+        (EvidenceCriterion.INDUSTRY, "Fintech"),
         (EvidenceCriterion.COMPANY_SIZE, "more than 300 employees"),
     ]
 
@@ -884,6 +935,21 @@ async def test_adaptive_pages_must_pass_attribution() -> None:
         }
     )  # type: ignore[arg-type]
     assert output["attributable_company_web_pages"][company.id] == []
+
+    coverage_state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "research_run_id": uuid4(),
+        "research_companies": [company],
+        "investigations": {
+            company.id: CompanyInvestigationState(company_id=company.id)
+        },
+    }
+    coverage_state.update(
+        await nodes.check_evidence_coverage(coverage_state)  # type: ignore[arg-type]
+    )
+    assert coverage_state["active_company_ids"] == [company.id]
+    queries = await nodes.generate_company_queries(coverage_state)  # type: ignore[arg-type]
+    assert queries["company_research_queries"][company.id]
 
 
 @pytest.mark.asyncio
@@ -1368,6 +1434,57 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
                     ],
                 )
             },
+        }
+    )  # type: ignore[arg-type]
+    assert output["selected_company_sources"][company.id] == [targeted]
+
+
+@pytest.mark.asyncio
+async def test_source_selection_prioritizes_company_specific_required_subjects() -> None:
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = {"required": ["Java", "Spring"], "preferred": ["Kafka"]}
+    company = ResearchCompany(id=uuid4(), name="Iress")
+    generic = SearchResult(
+        title="Iress careers", url="https://www.iress.com/careers", snippet="Join us"
+    )
+    unrelated = SearchResult(
+        title="Java and Spring jobs",
+        url="https://other.example/jobs",
+        snippet="Java Spring engineering roles",
+    )
+    targeted = SearchResult(
+        title="Iress Java engineer",
+        url="https://jobs.example/iress-java",
+        snippet="Iress Spring platform team",
+    )
+    unknown = [
+        CriterionQualification(
+            "technology",
+            subject,
+            CriterionRequirement.REQUIRED,
+            QualificationStatus.UNKNOWN,
+            [],
+            "No evidence",
+        )
+        for subject in ("Java", "Spring")
+    ]
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._company_research_followup_max_fetches_per_company = 1
+    output = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "adaptive_mode": True,
+            "company_search_results": {
+                company.id: [generic, unrelated, targeted]
+            },
+            "criterion_qualifications": {company.id: unknown},
+            "investigations": {
+                company.id: CompanyInvestigationState(company_id=company.id)
+            },
+            "company_search_started": True,
         }
     )  # type: ignore[arg-type]
     assert output["selected_company_sources"][company.id] == [targeted]

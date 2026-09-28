@@ -387,6 +387,7 @@ class ResearchNodes:
         return {
             "companies_found": persisted.companies_found,
             "research_companies": research_companies,
+            "discovered_companies_by_id": persisted.discovered_by_company_id,
             "active_company_ids": [company.id for company in research_companies],
             "investigations": {
                 company.id: CompanyInvestigationState(company_id=company.id)
@@ -406,9 +407,14 @@ class ResearchNodes:
             for item in state["aggregated_company_candidates"]
         }
         results: dict[UUID, list[SearchResult]] = {}
-        for company, discovered in zip(
-            state["research_companies"], state["discovered_companies"], strict=True
-        ):
+        offered = recovered = 0
+        discovered_by_id = state["discovered_companies_by_id"]
+        for company in state["research_companies"]:
+            discovered = discovered_by_id.get(company.id)
+            if discovered is None:
+                results[company.id] = []
+                continue
+            offered += len(discovered.supporting_urls)
             candidate = candidates.get(
                 (
                     normalize_company_name(discovered.name),
@@ -423,9 +429,21 @@ class ResearchNodes:
             results[company.id] = [
                 by_url[url] for url in discovered.supporting_urls if url in by_url
             ]
+            recovered += len(results[company.id])
+            get_observability().event(
+                "company_discovery_sources_reused",
+                company_id=str(company.id),
+                discovery_sources_offered=len(discovered.supporting_urls),
+                discovery_sources_recovered=len(results[company.id]),
+                discovery_sources_missing=(
+                    len(discovered.supporting_urls) - len(results[company.id])
+                ),
+            )
         get_observability().event(
             "discovery_sources_reused",
-            source_count=sum(len(items) for items in results.values()),
+            source_count=recovered,
+            discovery_sources_offered=offered,
+            discovery_sources_missing=offered - recovered,
         )
         return {"company_search_results": results, "adaptive_mode": False}
 
@@ -466,7 +484,10 @@ class ResearchNodes:
                 queries = response.queries[:query_limit]
                 company_queries[company.id] = queries
                 observability.event(
-                    "company_research_queries_generated", query_count=len(queries)
+                    "company_research_queries_generated",
+                    investigation_round=next_round,
+                    query_count=len(queries),
+                    query_subjects=self._query_subjects(targets),
                 )
                 observability.record(
                     "company_research_queries_generated_total",
@@ -534,6 +555,7 @@ class ResearchNodes:
                         )
                         for item in missing
                     ],
+                    query_subjects=self._query_subjects(missing),
                     query_count=len(queries),
                 )
                 observability.record(
@@ -681,6 +703,11 @@ class ResearchNodes:
                     "company_sources_selected",
                     available_source_count=len(unique_results),
                     selected_source_count=len(sources),
+                    source_phase=(
+                        "investigation"
+                        if state.get("company_search_started", False)
+                        else "discovery"
+                    ),
                 )
                 observability.record(
                     "company_research_sources_selected_total",
@@ -757,6 +784,18 @@ class ResearchNodes:
             ]
             for company in self._active_companies(state)
         }
+        for company in self._active_companies(state):
+            selected_count = len(
+                state["selected_company_sources"].get(company.id, [])
+            )
+            fetched_count = len(pages_by_company[company.id])
+            observability.event(
+                "company_sources_fetch_completed",
+                company_id=str(company.id),
+                selected_source_count=selected_count,
+                fetch_success_count=fetched_count,
+                fetch_failure_count=selected_count - fetched_count,
+            )
         context = {
             "selected_source_count": len(work),
             "web_page_count": sum(len(pages) for pages in pages_by_company.values()),
@@ -830,16 +869,18 @@ class ResearchNodes:
                 continue
             successful_pages += 1
             extracted_count += len(extracted)
-            page_validated = [
-                candidate
-                for item in extracted
-                if (
-                    candidate := self._validated_evidence(
-                        campaign, company, research_run_id, page, item
-                    )
+            page_validated: list[ValidatedEvidence] = []
+            rejection_reasons: dict[str, int] = {}
+            for item in extracted:
+                candidate, rejection_reason = self._validated_evidence_with_reason(
+                    campaign, company, research_run_id, page, item
                 )
-                is not None
-            ]
+                if candidate is not None:
+                    page_validated.append(candidate)
+                elif rejection_reason is not None:
+                    rejection_reasons[rejection_reason] = (
+                        rejection_reasons.get(rejection_reason, 0) + 1
+                    )
             rejected_count += len(extracted) - len(page_validated)
             with (
                 observability.context(
@@ -852,6 +893,7 @@ class ResearchNodes:
                     extracted_item_count=len(extracted),
                     validated_item_count=len(page_validated),
                     rejected_item_count=len(extracted) - len(page_validated),
+                    rejection_reasons=rejection_reasons,
                 ),
             ):
                 observability.event(
@@ -885,6 +927,7 @@ class ResearchNodes:
                 item for item in deduplicated if item.company_id == company.id
             ]
             fetched_pages = pages_by_company.get(company.id, [])
+            raw_fetched_pages = state.get("company_web_pages", {}).get(company.id, [])
             selected_count = len(
                 state.get("selected_company_sources", {}).get(company.id, [])
             )
@@ -894,8 +937,12 @@ class ResearchNodes:
                 observability.event(
                     "company_evidence_funnel",
                     selected_source_count=selected_count,
-                    fetch_success_count=len(fetched_pages),
-                    fetch_failure_count=selected_count - len(fetched_pages),
+                    fetch_success_count=len(raw_fetched_pages),
+                    fetch_failure_count=selected_count - len(raw_fetched_pages),
+                    attribution_accept_count=len(fetched_pages),
+                    attribution_reject_count=(
+                        len(raw_fetched_pages) - len(fetched_pages)
+                    ),
                     pages_with_evidence_count=len(
                         {item.source_url for item in company_evidence}
                     ),
@@ -954,6 +1001,16 @@ class ResearchNodes:
             if accepted:
                 attributable[company_id].append(page)
         accepted_count = sum(len(pages) for pages in attributable.values())
+        for company in self._active_companies(state):
+            fetched_count = len(state["company_web_pages"].get(company.id, []))
+            company_accepted = len(attributable[company.id])
+            observability.event(
+                "company_page_attribution_completed",
+                company_id=str(company.id),
+                fetch_success_count=fetched_count,
+                attribution_accept_count=company_accepted,
+                attribution_reject_count=fetched_count - company_accepted,
+            )
         observability.event(
             "company_page_attribution_completed",
             pages_considered=len(work),
@@ -1006,12 +1063,21 @@ class ResearchNodes:
                 created_by_company[item.company_id] = (
                     created_by_company.get(item.company_id, 0) + 1
                 )
-        for company_id, count in created_by_company.items():
+        active_company_ids = {
+            company.id for company in self._active_companies(state)
+        }
+        for company_id in active_company_ids | set(created_by_company):
+            count = created_by_company.get(company_id, 0)
             investigation = investigations.get(
                 company_id, CompanyInvestigationState(company_id=company_id)
             )
             investigations[company_id] = investigation.model_copy(
                 update={"new_evidence_count": count}
+            )
+            observability.event(
+                "company_evidence_persisted",
+                company_id=str(company_id),
+                evidence_persisted_count=count,
             )
         return {"investigations": investigations}
 
@@ -1185,11 +1251,20 @@ class ResearchNodes:
         text = " ".join(
             value for value in (result.title, result.snippet or "") if value
         ).casefold()
+        searchable = f"{host or ''} {path} {text}"
 
         score = 0
 
         if company.domain and host == normalize_domain(company.domain):
-            score += 30
+            score += 100
+        else:
+            company_identity = ResearchNodes._compact(
+                normalize_company_name(company.name)
+            )
+            if company_identity and company_identity in ResearchNodes._compact(
+                searchable
+            ):
+                score += 100
 
         if any(token in path or token in text for token in ("career", "job")):
             score += 20
@@ -1207,8 +1282,8 @@ class ResearchNodes:
 
         for item in targets or []:
             weight = 12 if item.requirement is CriterionRequirement.REQUIRED else 4
-            if item.subject and item.subject.casefold() in text:
-                score += weight
+            if item.subject and item.subject.casefold() in searchable:
+                score += 50 + weight
 
             if item.criterion == EvidenceCriterion.COMPANY_SIZE.value:
                 if any(
@@ -1253,6 +1328,13 @@ class ResearchNodes:
             score -= 25
 
         return score
+
+    @staticmethod
+    def _query_subjects(criteria: list[CriterionQualification]) -> list[str]:
+        return [
+            f"{item.criterion}/{item.subject}" if item.subject else item.criterion
+            for item in criteria
+        ]
 
     async def qualify_companies(
         self, state: ResearchWorkflowState
@@ -1424,24 +1506,42 @@ class ResearchNodes:
         item: ExtractedEvidence,
     ) -> ValidatedEvidence | None:
         """Validate that extracted evidence is grounded in the supplied page."""
+        return self._validated_evidence_with_reason(
+            campaign, company, research_run_id, page, item
+        )[0]
+
+    def _validated_evidence_with_reason(
+        self,
+        campaign: CampaignCriteria,
+        company: ResearchCompany,
+        research_run_id: UUID,
+        page: WebPage,
+        item: ExtractedEvidence,
+    ) -> tuple[ValidatedEvidence | None, str | None]:
+        """Validate one item and return a bounded diagnostic rejection reason."""
 
         excerpt = self._normalize_whitespace(item.evidence_text)
-        if not excerpt or len(excerpt) > self._evidence_max_excerpt_chars:
-            return None
+        if not excerpt:
+            return None, "empty_excerpt"
+        if len(excerpt) > self._evidence_max_excerpt_chars:
+            return None, "excerpt_too_long"
         if excerpt not in self._normalize_whitespace(page.content):
-            return None
+            return None, "excerpt_not_grounded"
         subject = self._subject_for_criterion(campaign, item)
         if subject is None and item.criterion is not EvidenceCriterion.COMPANY_SIZE:
-            return None
-        return ValidatedEvidence(
-            company_id=company.id,
-            research_run_id=research_run_id,
-            criterion=item.criterion,
-            subject=subject,
-            claim=item.claim,
-            evidence_text=excerpt,
-            source_url=page.url,
-            source_title=(page.title[:500] if page.title else None),
+            return None, "invalid_subject"
+        return (
+            ValidatedEvidence(
+                company_id=company.id,
+                research_run_id=research_run_id,
+                criterion=item.criterion,
+                subject=subject,
+                claim=item.claim,
+                evidence_text=excerpt,
+                source_url=page.url,
+                source_title=(page.title[:500] if page.title else None),
+            ),
+            None,
         )
 
     @staticmethod

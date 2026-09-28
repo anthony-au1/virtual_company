@@ -113,18 +113,29 @@ def _polarity(item: EvidenceForQualification) -> QualificationStatus:
 
 
 def _technology_alternative(text: str, subject: str) -> bool:
-    """Recognize subject-bearing alternative lists without treating them as negatives."""
+    """Recognize alternatives that actually contain the subject being qualified."""
     if not subject:
         return False
     subject_pattern = re.escape(subject).replace(r"\ ", r"\s+")
     token = r"[a-z0-9][a-z0-9+#.\-]*(?:\s+[a-z0-9][a-z0-9+#.\-]*)?"
-    patterns = (
-        rf"\b{subject_pattern}\b\s*(?:/|\bor\b)\s*{token}",
-        rf"{token}\s*(?:/|\bor\b)\s*\b{subject_pattern}\b",
-        rf"\b{subject_pattern}\b\s*,\s*{token}(?:\s*,|\s+or\b)",
-        rf"{token}\s*,\s*\b{subject_pattern}\b(?:\s*,|\s+or\b)",
+    direct_patterns = (
+        rf"\b{subject_pattern}\b\s*(?:/|\band/or\b|\bor\b)\s*{token}",
+        rf"{token}\s*(?:/|\band/or\b|\bor\b)\s*\b{subject_pattern}\b",
     )
-    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in direct_patterns):
+        return True
+
+    # A comma-separated list is an alternative only when it closes with "or".
+    # Do not let an earlier, completed alternative ("Kotlin and/or Java") make
+    # every later item in the sentence ambiguous (", Spring Boot, AWS").
+    alternative_list = re.compile(
+        rf"\b{token}(?:\s*,\s*{token})+\s+or\s+{token}\b",
+        re.IGNORECASE,
+    )
+    return any(
+        re.search(rf"\b{subject_pattern}\b", match.group(), re.IGNORECASE)
+        for match in alternative_list.finditer(text)
+    )
 
 
 def _technology_signal(item: EvidenceForQualification) -> _TechnologySignal:
