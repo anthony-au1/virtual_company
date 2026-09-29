@@ -111,7 +111,7 @@ class ResearchWorkflow:
                         "adaptive_mode": False,
                         "company_search_started": False,
                         "criterion_qualifications": {},
-                        "size_normalizations": {},
+                        "qualification_facts": {},
                         "company_qualifications": {},
                         "error": None,
                     },

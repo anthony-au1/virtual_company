@@ -10,8 +10,8 @@ from virtual_company.domain.qualification import (
     CriterionQualification,
 )
 from virtual_company.research.models import (
-    CompanySizeNormalization,
     DiscoveredCompany,
+    QualificationFactsCacheEntry,
     SearchResult,
     WebPage,
 )
@@ -50,6 +50,6 @@ class ResearchWorkflowState(TypedDict):
     adaptive_mode: bool
     company_search_started: bool
     criterion_qualifications: dict[UUID, list[CriterionQualification]]
-    size_normalizations: dict[UUID, CompanySizeNormalization | None]
+    qualification_facts: dict[UUID, QualificationFactsCacheEntry]
     company_qualifications: dict[UUID, CompanyQualification]
     error: str | None

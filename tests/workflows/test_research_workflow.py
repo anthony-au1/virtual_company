@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -17,10 +19,13 @@ from virtual_company.domain.qualification import (
 )
 from virtual_company.repositories.dtos import EvidenceCreate
 from virtual_company.research.models import (
+    CategoricalEvidenceFact,
     DiscoveredCompany,
+    EmployeeCountEvidenceFact,
     EvidenceCriterion,
     ExtractedEvidence,
     ExtractedEvidenceItems,
+    QualificationFacts,
     SearchResult,
     WebPage,
 )
@@ -80,9 +85,7 @@ class ResearchServiceFake:
     ) -> SimpleNamespace:
         self.targets = [c.name for c in companies]
         persisted = [
-            SimpleNamespace(
-                id=uuid4(), name=c.name, website=c.website, domain=c.domain
-            )
+            SimpleNamespace(id=uuid4(), name=c.name, website=c.website, domain=c.domain)
             for c in companies
         ]
         return SimpleNamespace(
@@ -171,6 +174,8 @@ class ExtractionFake:
             )
         if model is ExtractedEvidenceItems:
             return ExtractedEvidenceItems(evidence=[])
+        if model is QualificationFacts:
+            return qualification_facts_from_prompt(prompt)
         self.active += 1
         self.max_active = max(self.max_active, self.active)
         try:
@@ -194,6 +199,54 @@ class EvidenceExtractionFake:
         if isinstance(value, Exception):
             raise value
         return ExtractedEvidenceItems(evidence=value)
+
+
+def qualification_facts_from_prompt(prompt: str) -> QualificationFacts:
+    payload = json.loads(prompt)
+    evidence_items = payload["evidence"]
+    categorical: list[CategoricalEvidenceFact] = []
+    for configured in payload["categorical_criteria"]:
+        matches = []
+        for item in evidence_items:
+            if item["criterion"] != configured["criterion"]:
+                continue
+            if configured["criterion"] == "technology":
+                actual = " ".join((item["subject"] or "").casefold().split())
+                expected = " ".join((configured["subject"] or "").casefold().split())
+                if actual != expected and not (
+                    actual == "spring boot" and expected == "spring"
+                ):
+                    continue
+            matches.append(item["id"])
+        if matches:
+            categorical.append(
+                CategoricalEvidenceFact(
+                    criterion_id=configured["criterion_id"],
+                    state="supported",
+                    evidence_ids=matches,
+                )
+            )
+    counts: list[EmployeeCountEvidenceFact] = []
+    for item in evidence_items:
+        if item["criterion"] != "company_size":
+            continue
+        text = f"{item['claim']} {item['evidence_text']}"
+        match = re.search(r"(?<!\d)(\d{1,3}(?:,\d{3})+|\d+)(?!\d)", text)
+        if match:
+            value = int(match.group(1).replace(",", ""))
+            relation = "exact"
+            if "approximately" in text.casefold() or "close to" in text.casefold():
+                relation = "approximately"
+            elif "more than" in text.casefold() or "over " in text.casefold():
+                relation = "greater_than"
+            counts.append(
+                EmployeeCountEvidenceFact(
+                    value=value,
+                    relation=relation,
+                    evidence_ids=[item["id"]],
+                )
+            )
+    return QualificationFacts(categorical=categorical, employee_counts=counts)
 
 
 class ResearchFake:
@@ -477,9 +530,7 @@ async def test_discovery_sources_are_reused_by_company_identity_not_position() -
         }
     )  # type: ignore[arg-type]
     assert output["company_search_results"][afterpay.id][0].url.endswith("afterpay")
-    assert output["company_search_results"][perpetual.id][0].url.endswith(
-        "perpetual"
-    )
+    assert output["company_search_results"][perpetual.id][0].url.endswith("perpetual")
 
 
 @pytest.mark.asyncio
@@ -1132,33 +1183,12 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
     from unittest.mock import AsyncMock
 
     from virtual_company.domain.qualification import QualificationStatus
-    from virtual_company.research.models import (
-        CompanySizeNormalization,
-        EmployeeCountFact,
-    )
 
     model = campaign()
     model.target_market = None
     model.industry = None
     model.technologies = {"required": [], "preferred": []}
     model.company_size = {"min": {"value": 500, "requirement": "required"}}
-    provider = SimpleNamespace(generate_structured=AsyncMock())
-    if outcome == "failure":
-        provider.generate_structured.side_effect = RuntimeError("unavailable")
-    else:
-        provider.generate_structured.return_value = (
-            {"counts": [{"value": "bad"}]}
-            if outcome == "invalid"
-            else CompanySizeNormalization(
-                counts=[]
-                if outcome == "empty"
-                else [
-                    EmployeeCountFact(value=714, relation="exact", year=2023),
-                    EmployeeCountFact(value=460, relation="exact", year=2026),
-                ]
-            )
-        )
-    nodes = make_nodes(provider, ResearchFake([]), model)
     company_id = uuid4()
     run_id = uuid4()
     item = SimpleNamespace(
@@ -1170,6 +1200,27 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
         claim="Afterpay had approximately 714 employees in 2023.",
         evidence_text="from 714 employees in 2023 to 460 in 2026",
     )
+    provider = SimpleNamespace(generate_structured=AsyncMock())
+    if outcome == "failure":
+        provider.generate_structured.side_effect = RuntimeError("unavailable")
+    else:
+        provider.generate_structured.return_value = (
+            {"employee_counts": [{"value": "bad"}]}
+            if outcome == "invalid"
+            else QualificationFacts(
+                employee_counts=[]
+                if outcome == "empty"
+                else [
+                    EmployeeCountEvidenceFact(
+                        value=714, relation="exact", year=2023, evidence_ids=[item.id]
+                    ),
+                    EmployeeCountEvidenceFact(
+                        value=460, relation="exact", year=2026, evidence_ids=[item.id]
+                    ),
+                ]
+            )
+        )
+    nodes = make_nodes(provider, ResearchFake([]), model)
     nodes._research.evidence = [item]
     state = {
         "campaign": CampaignCriteria.model_validate(model),
@@ -1191,7 +1242,7 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
         if outcome == "facts"
         else QualificationStatus.UNKNOWN
     )
-    assert result.criteria[0].evidence_ids == [item.id]
+    assert result.criteria[0].evidence_ids == ([item.id] if outcome == "facts" else [])
     provider.generate_structured.assert_awaited_once()
     assert not nodes._research_llm.prompts
     assert not nodes._web_search.calls
@@ -1377,8 +1428,7 @@ async def test_required_unknown_companies_are_scheduled_before_preferred_only() 
     output = await nodes.check_evidence_coverage(state)  # type: ignore[arg-type]
     assert output["active_company_ids"] == [unresolved.id]
     assert (
-        output["investigations"][complete.id].priority
-        is CriterionRequirement.PREFERRED
+        output["investigations"][complete.id].priority is CriterionRequirement.PREFERRED
     )
     assert output["investigations"][complete.id].stopped is False
 
@@ -1440,7 +1490,9 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
 
 
 @pytest.mark.asyncio
-async def test_source_selection_prioritizes_company_specific_required_subjects() -> None:
+async def test_source_selection_prioritizes_company_specific_required_subjects() -> (
+    None
+):
     model = campaign()
     model.target_market = None
     model.industry = None
@@ -1477,9 +1529,7 @@ async def test_source_selection_prioritizes_company_specific_required_subjects()
             "research_companies": [company],
             "active_company_ids": [company.id],
             "adaptive_mode": True,
-            "company_search_results": {
-                company.id: [generic, unrelated, targeted]
-            },
+            "company_search_results": {company.id: [generic, unrelated, targeted]},
             "criterion_qualifications": {company.id: unknown},
             "investigations": {
                 company.id: CompanyInvestigationState(company_id=company.id)
@@ -1728,6 +1778,8 @@ async def test_multi_company_workflow_bounds_searches_required_first() -> None:
                 return ExtractedCompanyIdentities(
                     companies=[ExtractedCompanyIdentity(name=name)]
                 )
+            if model_type is QualificationFacts:
+                return qualification_facts_from_prompt(prompt)
             raise AssertionError(f"Unexpected extraction model: {model_type}")
 
     model = campaign()
@@ -1779,11 +1831,6 @@ async def test_multi_company_workflow_bounds_searches_required_first() -> None:
 async def test_approximate_required_size_stays_unknown() -> None:
     from unittest.mock import AsyncMock
 
-    from virtual_company.research.models import (
-        CompanySizeNormalization,
-        EmployeeCountFact,
-    )
-
     model = campaign()
     model.target_market = None
     model.industry = None
@@ -1791,25 +1838,30 @@ async def test_approximate_required_size_stays_unknown() -> None:
     model.company_size = {"min": {"value": 500, "requirement": "required"}}
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
+    item = SimpleNamespace(
+        id=uuid4(),
+        company_id=company.id,
+        research_run_id=run_id,
+        criterion="company_size",
+        subject=None,
+        claim="close to 600 employees",
+        evidence_text="close to 600 employees",
+    )
     provider = SimpleNamespace(
         generate_structured=AsyncMock(
-            return_value=CompanySizeNormalization(
-                counts=[EmployeeCountFact(value=600, relation="approximately")]
+            return_value=QualificationFacts(
+                employee_counts=[
+                    EmployeeCountEvidenceFact(
+                        value=600,
+                        relation="approximately",
+                        evidence_ids=[item.id],
+                    )
+                ]
             )
         )
     )
     nodes = make_nodes(provider, ResearchFake([]), model)
-    nodes._research.evidence = [
-        SimpleNamespace(
-            id=uuid4(),
-            company_id=company.id,
-            research_run_id=run_id,
-            criterion="company_size",
-            subject=None,
-            claim="close to 600 employees",
-            evidence_text="close to 600 employees",
-        )
-    ]
+    nodes._research.evidence = [item]
     state = {
         "campaign": CampaignCriteria.model_validate(model),
         "research_run_id": run_id,

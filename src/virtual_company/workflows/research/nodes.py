@@ -20,6 +20,7 @@ from virtual_company.research.models import (
     EvidenceCriterion,
     ExtractedEvidence,
     ExtractedEvidenceItems,
+    QualificationFactsCacheEntry,
     SearchResult,
     WebPage,
 )
@@ -30,12 +31,14 @@ from virtual_company.research.normalization import (
     normalize_url,
 )
 from virtual_company.services import CampaignService, ResearchService
-from virtual_company.services.company_size_normalizer import CompanySizeNormalizer
 from virtual_company.services.coverage import assess_evidence_coverage
 from virtual_company.services.qualification import (
     aggregate_qualification,
-    needs_size_normalization,
     qualify_company,
+)
+from virtual_company.services.qualification_evidence_extractor import (
+    EvidenceForExtraction,
+    QualificationEvidenceExtractor,
 )
 from virtual_company.tools.web_fetch import WebFetchError, WebFetchTool
 from virtual_company.tools.web_search import WebSearchTool
@@ -119,7 +122,7 @@ class ResearchNodes:
         self._extraction_llm = extraction_llm or llm
         if self._research_llm is None or self._extraction_llm is None:
             raise ValueError("Research and extraction LLM providers are required")
-        self._size_normalizer = CompanySizeNormalizer(
+        self._qualification_extractor = QualificationEvidenceExtractor(
             self._extraction_llm, concurrency=evidence_extraction_concurrency
         )
         self._web_search = web_search
@@ -507,8 +510,7 @@ class ResearchNodes:
             "company_search_started": True,
             "adaptive_mode": bool(active_companies)
             and all(
-                investigations[company.id].priority
-                is CriterionRequirement.PREFERRED
+                investigations[company.id].priority is CriterionRequirement.PREFERRED
                 for company in active_companies
             ),
         }
@@ -785,9 +787,7 @@ class ResearchNodes:
             for company in self._active_companies(state)
         }
         for company in self._active_companies(state):
-            selected_count = len(
-                state["selected_company_sources"].get(company.id, [])
-            )
+            selected_count = len(state["selected_company_sources"].get(company.id, []))
             fetched_count = len(pages_by_company[company.id])
             observability.event(
                 "company_sources_fetch_completed",
@@ -1063,9 +1063,7 @@ class ResearchNodes:
                 created_by_company[item.company_id] = (
                     created_by_company.get(item.company_id, 0) + 1
                 )
-        active_company_ids = {
-            company.id for company in self._active_companies(state)
-        }
+        active_company_ids = {company.id for company in self._active_companies(state)}
         for company_id in active_company_ids | set(created_by_company):
             count = created_by_company.get(company_id, 0)
             investigation = investigations.get(
@@ -1090,18 +1088,33 @@ class ResearchNodes:
         if research_run_id is None:
             raise ValueError("Research run was not created")
         evidence = await self._research.list_evidence_for_run(research_run_id)
-        normalizations = dict(state.get("size_normalizations", {}))
-        if campaign.company_size and (
-            campaign.company_size.min or campaign.company_size.max
-        ):
-            pending = [
-                item
-                for item in evidence
-                if item.id not in normalizations and needs_size_normalization(item)
-            ]
-            normalizations.update(
-                await self._size_normalizer.normalize_evidence(pending)
+        fact_cache = dict(state.get("qualification_facts", {}))
+        evidence_by_company = {
+            company.id: [item for item in evidence if item.company_id == company.id]
+            for company in state["research_companies"]
+        }
+        pending_companies = [
+            company
+            for company in state["research_companies"]
+            if not state["investigations"][company.id].stopped
+            and self._facts_are_stale(
+                fact_cache.get(company.id), evidence_by_company[company.id]
             )
+        ]
+        extracted = await asyncio.gather(
+            *(
+                self._qualification_extractor.extract(
+                    campaign, evidence_by_company[company.id]
+                )
+                for company in pending_companies
+            )
+        )
+        fact_cache.update(
+            {
+                company.id: facts
+                for company, facts in zip(pending_companies, extracted, strict=True)
+            }
+        )
         investigations = dict(state["investigations"])
         criterion_qualifications = dict(state.get("criterion_qualifications", {}))
         required_company_ids: list[UUID] = []
@@ -1117,12 +1130,8 @@ class ResearchNodes:
                 company_id=company.id,
                 research_run_id=research_run_id,
             )
-            company_evidence = [
-                item for item in evidence if item.company_id == company.id
-            ]
-            criteria = qualify_company(
-                campaign, company_evidence, size_normalizations=normalizations
-            )
+            cached = fact_cache[company.id]
+            criteria = qualify_company(campaign, cached.facts)
             criterion_qualifications[company.id] = criteria
             required = [
                 item
@@ -1231,7 +1240,7 @@ class ResearchNodes:
             "investigations": investigations,
             "active_company_ids": active_company_ids,
             "criterion_qualifications": criterion_qualifications,
-            "size_normalizations": normalizations,
+            "qualification_facts": fact_cache,
         }
 
     @staticmethod
@@ -1352,15 +1361,36 @@ class ResearchNodes:
         if run_id is None:
             raise ValueError("Research run was not created")
         run_evidence = await self._research.list_evidence_for_run(run_id)
+        fact_cache = dict(state.get("qualification_facts", {}))
+        evidence_by_company = {
+            company.id: [item for item in run_evidence if item.company_id == company.id]
+            for company in state["research_companies"]
+        }
+        stale_companies = [
+            company
+            for company in state["research_companies"]
+            if self._facts_are_stale(
+                fact_cache.get(company.id), evidence_by_company[company.id]
+            )
+        ]
+        extracted = await asyncio.gather(
+            *(
+                self._qualification_extractor.extract(
+                    campaign, evidence_by_company[company.id]
+                )
+                for company in stale_companies
+            )
+        )
+        fact_cache.update(
+            {
+                company.id: facts
+                for company, facts in zip(stale_companies, extracted, strict=True)
+            }
+        )
         for company in state["research_companies"]:
-            evidence = [item for item in run_evidence if item.company_id == company.id]
             result = aggregate_qualification(
                 company.id,
-                qualify_company(
-                    campaign,
-                    evidence,
-                    size_normalizations=state.get("size_normalizations", {}),
-                ),
+                qualify_company(campaign, fact_cache[company.id].facts),
             )
             metadata = {
                 "company_id": str(company.id),
@@ -1392,6 +1422,14 @@ class ResearchNodes:
                 observability.event("company_qualified", **metadata)
             results[company.id] = result
         return {"company_qualifications": results}
+
+    @staticmethod
+    def _facts_are_stale(
+        cached: QualificationFactsCacheEntry | None,
+        evidence: list[EvidenceForExtraction],
+    ) -> bool:
+        evidence_ids = sorted({item.id for item in evidence}, key=str)
+        return cached is None or cached.evidence_ids != evidence_ids
 
     async def persist_company_qualifications(
         self, state: ResearchWorkflowState

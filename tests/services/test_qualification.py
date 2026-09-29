@@ -1,7 +1,7 @@
-"""Qualification is pure: fixtures need neither database nor provider clients."""
+"""Deterministic qualification over pre-extracted facts."""
 
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -13,20 +13,25 @@ from virtual_company.domain.criteria import (
 )
 from virtual_company.domain.qualification import CompanyQualificationStatus as Overall
 from virtual_company.domain.qualification import QualificationStatus as Status
+from virtual_company.research.models import (
+    CategoricalEvidenceFact,
+    EmployeeCountEvidenceFact,
+    QualificationFacts,
+)
 from virtual_company.services.qualification import (
     aggregate_qualification,
     qualify_company,
 )
 
 
-def campaign(**changes: object) -> SimpleNamespace:
-    minimum = changes.pop("minimum", None)
-    maximum = changes.pop("maximum", None)
-    technologies = changes.pop(
-        "technologies", ["java", "spring", "spring boot", "kafka"]
-    )
-    size = (
-        CompanySizeCriteria(
+def campaign(
+    *, minimum: int | None = None, maximum: int | None = None
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        target_market="Australia",
+        industry="fintech",
+        technologies=TechnologyCriteria(required=["Kafka"], preferred=[]),
+        company_size=CompanySizeCriteria(
             min=CompanySizeBound(
                 value=minimum, requirement=CriterionRequirement.REQUIRED
             )
@@ -39,537 +44,123 @@ def campaign(**changes: object) -> SimpleNamespace:
             else None,
         )
         if minimum is not None or maximum is not None
-        else None
+        else None,
     )
-    return SimpleNamespace(
-        **{
-            "target_market": "Australia",
-            "industry": "fin tech",
-            "technologies": TechnologyCriteria(required=technologies),
-            "company_size": size,
-            **changes,
+
+
+def supported(index: int, evidence_id: UUID) -> CategoricalEvidenceFact:
+    return CategoricalEvidenceFact(
+        criterion_id=f"criterion_{index}", state="supported", evidence_ids=[evidence_id]
+    )
+
+
+def count(
+    value: int,
+    evidence_id: UUID,
+    *,
+    relation: str = "exact",
+    year: int | None = None,
+    scope: str = "unknown",
+) -> EmployeeCountEvidenceFact:
+    return EmployeeCountEvidenceFact.model_validate(
+        {
+            "value": value,
+            "relation": relation,
+            "year": year,
+            "scope": scope,
+            "evidence_ids": [evidence_id],
         }
     )
 
 
-def evidence(
-    criterion: str | None,
-    subject: str | None,
-    text: str = "Explicit validated support.",
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        id=uuid4(), criterion=criterion, subject=subject, claim=text, evidence_text=text
-    )
+def test_categorical_facts_and_missing_facts_are_deterministic() -> None:
+    ids = [uuid4() for _ in range(3)]
+    facts = QualificationFacts(categorical=[supported(i, ids[i]) for i in range(3)])
+    first = qualify_company(campaign(), facts)
+    second = qualify_company(campaign(), facts)
+    assert first == second
+    assert [item.status for item in first] == [Status.MATCH] * 3
+    assert aggregate_qualification(uuid4(), first).status is Overall.QUALIFIED
 
-
-def test_afterpay_and_sparse_evidence() -> None:
-    items = [evidence("target_market", "Australia"), evidence("industry", "fintech")]
-    criteria = qualify_company(campaign(), items)
-    assert [item.status for item in criteria] == [Status.MATCH] * 2 + [
-        Status.UNKNOWN
-    ] * 4
-    assert (
-        aggregate_qualification(uuid4(), criteria).status
-        is Overall.INSUFFICIENT_EVIDENCE
+    sparse = qualify_company(
+        campaign(), QualificationFacts(categorical=[supported(0, ids[0])])
     )
-    items += [
-        evidence("technology", label) for label in ["Java", "Spring Boot", "Kafka"]
+    assert [item.status for item in sparse] == [
+        Status.MATCH,
+        Status.UNKNOWN,
+        Status.UNKNOWN,
     ]
-    criteria = qualify_company(campaign(), items)
-    assert all(item.status is Status.MATCH for item in criteria)
-    assert criteria[3].evidence_ids == [items[3].id]
-    assert "implication" in criteria[3].reason
-    assert aggregate_qualification(uuid4(), criteria).status is Overall.QUALIFIED
-    assert qualify_company(campaign(), list(reversed(items))) == criteria
-
-
-def test_empty_evidence_and_empty_campaign() -> None:
-    criteria = qualify_company(campaign(), [])
-    assert all(
-        item.status is Status.UNKNOWN and not item.evidence_ids for item in criteria
-    )
     assert (
-        aggregate_qualification(uuid4(), criteria).status
-        is Overall.INSUFFICIENT_EVIDENCE
-    )
-    assert (
-        aggregate_qualification(
-            uuid4(),
-            qualify_company(
-                campaign(target_market=None, industry=None, technologies=[]), []
-            ),
-        ).status
-        is Overall.QUALIFIED
+        aggregate_qualification(uuid4(), sparse).status is Overall.INSUFFICIENT_EVIDENCE
     )
 
 
-def test_realistic_required_and_preferred_qualification() -> None:
-    config = SimpleNamespace(
-        target_market="Australia",
-        industry="fin tech",
-        technologies=TechnologyCriteria(
-            required=["java", "spring"], preferred=["spring boot", "kafka"]
-        ),
-        company_size=CompanySizeCriteria(
-            min=CompanySizeBound(
-                value=500, requirement=CriterionRequirement.PREFERRED
+def test_conflicting_categorical_fact_remains_unknown_with_traceability() -> None:
+    evidence_ids = [uuid4(), uuid4()]
+    facts = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_1",
+                state="conflicting",
+                evidence_ids=evidence_ids,
             )
-        ),
+        ]
     )
-    required = [
-        evidence("target_market", "Australia"),
-        evidence("industry", "fintech"),
-        evidence("technology", "java", "Java or Kotlin"),
-        evidence("technology", "spring"),
-    ]
+    result = qualify_company(campaign(), facts)[1]
+    assert result.status is Status.UNKNOWN
+    assert result.evidence_ids == sorted(evidence_ids, key=str)
 
-    company_a = qualify_company(config, required)
-    assert aggregate_qualification(uuid4(), company_a).status is Overall.QUALIFIED
-    assert all(
-        item.status is Status.UNKNOWN
-        for item in company_a
-        if item.requirement is CriterionRequirement.PREFERRED
+
+@pytest.mark.parametrize(
+    "relation,value,minimum,maximum,expected",
+    [
+        ("exact", 1500, 500, None, Status.MATCH),
+        ("exact", 47, 500, None, Status.MISMATCH),
+        ("greater_than", 500, None, 500, Status.MISMATCH),
+        ("less_than_or_equal", 500, None, 500, Status.MATCH),
+        ("approximately", 1500, 500, None, Status.UNKNOWN),
+    ],
+)
+def test_employee_facts_use_deterministic_bounds(
+    relation: str,
+    value: int,
+    minimum: int | None,
+    maximum: int | None,
+    expected: Status,
+) -> None:
+    evidence_id = uuid4()
+    facts = QualificationFacts(
+        employee_counts=[count(value, evidence_id, relation=relation)]
     )
+    result = qualify_company(campaign(minimum=minimum, maximum=maximum), facts)[-1]
+    assert result.status is expected
+    assert result.evidence_ids == [evidence_id]
 
-    company_b = qualify_company(config, required[:-1])
+
+def test_dated_and_contradictory_employee_facts_preserve_uncertainty() -> None:
+    first_id, second_id = uuid4(), uuid4()
+    dated = QualificationFacts(
+        employee_counts=[
+            count(714, first_id, year=2023),
+            count(460, second_id, year=2026),
+        ]
+    )
+    result = qualify_company(campaign(minimum=500), dated, as_of_year=2026)[-1]
+    assert result.status is Status.MISMATCH
+    assert "2026" in result.reason and "superseded" in result.reason
+
+    conflicting = QualificationFacts(
+        employee_counts=[count(230, first_id), count(2300, second_id)]
+    )
+    result = qualify_company(campaign(minimum=100, maximum=500), conflicting)[-1]
+    assert result.status is Status.UNKNOWN
+    assert "conflicting" in result.reason
+
+
+def test_none_facts_never_become_positive_matches() -> None:
+    criteria = qualify_company(campaign(minimum=100), None)
+    assert all(item.status is Status.UNKNOWN for item in criteria)
     assert (
-        aggregate_qualification(uuid4(), company_b).status
+        aggregate_qualification(uuid4(), criteria).status
         is Overall.INSUFFICIENT_EVIDENCE
     )
-
-    company_c = qualify_company(
-        config,
-        required
-        + [
-            evidence("technology", "spring boot"),
-            evidence("technology", "kafka"),
-            evidence("company_size", None, "2,300 employees"),
-        ],
-    )
-    assert aggregate_qualification(uuid4(), company_c).status is Overall.QUALIFIED
-    assert all(item.status is Status.MATCH for item in company_c)
-
-
-@pytest.mark.parametrize(
-    "labels,subjects,expected",
-    [
-        (["spring", "spring boot"], ["Spring"], [Status.MATCH, Status.UNKNOWN]),
-        (["spring", "spring boot"], ["SpringBoot"], [Status.MATCH, Status.MATCH]),
-        (
-            ["python", "aws", "postgresql"],
-            ["PYTHON", "aws", " PostgreSQL "],
-            [Status.MATCH] * 3,
-        ),
-        (["Java", "JAVA", "java"], [" java "], [Status.MATCH]),
-        (["C", "C++", "C#"], ["C++"], [Status.UNKNOWN, Status.MATCH, Status.UNKNOWN]),
-    ],
-)
-def test_dynamic_normalized_technologies(
-    labels: list[str], subjects: list[str], expected: list[Status]
-) -> None:
-    criteria = qualify_company(
-        campaign(target_market=None, industry=None, technologies=labels),
-        [evidence("technology", subject) for subject in subjects],
-    )
-    assert [item.status for item in criteria] == expected
-
-
-@pytest.mark.parametrize(
-    "criterion,subject,text",
-    [
-        ("technology", "java", "Acme does not use Java."),
-        ("target_market", "Australia", "Acme does not operate in Australia."),
-        ("industry", "fin tech", "Acme is not a fintech company."),
-        ("technology", "java", "Java or Kotlin"),
-        ("technology", "java", "Java/Kotlin"),
-        ("technology", "java", "recent focus on Java or Kotlin"),
-        ("technology", "java", "develop microservices in Java/Kotlin"),
-    ],
-)
-def test_fact_like_qualification_uses_validated_evidence_not_wording(
-    criterion: str, subject: str, text: str
-) -> None:
-    item = evidence(criterion, subject, text)
-    item.claim = "Contradictory or ambiguous summary text is irrelevant."
-    criteria = qualify_company(campaign(), [item])
-    result = next(
-        criterion_result
-        for criterion_result in criteria
-        if criterion_result.criterion == criterion
-        and criterion_result.subject == subject
-    )
-    assert result.status is Status.MATCH
-    assert result.evidence_ids == [item.id]
-
-
-def test_fact_like_qualification_retains_all_matching_evidence_ids() -> None:
-    items = [
-        evidence("technology", "Java", "Java or Kotlin"),
-        evidence("technology", " java ", "Strong proficiency in Java"),
-    ]
-    result = qualify_company(campaign(), items)[2]
-    assert result.status is Status.MATCH
-    assert result.evidence_ids == sorted((item.id for item in items), key=str)
-
-
-@pytest.mark.parametrize(
-    "subjects,expected",
-    [
-        (["230"], Status.MATCH),
-        (["230 employees"], Status.MATCH),
-        (["2,300 employees"], Status.MISMATCH),
-        ([], Status.UNKNOWN),
-        (["230", "2300"], Status.UNKNOWN),
-        (["450", "470"], Status.UNKNOWN),
-        (["100"], Status.MATCH),
-        (["500"], Status.MATCH),
-        (["2300+ employees"], Status.MISMATCH),
-        (["more than 300 employees"], Status.UNKNOWN),
-        (["100–500 employees"], Status.UNKNOWN),
-        (["about 230 employees"], Status.UNKNOWN),
-    ],
-)
-def test_size(subjects: list[str], expected: Status) -> None:
-    items = [evidence("company_size", subject, subject) for subject in subjects]
-    result = qualify_company(campaign(minimum=100, maximum=500), items)[-1]
-    assert result.status is expected
-    assert set(result.evidence_ids) == {item.id for item in items}
-
-
-@pytest.mark.parametrize(
-    "minimum,maximum,count", [(100, None, "2300"), (None, 500, "230")]
-)
-def test_one_sided_size(minimum: int | None, maximum: int | None, count: str) -> None:
-    assert (
-        qualify_company(
-            campaign(minimum=minimum, maximum=maximum),
-            [evidence("company_size", count)],
-        )[-1].status
-        is Status.MATCH
-    )
-
-
-def test_size_source_qualification_and_claim_conflict() -> None:
-    item = evidence("company_size", "230", "About 230 employees")
-    assert qualify_company(campaign(minimum=100), [item])[-1].status is Status.UNKNOWN
-    item = evidence("company_size", "230", "Acme has 2300 employees.")
-    assert qualify_company(campaign(minimum=100), [item])[-1].status is Status.UNKNOWN
-
-
-def test_no_geography_or_industry_inference() -> None:
-    criteria = qualify_company(
-        campaign(),
-        [
-            evidence("target_market", "Melbourne"),
-            evidence("industry", "payments"),
-            evidence(None, "Java"),
-        ],
-    )
-    assert all(item.status is Status.UNKNOWN for item in criteria)
-
-
-def test_unparsed_size_does_not_hide_potential_conflict() -> None:
-    items = [
-        evidence("company_size", "230"),
-        evidence("company_size", "more than 3000 employees"),
-    ]
-    result = qualify_company(campaign(minimum=100, maximum=500), items)[-1]
-    assert result.status is Status.UNKNOWN
-    assert set(result.evidence_ids) == {item.id for item in items}
-
-
-def test_fact_like_claim_and_excerpt_are_not_reinterpreted() -> None:
-    item = evidence("technology", "java", "Acme uses Java.")
-    item.evidence_text = "Acme does not use Java."
-    assert qualify_company(campaign(), [item])[2].status is Status.MATCH
-
-
-@pytest.mark.parametrize(
-    "text,lower,upper",
-    [
-        ("1300 employees", 1300, 1300),
-        ("1,300 employees", 1300, 1300),
-        ("1300 staff", 1300, 1300),
-        ("1,300 staff", 1300, 1300),
-        ("2300 people", 2300, 2300),
-        ("2,300 people", 2300, 2300),
-        ("over 2300 employees", 2301, None),
-        ("over 2,300 people", 2301, None),
-        ("more than 2300 employees", 2301, None),
-        ("at least 2300 employees", 2300, None),
-        ("2300+ employees", 2300, None),
-        ("under 500 employees", None, 499),
-        ("fewer than 500 employees", None, 499),
-        ("less than 500 employees", None, 499),
-        ("up to 500 employees", None, 500),
-        ("at most 500 employees", None, 500),
-        ("workforce of 1300", 1300, 1300),
-        ("A team of 1300.", 1300, 1300),
-        ("more than\n2300 employees", 2301, None),
-    ],
-)
-def test_employee_bounds_parser(
-    text: str, lower: int | None, upper: int | None
-) -> None:
-    from virtual_company.services.qualification import EmployeeCountBounds, _size_bounds
-
-    assert _size_bounds(evidence("company_size", None, text)) == EmployeeCountBounds(
-        lower, upper
-    )
-
-
-@pytest.mark.parametrize(
-    "text,expected",
-    [
-        ("1300 employees", (Status.MATCH, Status.MISMATCH, Status.MATCH)),
-        ("1300 staff", (Status.MATCH, Status.MISMATCH, Status.MATCH)),
-        ("2,300+ employees", (Status.MATCH, Status.MISMATCH, Status.MISMATCH)),
-        ("team of over 2,300 people", (Status.MATCH, Status.MISMATCH, Status.MISMATCH)),
-        ("over 2300 employees", (Status.MATCH, Status.MISMATCH, Status.MISMATCH)),
-        ("500 employees", (Status.MATCH, Status.MATCH, Status.MATCH)),
-        ("100 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
-        ("300 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
-        ("2300 employees", (Status.MATCH, Status.MISMATCH, Status.MISMATCH)),
-        ("under 300 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
-        ("over 100 employees", (Status.UNKNOWN, Status.UNKNOWN, Status.UNKNOWN)),
-        ("under 1000 employees", (Status.UNKNOWN, Status.UNKNOWN, Status.UNKNOWN)),
-        ("over 1000 employees", (Status.MATCH, Status.MISMATCH, Status.UNKNOWN)),
-        ("under 1500 employees", (Status.UNKNOWN, Status.UNKNOWN, Status.UNKNOWN)),
-        ("under 500 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
-        ("up to 500 employees", (Status.UNKNOWN, Status.MATCH, Status.UNKNOWN)),
-        ("at most 500 employees", (Status.UNKNOWN, Status.MATCH, Status.UNKNOWN)),
-        ("at most 300 employees", (Status.MISMATCH, Status.MATCH, Status.MISMATCH)),
-        ("at least 500 employees", (Status.MATCH, Status.UNKNOWN, Status.UNKNOWN)),
-        ("over 500 employees", (Status.MATCH, Status.MISMATCH, Status.UNKNOWN)),
-        ("2000 employees", (Status.MATCH, Status.MISMATCH, Status.MATCH)),
-    ],
-)
-def test_size_constraint_matrix(text: str, expected: tuple[Status, ...]) -> None:
-    for (minimum, maximum), status in zip(
-        [(500, None), (None, 500), (500, 2000)], expected, strict=True
-    ):
-        results = qualify_company(
-            campaign(minimum=minimum, maximum=maximum),
-            [evidence("company_size", None, text)],
-        )
-        size_statuses = {
-            item.status for item in results if item.criterion == "company_size"
-        }
-        actual = (
-            Status.MISMATCH
-            if Status.MISMATCH in size_statuses
-            else Status.UNKNOWN
-            if Status.UNKNOWN in size_statuses
-            else Status.MATCH
-        )
-        assert actual is status
-
-
-def test_lower_bound_exceeds_campaign_maximum() -> None:
-    item = evidence("company_size", None, "over 2300 employees")
-    result = qualify_company(campaign(maximum=2000), [item])[-1]
-    assert result.status is Status.MISMATCH
-    assert result.evidence_ids == [item.id]
-
-
-@pytest.mark.parametrize(
-    "texts,expected",
-    [
-        (["over 1000 employees", "1300 employees"], Status.MATCH),
-        (
-            ["over 2300 employees", "over 2300 people", "2300+ employees"],
-            Status.MISMATCH,
-        ),
-        (["at least 500 employees", "up to 2000 employees"], Status.MATCH),
-        (["230 employees", "2300 employees"], Status.UNKNOWN),
-        (["1300 employees", "unknown workforce"], Status.UNKNOWN),
-    ],
-)
-def test_size_intersection(texts: list[str], expected: Status) -> None:
-    items = [evidence("company_size", None, text) for text in texts]
-    config = campaign(minimum=500, maximum=2000)
-    result = qualify_company(config, items)[-1]
-    assert result.status is expected
-    assert result.evidence_ids == sorted((item.id for item in items), key=str)
-    assert qualify_company(config, items[::-1])[-1] == result
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Afterpay Australia’s 1300 staff",
-        "we have a team of over 2,300 of the brightest and most innovative people in tech",
-    ],
-)
-def test_real_run_size_regression(text: str) -> None:
-    size = evidence("company_size", None, text)
-    items = [
-        evidence("target_market", "Australia"),
-        evidence("industry", "fin tech"),
-        size,
-    ]
-    items += [
-        evidence("technology", name)
-        for name in ["java", "spring", "spring boot", "kafka"]
-    ]
-    criteria = qualify_company(campaign(minimum=500), items)
-    assert criteria[-1].status is Status.MATCH
-    assert criteria[-1].evidence_ids == [size.id]
-    assert aggregate_qualification(uuid4(), criteria).status is Overall.QUALIFIED
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        (
-            "we have a team of over 2,300 of the brightest and most innovative "
-            "people in tech across 27 offices around the globe."
-        ),
-        "over 2,300 employees around the globe",
-        "over 2,300 people across offices around the world",
-        "over 2,300 employees located around the world",
-        "over 2,300 people in teams distributed around multiple offices",
-    ],
-)
-def test_size_unrelated_around_wording(text: str) -> None:
-    from virtual_company.services.qualification import EmployeeCountBounds, _size_bounds
-
-    item = evidence("company_size", None, text)
-    item.claim = "Airwallex has over 2,300 employees."
-    assert _size_bounds(item) == EmployeeCountBounds(2301, None)
-    config = campaign(minimum=500)
-    result = qualify_company(config, [item])[-1]
-    assert result.status is Status.MATCH
-    assert result.evidence_ids == [item.id]
-
-    compatible = evidence("company_size", None, "over 2,300 employees")
-    result = qualify_company(config, [item, compatible])[-1]
-    assert result.status is Status.MATCH
-    assert result.evidence_ids == sorted([item.id, compatible.id], key=str)
-
-
-@pytest.mark.parametrize(
-    "text",
-    ["around 2,300 employees", "around 500 people", "around 1000 staff"],
-)
-def test_size_around_numeric_count_stays_unknown(text: str) -> None:
-    from virtual_company.services.qualification import _size_bounds
-
-    item = evidence("company_size", None, text)
-    assert _size_bounds(item) is None
-    result = qualify_company(campaign(minimum=500), [item])[-1]
-    assert result.status is Status.UNKNOWN
-    assert result.evidence_ids == [item.id]
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Revenue of 1300 dollars",
-        "100 to 500 employees",
-        "team of 2 million people",
-        "team of 1.300 people",
-        "Founded in 1300",
-        "1.300 employees",
-        "100–500 employees",
-        "about 1300 employees",
-        "around 1300 employees",
-        "approximately 1300 employees",
-        "not over 2300 employees",
-    ],
-)
-def test_unusable_size_text(text: str) -> None:
-    result = qualify_company(
-        campaign(minimum=500), [evidence("company_size", None, text)]
-    )[-1]
-    assert result.status is Status.UNKNOWN
-    assert (
-        result.reason
-        == "Available company-size evidence does not establish whether the company satisfies the campaign size constraint."
-    )
-
-
-def test_numeric_subject_does_not_strengthen_bound() -> None:
-    item = evidence("company_size", "1000", "over 1000 employees")
-    assert (
-        qualify_company(campaign(minimum=500, maximum=2000), [item])[-1].status
-        is Status.UNKNOWN
-    )
-
-
-def test_size_reasons_and_field_conflict() -> None:
-    config = campaign(minimum=500)
-    assert (
-        qualify_company(config, [])[-1].reason
-        == "No validated company-size evidence is available."
-    )
-    item = evidence("company_size", None, "at least 2300 employees")
-    assert (
-        qualify_company(config, [item])[-1].reason
-        == "Validated evidence establishes at least 2300 employees, satisfying the campaign minimum of 500."
-    )
-    item.claim = "230 employees"
-    assert qualify_company(config, [item])[-1].status is Status.UNKNOWN
-    item = evidence("company_size", None, "2300 employees")
-    assert (
-        qualify_company(campaign(maximum=500), [item])[-1].reason
-        == "Validated evidence establishes 2300 employees, exceeding the campaign maximum of 500."
-    )
-
-
-@pytest.mark.parametrize(
-    "text,lower",
-    [
-        ("+600 employees", 600),
-        ("+600 global employees", 600),
-        ("+2,300 employees", 2300),
-        ("+2,300 people", 2300),
-        ("+2,300 staff", 2300),
-        ("team of +600 people", 600),
-    ],
-)
-def test_prefix_plus_size_bounds(text: str, lower: int) -> None:
-    from virtual_company.services.qualification import EmployeeCountBounds, _size_bounds
-
-    item = evidence("company_size", None, text)
-    assert _size_bounds(item) == EmployeeCountBounds(lower, None)
-    result = qualify_company(campaign(minimum=500), [item])[-1]
-    assert result.status is Status.MATCH
-    assert result.evidence_ids == [item.id]
-
-
-def test_prefix_plus_cover_genius_regression() -> None:
-    from virtual_company.services.qualification import (
-        EmployeeCountBounds,
-        _parse_size_text,
-        _size_bounds,
-    )
-
-    item = evidence("company_size", None, "+600 global employees")
-    item.claim = "Cover Genius reports more than 600 global employees."
-    assert _parse_size_text(item.evidence_text) == [EmployeeCountBounds(600, None)]
-    assert _parse_size_text(item.claim) == [EmployeeCountBounds(601, None)]
-    assert _size_bounds(item) == EmployeeCountBounds(601, None)
-    result = qualify_company(campaign(minimum=500), [item])[-1]
-    assert result.status is Status.MATCH
-    assert result.evidence_ids == [item.id]
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "+600",
-        "+600 revenue",
-        "+27 offices",
-        "++600 employees",
-        "+ 600 employees",
-        "+2,30 employees",
-        "around +600 employees",
-    ],
-)
-def test_prefix_plus_size_guardrails(text: str) -> None:
-    from virtual_company.services.qualification import _size_bounds
-
-    item = evidence("company_size", None, text)
-    assert _size_bounds(item) is None
-    assert qualify_company(campaign(minimum=500), [item])[-1].status is Status.UNKNOWN

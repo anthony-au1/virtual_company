@@ -1,10 +1,10 @@
-"""Pure qualification using validated, persisted Evidence only."""
+"""Pure deterministic qualification over validated semantic facts."""
 
-import re
-from collections.abc import Mapping, Sequence
+from __future__ import annotations
+
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
 from uuid import UUID
 
 from virtual_company.domain.criteria import (
@@ -12,8 +12,6 @@ from virtual_company.domain.criteria import (
     CampaignForQualification,
     CriterionRequirement,
     campaign_criteria,
-    normalize_subject,
-    technology_subjects,
 )
 from virtual_company.domain.qualification import (
     CompanyQualification,
@@ -21,37 +19,10 @@ from virtual_company.domain.qualification import (
     CriterionQualification,
     QualificationStatus,
 )
-from virtual_company.research.models import CompanySizeNormalization, EmployeeCountFact
-
-
-class EvidenceForQualification(Protocol):
-    id: UUID
-    criterion: str | None
-    subject: str | None
-    claim: str
-    evidence_text: str
-
-
-_NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
-_OPERATOR = r"over|more than|at least|under|fewer than|less than|up to|at most"
-_SIZE_VALUE = (
-    rf"(?P<operator>{_OPERATOR})?\s*(?P<prefix_plus>\+)?"
-    rf"(?P<count>{_NUMBER})(?P<plus>\+)?"
-)
-_COUNT = re.compile(
-    rf"(?<![\w.,+−-]){_SIZE_VALUE}\s+(?:global\s+)?(?:employees|staff|people)\b",
-    re.IGNORECASE,
-)
-_TEAM_COUNT = re.compile(
-    rf"\b(?:team|workforce)\s+of\s+{_SIZE_VALUE}(?![\w,+%−-]|\.\d)",
-    re.IGNORECASE,
-)
-_UNSUPPORTED_SIZE = re.compile(
-    r"\b(about|around(?=\s+\+?\d)|approximately|roughly|between|nearly|"
-    r"not|no|never|without|unknown|unclear|former|formerly|previously|might|may|possibly|"
-    r"million|billion|thousand)\b|[~<>%]|"
-    r"\d\s*(?:[-–—]|to)\s*\d",
-    re.IGNORECASE,
+from virtual_company.research.models import (
+    CategoricalEvidenceFact,
+    EmployeeCountFact,
+    QualificationFacts,
 )
 
 
@@ -74,92 +45,6 @@ def _contradictory(bounds: EmployeeCountBounds) -> bool:
         and bounds.upper is not None
         and bounds.lower > bounds.upper
     )
-
-
-def _parse_size_text(text: str) -> list[EmployeeCountBounds]:
-    values: list[EmployeeCountBounds] = []
-    for pattern in (_COUNT, _TEAM_COUNT):
-        for match in pattern.finditer(text):
-            # A detached plus must not fall through to an exact-count match.
-            if text[: match.start()].rstrip().endswith("+"):
-                continue
-            count = int(match["count"].replace(",", ""))
-            operator = (match["operator"] or "").lower()
-            if operator in {"over", "more than"}:
-                values.append(EmployeeCountBounds(count + 1, None))
-            elif operator == "at least" or match["plus"] or match["prefix_plus"]:
-                values.append(EmployeeCountBounds(count, None))
-            elif operator in {"under", "fewer than", "less than"}:
-                values.append(EmployeeCountBounds(None, count - 1))
-            elif operator in {"up to", "at most"}:
-                values.append(EmployeeCountBounds(None, count))
-            else:
-                values.append(EmployeeCountBounds(count, count))
-    return values
-
-
-def _size_bounds(item: EvidenceForQualification) -> EmployeeCountBounds | None:
-    subject = (item.subject or "").strip()
-    texts = tuple(
-        " ".join(text.split()) for text in (item.evidence_text, item.claim, subject)
-    )
-    # Neither extraction summaries nor numeric subjects may erase uncertainty.
-    if any(_UNSUPPORTED_SIZE.search(text) for text in texts):
-        return None
-    values = [value for text in texts for value in _parse_size_text(text)]
-    if re.fullmatch(_NUMBER, subject):
-        count = int(subject.replace(",", ""))
-        # Preserve legacy numeric subjects, but don't strengthen inequalities.
-        if not values or all(value.lower == value.upper for value in values):
-            values.append(EmployeeCountBounds(count, count))
-    return _intersect_bounds(values) if values else None
-
-
-# Routing guards, not another employee-count parser. Strip recognized counts so
-# an exact count such as "2000 employees" is not mistaken for a calendar year.
-_YEAR = re.compile(r"\b(?:19|20|21)\d{2}\b")
-_APPROXIMATE_SIZE = re.compile(r"\b(?:close to|almost|circa)\s+\+?\d", re.IGNORECASE)
-
-
-def size_requires_semantic_interpretation(item: EvidenceForQualification) -> bool:
-    """Dates and approximation must not be lost through regex fallback."""
-    for text in (item.claim, item.evidence_text):
-        normalized = " ".join(text.split())
-        if _APPROXIMATE_SIZE.search(normalized):
-            return True
-        without_counts = _TEAM_COUNT.sub("", _COUNT.sub("", normalized))
-        if _YEAR.search(without_counts):
-            return True
-    return False
-
-
-def needs_size_normalization(item: EvidenceForQualification) -> bool:
-    return item.criterion == "company_size" and (
-        size_requires_semantic_interpretation(item) or _size_bounds(item) is None
-    )
-
-
-def _regex_size_facts(item: EvidenceForQualification) -> list[EmployeeCountFact]:
-    if size_requires_semantic_interpretation(item):
-        return []
-    bounds = _size_bounds(item)
-    if bounds is None:
-        return []
-    if bounds.lower == bounds.upper and bounds.lower is not None:
-        return [EmployeeCountFact(value=bounds.lower, relation="exact")]
-    facts: list[EmployeeCountFact] = []
-    if bounds.lower is not None:
-        facts.append(
-            EmployeeCountFact(value=bounds.lower, relation="greater_than_or_equal")
-        )
-    if bounds.upper is not None:
-        # A negative upper bound cannot describe a nonnegative headcount.
-        if bounds.upper < 0:
-            return []
-        facts.append(
-            EmployeeCountFact(value=bounds.upper, relation="less_than_or_equal")
-        )
-    return facts
 
 
 def _fact_bounds(fact: EmployeeCountFact) -> EmployeeCountBounds | None:
@@ -244,35 +129,26 @@ def _evaluate_size(
             QualificationStatus.MATCH,
             f"{prefix}, satisfying the campaign {constraint}.",
         )
-    return (
-        QualificationStatus.UNKNOWN,
-        "Available company-size evidence does not establish whether the company satisfies the campaign size constraint.",
+    return QualificationStatus.UNKNOWN, (
+        "Available company-size evidence does not establish whether the company "
+        "satisfies the campaign size constraint."
     )
 
 
 def _qualify_size(
     criterion: CampaignCriterion,
-    evidence: Sequence[EvidenceForQualification],
-    normalizations: Mapping[UUID, CompanySizeNormalization | None],
+    facts: QualificationFacts | None,
     as_of_year: int,
 ) -> CriterionQualification:
-    ids = sorted({item.id for item in evidence}, key=str)
+    employee_facts = facts.employee_counts if facts is not None else []
+    ids = sorted(
+        {evidence_id for fact in employee_facts for evidence_id in fact.evidence_ids},
+        key=str,
+    )
     status = QualificationStatus.UNKNOWN
-    reason = "Available company-size evidence does not establish whether the company satisfies the campaign size constraint."
-    records: list[list[EmployeeCountFact]] = []
-    for item in evidence:
-        normalized = normalizations.get(item.id)
-        records.append(
-            normalized.counts
-            if normalized and normalized.counts
-            else _regex_size_facts(item)
-        )
-    if not evidence:
-        reason = "No validated company-size evidence is available."
-    elif all(records):
-        selected, note = _select_size_facts(
-            [fact for facts in records for fact in facts], as_of_year
-        )
+    reason = "No validated company-size facts are available."
+    if employee_facts:
+        selected, note = _select_size_facts(employee_facts, as_of_year)
         if not selected:
             reason = note
         else:
@@ -284,6 +160,11 @@ def _qualify_size(
                 )
             elif all(value is not None for value in parsed):
                 status, reason = _evaluate_size(criterion, bounds)
+            else:
+                reason = (
+                    "Available company-size evidence is approximate or otherwise "
+                    "insufficient for the campaign constraint."
+                )
             reason += note
     return CriterionQualification(
         "company_size", criterion.subject, criterion.requirement, status, ids, reason
@@ -291,62 +172,51 @@ def _qualify_size(
 
 
 def _qualify_category(
-    criterion: CampaignCriterion, evidence: Sequence[EvidenceForQualification]
+    criterion: CampaignCriterion,
+    fact: CategoricalEvidenceFact | None,
 ) -> CriterionQualification:
-    """Treat validated fact-like Evidence as affirmative semantic support."""
-    key = normalize_subject(criterion.criterion, criterion.subject)
-    ids: list[UUID] = []
-    has_direct = False
-    for item in evidence:
-        direct = normalize_subject(criterion.criterion, item.subject) == key
-        implication = (
-            criterion.criterion == "technology"
-            and key in technology_subjects(item.subject)
-        )
-        if not direct and not implication:
-            continue
-        ids.append(item.id)
-        has_direct |= direct
-    if ids:
+    ids = sorted(set(fact.evidence_ids), key=str) if fact else []
+    if fact is not None and fact.state == "supported":
         status = QualificationStatus.MATCH
-        reason = (
-            "Validated evidence supports this criterion."
-            if has_direct
-            else "Validated evidence supports this criterion through a technology implication."
-        )
+        reason = "Validated semantic facts support this criterion."
+    elif fact is not None and fact.state == "conflicting":
+        status = QualificationStatus.UNKNOWN
+        reason = "Available evidence is conflicting for this criterion."
     else:
         status = QualificationStatus.UNKNOWN
-        reason = "No validated evidence is available for this criterion."
+        reason = "Available evidence does not establish this criterion."
     return CriterionQualification(
         criterion.criterion,
         criterion.subject,
         criterion.requirement,
         status,
-        sorted(set(ids), key=str),
+        ids,
         reason,
     )
 
 
 def qualify_company(
     campaign: CampaignForQualification,
-    evidence: Sequence[EvidenceForQualification],
+    facts: QualificationFacts | None,
     *,
-    size_normalizations: Mapping[UUID, CompanySizeNormalization | None] | None = None,
     as_of_year: int | None = None,
 ) -> list[CriterionQualification]:
-    """Evaluate one company's persisted evidence; callers enforce company scope."""
+    """Evaluate one company's already validated facts without any LLM call."""
+    categorical = (
+        {item.criterion_id: item for item in facts.categorical}
+        if facts is not None
+        else {}
+    )
     results: list[CriterionQualification] = []
-    for criterion in campaign_criteria(campaign):
-        relevant = [item for item in evidence if item.criterion == criterion.criterion]
+    for index, criterion in enumerate(campaign_criteria(campaign)):
         results.append(
             _qualify_size(
                 criterion,
-                relevant,
-                size_normalizations or {},
+                facts,
                 as_of_year if as_of_year is not None else datetime.now(UTC).year,
             )
             if criterion.criterion == "company_size"
-            else _qualify_category(criterion, relevant)
+            else _qualify_category(criterion, categorical.get(f"criterion_{index}"))
         )
     return results
 

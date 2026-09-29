@@ -2,6 +2,7 @@
 
 from enum import StrEnum
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -77,9 +78,35 @@ class EmployeeCountFact(BaseModel):
     scope: Literal["global", "regional", "unknown"] = "unknown"
 
 
-class CompanySizeNormalization(BaseModel):
-    """Employee observations extracted from a single validated Evidence record."""
+class CategoricalEvidenceFact(BaseModel):
+    """Evidence-grounded semantic support for one configured criterion."""
 
     model_config = ConfigDict(extra="forbid")
 
-    counts: list[EmployeeCountFact] = Field(default_factory=list)
+    criterion_id: str = Field(min_length=1)
+    state: Literal["supported", "unknown", "conflicting"]
+    evidence_ids: list[UUID] = Field(default_factory=list)
+
+
+class EmployeeCountEvidenceFact(EmployeeCountFact):
+    """One employee-count observation linked to its source Evidence records."""
+
+    evidence_ids: list[UUID] = Field(min_length=1)
+
+
+class QualificationFacts(BaseModel):
+    """Strict semantic facts extracted for deterministic qualification."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    categorical: list[CategoricalEvidenceFact] = Field(default_factory=list)
+    employee_counts: list[EmployeeCountEvidenceFact] = Field(default_factory=list)
+
+
+class QualificationFactsCacheEntry(BaseModel):
+    """Transient facts and the exact Evidence set from which they were extracted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_ids: list[UUID]
+    facts: QualificationFacts | None

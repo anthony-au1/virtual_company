@@ -6,11 +6,16 @@
 nonnegative employee count and a `required` or `preferred` requirement.
 
 Each configured criterion produces `MATCH`, `MISMATCH`, or `UNKNOWN` from validated
-Evidence. For target market, industry, and technology, normalized Evidence existence
-produces `MATCH` and absence produces `UNKNOWN`; qualification does not reinterpret
-the evidence text. Employee-count Evidence is normalized into structured facts before
-deterministic bound evaluation. Coverage only indicates whether relevant Evidence
-exists; company-size coverage does not itself assert a match.
+Evidence. A structured-output extraction model first converts the persisted Evidence
+into evidence-ID-backed semantic facts. It may recognize equivalent wording, but it
+must use only the supplied Evidence and must preserve missing, vague, approximate, or
+conflicting information as unknown. The model never returns a qualification decision.
+
+Application code deterministically maps supported target-market, industry, and
+technology facts to `MATCH`; missing or conflicting support produces `UNKNOWN`.
+Employee-count facts retain their relation, optional year, and scope before deterministic
+bound evaluation. Coverage only indicates whether relevant Evidence exists and remains
+separate from semantic fact extraction and qualification.
 
 Any required mismatch makes a company `NOT_QUALIFIED`. Otherwise, any required
 unknown yields `INSUFFICIENT_EVIDENCE`. A company is `QUALIFIED` when every required
