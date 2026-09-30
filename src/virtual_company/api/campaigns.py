@@ -18,7 +18,10 @@ from virtual_company.api.models import (
 from virtual_company.services import CampaignService
 from virtual_company.tools import WebSearchConfigurationError
 from virtual_company.workflows.research import ResearchWorkflow
-from virtual_company.workflows.research.nodes import CampaignNotFoundError
+from virtual_company.workflows.research.nodes import (
+    CampaignNotFoundError,
+    ResearchTargetValidationError,
+)
 
 router = APIRouter(prefix="/api/v1/campaigns", tags=["campaigns"])
 CampaignServiceDependency = Annotated[CampaignService, Depends(get_campaign_service)]
@@ -84,6 +87,10 @@ async def research_campaign(
         result = await workflow.run(campaign_id)
     except CampaignNotFoundError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except ResearchTargetValidationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
+        ) from error
     except WebSearchConfigurationError as error:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
     return ResearchWorkflowResponse.model_validate(result.model_dump())

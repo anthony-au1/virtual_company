@@ -14,7 +14,10 @@ from virtual_company.main import app
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
 from virtual_company.tools import WebSearchNotConfiguredError
 from virtual_company.workflows.research.models import ResearchWorkflowResult
-from virtual_company.workflows.research.nodes import CampaignNotFoundError
+from virtual_company.workflows.research.nodes import (
+    CampaignNotFoundError,
+    ResearchTargetValidationError,
+)
 
 
 class CampaignServiceStub:
@@ -189,6 +192,12 @@ def test_research_campaign_returns_workflow_result() -> None:
     ("error", "status_code"),
     [
         (CampaignNotFoundError("Campaign not found"), 404),
+        (
+            ResearchTargetValidationError(
+                "Campaign target_count 20 exceeds configured research candidate pool maximum 15"
+            ),
+            422,
+        ),
         (WebSearchNotConfiguredError("Web search is not configured"), 503),
     ],
 )

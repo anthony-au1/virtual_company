@@ -88,6 +88,10 @@ class CampaignNotFoundError(LookupError):
     """Raised when a requested campaign does not exist."""
 
 
+class ResearchTargetValidationError(ValueError):
+    """Raised when deployment limits cannot satisfy a campaign research target."""
+
+
 class ResearchNodes:
     """Dependencies and node implementations for one research workflow."""
 
@@ -104,6 +108,7 @@ class ResearchNodes:
         web_search_max_results: int = 10,
         web_search_max_total_results: int = 30,
         web_search_concurrency: int = 3,
+        research_max_candidate_pool_size: int = 15,
         company_research_query_count: int = 5,
         company_research_max_results_per_query: int = 5,
         company_research_max_results_per_company: int = 15,
@@ -129,6 +134,7 @@ class ResearchNodes:
         self._web_search_max_results = web_search_max_results
         self._web_search_max_total_results = web_search_max_total_results
         self._web_search_concurrency = web_search_concurrency
+        self._research_max_candidate_pool_size = research_max_candidate_pool_size
         self._company_research_query_count = company_research_query_count
         self._company_research_max_results_per_query = (
             company_research_max_results_per_query
@@ -159,7 +165,19 @@ class ResearchNodes:
         campaign = await self._campaigns.get_by_id(state["campaign_id"])
         if campaign is None:
             raise CampaignNotFoundError("Campaign not found")
-        return {"campaign": CampaignCriteria.model_validate(campaign)}
+        criteria = CampaignCriteria.model_validate(campaign)
+        if criteria.target_count > self._research_max_candidate_pool_size:
+            get_observability().event(
+                "research_target_rejected",
+                target_count=criteria.target_count,
+                max_candidate_pool_size=self._research_max_candidate_pool_size,
+            )
+            raise ResearchTargetValidationError(
+                f"Campaign target_count {criteria.target_count} exceeds configured "
+                "research candidate pool maximum "
+                f"{self._research_max_candidate_pool_size}"
+            )
+        return {"campaign": criteria}
 
     async def create_research_run(
         self, state: ResearchWorkflowState
@@ -333,8 +351,12 @@ class ResearchNodes:
     async def rank_company_candidates(
         self, state: ResearchWorkflowState
     ) -> dict[str, list[DiscoveredCompany]]:
-        """Rank and validate the complete aggregate candidate pool once."""
+        """Rank and validate one bounded candidate pool once."""
         campaign = self._campaign(state)
+        candidate_limit = min(
+            len(state["aggregated_company_candidates"]),
+            self._research_max_candidate_pool_size,
+        )
         ranking_candidates = [
             candidate.model_copy(
                 update={"supporting_results": candidate.supporting_results[:3]}
@@ -349,17 +371,23 @@ class ResearchNodes:
             response = await self._research_llm.generate_structured(
                 system_prompt=rank_company_candidates_system_prompt(),
                 user_prompt=rank_company_candidates_user_prompt(
-                    campaign, ranking_candidates
+                    campaign, ranking_candidates, candidate_limit
                 ),
                 response_model=DiscoveredCompanies,
             )
         companies = self._validated_ranked_companies(
-            response.companies, state["aggregated_company_candidates"]
+            response.companies,
+            state["aggregated_company_candidates"],
+            candidate_limit,
         )
         context = {
+            "discovered_candidate_count": len(ranking_candidates),
             "unique_candidate_count": len(ranking_candidates),
             "ranked_candidate_count": len(companies),
             "ranked_pool_size": len(companies),
+            "candidate_pool_limit": candidate_limit,
+            "configured_candidate_pool_max": self._research_max_candidate_pool_size,
+            "target_count": campaign.target_count,
             "ranked_candidate_names": [company.name for company in companies],
         }
         with observability.span("rank_company_candidates", **context):
@@ -1691,8 +1719,11 @@ class ResearchNodes:
     def _validated_ranked_companies(
         companies: list[DiscoveredCompany],
         candidates: list[AggregatedCompanyCandidate],
+        candidate_limit: int,
     ) -> list[DiscoveredCompany]:
         """Keep ranked selections and provenance constrained to aggregate evidence."""
+        if candidate_limit == 0:
+            return []
         by_domain = {
             domain: candidate
             for candidate in candidates
@@ -1731,4 +1762,6 @@ class ResearchNodes:
                 )
             )
             seen.add(key)
+            if len(selected) == candidate_limit:
+                break
         return selected

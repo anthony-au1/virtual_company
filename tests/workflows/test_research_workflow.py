@@ -56,6 +56,7 @@ from virtual_company.workflows.research.models import (
 from virtual_company.workflows.research.nodes import (
     CampaignNotFoundError,
     ResearchNodes,
+    ResearchTargetValidationError,
 )
 from virtual_company.workflows.research.prompts import (
     EXTRACT_COMPANY_CANDIDATES_PROMPT,
@@ -305,7 +306,11 @@ def found(name: str, urls: list[str]) -> DiscoveredCompany:
 
 
 def make_nodes(
-    extraction: ExtractionFake, research: ResearchFake, model: Campaign
+    extraction: ExtractionFake,
+    research: ResearchFake,
+    model: Campaign,
+    *,
+    max_candidate_pool_size: int = 15,
 ) -> ResearchNodes:
     return ResearchNodes(
         campaigns=CampaignServiceFake(model),
@@ -315,6 +320,7 @@ def make_nodes(
         web_search=SearchFake([]),
         web_fetch=FetchFake({}),
         web_search_concurrency=2,
+        research_max_candidate_pool_size=max_candidate_pool_size,
     )
 
 
@@ -325,7 +331,7 @@ def test_staged_prompt_semantics() -> None:
     )
     assert (
         EXTRACT_COMPANY_CANDIDATES_PROMPT.version == "v1"
-        and RANK_COMPANY_CANDIDATES_PROMPT.version == "v2"
+        and RANK_COMPANY_CANDIDATES_PROMPT.version == "v3"
     )
     assert (
         "optimizes for recall" in extraction and "do not rank companies" in extraction
@@ -337,7 +343,7 @@ def test_staged_prompt_semantics() -> None:
     assert (
         "do not discover additional companies" in ranking
         and "unstated knowledge" in ranking
-        and "every supplied candidate exactly once" in ranking
+        and "at most the supplied discovery candidate limit" in ranking
         and "prioritization, not qualification" in ranking
         and "absence of evidence is unknown" in ranking
     )
@@ -396,7 +402,7 @@ async def test_aggregation_merges_variants_and_keeps_single_mention() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ranking_preserves_full_order_and_validates_urls() -> None:
+async def test_ranking_bounds_pool_preserves_order_and_validates_urls() -> None:
     model = campaign()
     aggregate = [
         AggregatedCompanyCandidate(
@@ -405,12 +411,12 @@ async def test_ranking_preserves_full_order_and_validates_urls() -> None:
             supporting_urls=[f"https://{i}.example"],
             supporting_results=[SearchResult(title=str(i), url=f"https://{i}.example")],
         )
-        for i in range(15)
+        for i in range(50)
     ]
     research = ResearchFake(
         [
             found(f"Candidate {i}", [f"https://{i}.example", "https://wrong.example"])
-            for i in range(15)
+            for i in range(50)
         ]
     )
     output = await make_nodes(
@@ -428,6 +434,7 @@ async def test_ranking_preserves_full_order_and_validates_urls() -> None:
     assert output["discovered_companies"][0].supporting_urls == ["https://0.example"]
     assert (
         "Aggregated company candidates" in research.prompts[0]
+        and "Discovery candidate limit: 15" in research.prompts[0]
         and "Search results:" not in research.prompts[0]
     )
 
@@ -468,6 +475,47 @@ async def test_workflow_refills_ranked_companies_without_reranking() -> None:
     assert workflow._nodes._web_fetch.calls == [
         f"https://source-{i}.example" for i in range(9)
     ]
+
+
+@pytest.mark.asyncio
+async def test_workflow_completes_after_investigating_a_small_ranked_pool() -> None:
+    model = campaign()
+    model.target_count = 5
+    results = [
+        SearchResult(title=f"Candidate {i}", url=f"https://source-{i}.example")
+        for i in range(3)
+    ]
+    service = ResearchServiceFake()
+    research = ResearchFake(
+        [found(result.title, [result.url]) for result in results]
+    )
+    workflow = ResearchWorkflow(
+        campaigns=CampaignServiceFake(model),
+        research=service,
+        research_llm=research,
+        extraction_llm=ExtractionFake(
+            {
+                result.url: [ExtractedCompanyIdentity(name=result.title)]
+                for result in results
+            }
+        ),
+        web_search=SearchFake(results),
+        web_fetch=FetchFake({}),
+        settings=Settings(
+            company_research_max_investigation_rounds=0,
+            research_max_candidate_pool_size=15,
+        ),
+    )
+
+    outcome = await workflow.run(model.id)
+
+    assert outcome.status == "COMPLETED"
+    assert service.targets == [f"Candidate {i}" for i in range(3)]
+    assert service.persist_company_calls == [
+        [f"Candidate {i}" for i in range(3)]
+    ]
+    assert research.models.count(DiscoveredCompanies) == 1
+    assert len(service.qualifications) == 3
 
 
 @pytest.mark.asyncio
@@ -591,6 +639,49 @@ async def test_unknown_campaign_does_not_create_run() -> None:
 
 
 @pytest.mark.asyncio
+async def test_target_above_candidate_pool_is_rejected_before_run() -> None:
+    model = campaign()
+    model.target_count = 16
+    service = ResearchServiceFake()
+    research = ResearchFake([])
+    search = SearchFake([])
+
+    with pytest.raises(
+        ResearchTargetValidationError,
+        match="target_count 16 exceeds configured research candidate pool maximum 15",
+    ):
+        await ResearchWorkflow(
+            campaigns=CampaignServiceFake(model),
+            research=service,
+            research_llm=research,
+            extraction_llm=ExtractionFake({}),
+            web_search=search,
+            web_fetch=FetchFake({}),
+            settings=Settings(research_max_candidate_pool_size=15),
+        ).run(model.id)
+
+    assert service.runs == {}
+    assert research.models == []
+    assert search.calls == []
+
+
+@pytest.mark.asyncio
+async def test_target_equal_to_candidate_pool_is_allowed() -> None:
+    model = campaign()
+    model.target_count = 15
+    nodes = make_nodes(
+        ExtractionFake({}),
+        ResearchFake([]),
+        model,
+        max_candidate_pool_size=15,
+    )
+
+    output = await nodes.load_campaign({"campaign_id": model.id})  # type: ignore[arg-type]
+
+    assert output["campaign"].target_count == 15
+
+
+@pytest.mark.asyncio
 async def test_source_selection_deduplicates_and_prefers_first_party_pages() -> None:
     model = campaign()
     company = ResearchCompany(
@@ -660,6 +751,7 @@ async def test_discovery_sources_are_reused_by_company_identity_not_position() -
     output = await nodes.reuse_discovery_sources(
         {
             "research_companies": [perpetual, afterpay],
+            "active_company_ids": [afterpay.id],
             "discovered_companies_by_id": {
                 afterpay.id: first,
                 perpetual.id: second,
@@ -667,8 +759,8 @@ async def test_discovery_sources_are_reused_by_company_identity_not_position() -
             "aggregated_company_candidates": aggregates,
         }
     )  # type: ignore[arg-type]
+    assert list(output["company_search_results"]) == [afterpay.id]
     assert output["company_search_results"][afterpay.id][0].url.endswith("afterpay")
-    assert output["company_search_results"][perpetual.id][0].url.endswith("perpetual")
 
 
 @pytest.mark.asyncio
