@@ -9,6 +9,7 @@ from uuid import UUID
 from virtual_company.domain.criteria import CriterionRequirement, normalize_subject
 from virtual_company.domain.qualification import (
     CompanyQualification,
+    CompanyQualificationStatus,
     CriterionQualification,
     QualificationStatus,
 )
@@ -103,8 +104,6 @@ class ResearchNodes:
         web_search_max_results: int = 10,
         web_search_max_total_results: int = 30,
         web_search_concurrency: int = 3,
-        discovery_candidate_multiplier: int = 3,
-        discovery_candidate_max: int = 15,
         company_research_query_count: int = 5,
         company_research_max_results_per_query: int = 5,
         company_research_max_results_per_company: int = 15,
@@ -130,8 +129,6 @@ class ResearchNodes:
         self._web_search_max_results = web_search_max_results
         self._web_search_max_total_results = web_search_max_total_results
         self._web_search_concurrency = web_search_concurrency
-        self._discovery_candidate_multiplier = discovery_candidate_multiplier
-        self._discovery_candidate_max = discovery_candidate_max
         self._company_research_query_count = company_research_query_count
         self._company_research_max_results_per_query = (
             company_research_max_results_per_query
@@ -336,9 +333,8 @@ class ResearchNodes:
     async def rank_company_candidates(
         self, state: ResearchWorkflowState
     ) -> dict[str, list[DiscoveredCompany]]:
-        """Rank the aggregate pool and limit only downstream investigation."""
+        """Rank and validate the complete aggregate candidate pool once."""
         campaign = self._campaign(state)
-        candidate_limit = self._discovery_candidate_limit(campaign.target_count)
         ranking_candidates = [
             candidate.model_copy(
                 update={"supporting_results": candidate.supporting_results[:3]}
@@ -353,17 +349,17 @@ class ResearchNodes:
             response = await self._research_llm.generate_structured(
                 system_prompt=rank_company_candidates_system_prompt(),
                 user_prompt=rank_company_candidates_user_prompt(
-                    campaign, ranking_candidates, candidate_limit
+                    campaign, ranking_candidates
                 ),
                 response_model=DiscoveredCompanies,
             )
         companies = self._validated_ranked_companies(
-            response.companies, state["aggregated_company_candidates"], candidate_limit
+            response.companies, state["aggregated_company_candidates"]
         )
         context = {
             "unique_candidate_count": len(ranking_candidates),
             "ranked_candidate_count": len(companies),
-            "discovery_candidate_limit": candidate_limit,
+            "ranked_pool_size": len(companies),
             "ranked_candidate_names": [company.name for company in companies],
         }
         with observability.span("rank_company_candidates", **context):
@@ -376,26 +372,56 @@ class ResearchNodes:
     async def persist_companies(
         self, state: ResearchWorkflowState
     ) -> dict[str, object]:
-        """Persist discovered companies and their campaign associations."""
+        """Activate the next required batch from the retained ranked pool."""
+        campaign = self._campaign(state)
+        qualified_count = self._qualified_count(state)
+        needed = max(campaign.target_count - qualified_count, 0)
+        pending = self._pending_ranked_companies(state)
+        batch = pending[:needed]
         persisted = await self._research.persist_companies(
             campaign_id=state["campaign_id"],
-            companies=state["discovered_companies"],
+            companies=batch,
         )
-        research_companies = [
+        activated = [
             ResearchCompany.model_validate(company) for company in persisted.companies
         ]
-        get_observability().event(
-            "companies_persisted", companies_found=persisted.companies_found
+        existing_companies = list(state.get("research_companies", []))
+        existing_ids = {company.id for company in existing_companies}
+        newly_activated = [company for company in activated if company.id not in existing_ids]
+        research_companies = existing_companies + newly_activated
+        discovered_by_id = dict(state.get("discovered_companies_by_id", {}))
+        discovered_by_id.update(persisted.discovered_by_company_id)
+        investigations = dict(state.get("investigations", {}))
+        for company in newly_activated:
+            investigations[company.id] = CompanyInvestigationState(company_id=company.id)
+        pending_count = max(len(pending) - len(batch), 0)
+        activation_type = "initial" if not existing_companies else "refill"
+        observability = get_observability()
+        observability.event(
+            "company_candidates_activated",
+            activation_type=activation_type,
+            initial_activation_count=(len(newly_activated) if activation_type == "initial" else 0),
+            refill_activation_count=(len(newly_activated) if activation_type == "refill" else 0),
+            activated_candidate_names=[company.name for company in newly_activated],
+            activated_candidate_ids=[str(company.id) for company in newly_activated],
+            qualified_count=qualified_count,
+            target_count=campaign.target_count,
+            pending_candidate_count=pending_count,
         )
         return {
-            "companies_found": persisted.companies_found,
+            "companies_found": state.get("companies_found", 0) + persisted.companies_found,
             "research_companies": research_companies,
-            "discovered_companies_by_id": persisted.discovered_by_company_id,
-            "active_company_ids": [company.id for company in research_companies],
-            "investigations": {
-                company.id: CompanyInvestigationState(company_id=company.id)
-                for company in research_companies
-            },
+            "discovered_companies_by_id": discovered_by_id,
+            "active_company_ids": [company.id for company in newly_activated],
+            "investigations": investigations,
+            "company_research_queries": {},
+            "company_search_results": {},
+            "selected_company_sources": {},
+            "company_web_pages": {},
+            "attributable_company_web_pages": {},
+            "validated_evidence": [],
+            "adaptive_mode": False,
+            "company_search_started": False,
         }
 
     async def reuse_discovery_sources(
@@ -412,7 +438,7 @@ class ResearchNodes:
         results: dict[UUID, list[SearchResult]] = {}
         offered = recovered = 0
         discovered_by_id = state["discovered_companies_by_id"]
-        for company in state["research_companies"]:
+        for company in self._active_companies(state):
             discovered = discovered_by_id.get(company.id)
             if discovered is None:
                 results[company.id] = []
@@ -1459,6 +1485,17 @@ class ResearchNodes:
             research_run_id=run_id,
             qualifications=list(results.values()),
         )
+        campaign = self._campaign(state)
+        qualified_count = self._qualified_count(state)
+        pending_count = len(self._pending_ranked_companies(state))
+        get_observability().event(
+            "candidate_pool_evaluated",
+            qualified_count=qualified_count,
+            target_count=campaign.target_count,
+            pending_candidate_count=pending_count,
+            target_reached=qualified_count >= campaign.target_count,
+            pool_exhausted=pending_count == 0,
+        )
         return {}
 
     async def complete_research_run(
@@ -1493,6 +1530,36 @@ class ResearchNodes:
         ]
 
     @staticmethod
+    def _qualified_count(state: ResearchWorkflowState) -> int:
+        """Count activated companies with a current qualified result."""
+        return sum(
+            result.status is CompanyQualificationStatus.QUALIFIED
+            for result in state.get("company_qualifications", {}).values()
+        )
+
+    @classmethod
+    def _pending_ranked_companies(
+        cls, state: ResearchWorkflowState
+    ) -> list[DiscoveredCompany]:
+        """Return never-activated candidates in their original ranked order."""
+        activated = {
+            cls._discovered_company_key(company)
+            for company in state.get("discovered_companies_by_id", {}).values()
+        }
+        return [
+            company
+            for company in state["discovered_companies"]
+            if cls._discovered_company_key(company) not in activated
+        ]
+
+    @staticmethod
+    def _discovered_company_key(company: DiscoveredCompany) -> str:
+        """Return the canonical transient identity used for activation tracking."""
+        return normalize_domain(
+            company.domain or company.website
+        ) or normalize_company_name(company.name)
+
+    @staticmethod
     def _investigation_targets(
         state: ResearchWorkflowState, company_id: UUID
     ) -> list[CriterionQualification]:
@@ -1524,16 +1591,6 @@ class ResearchNodes:
             )
             for item in criteria
         }
-
-    def _discovery_candidate_limit(self, target_count: int) -> int:
-        """Return the bounded discovery candidate pool size for a campaign."""
-        return max(
-            target_count,
-            min(
-                target_count * self._discovery_candidate_multiplier,
-                self._discovery_candidate_max,
-            ),
-        )
 
     def _validated_evidence(
         self,
@@ -1634,7 +1691,6 @@ class ResearchNodes:
     def _validated_ranked_companies(
         companies: list[DiscoveredCompany],
         candidates: list[AggregatedCompanyCandidate],
-        candidate_limit: int,
     ) -> list[DiscoveredCompany]:
         """Keep ranked selections and provenance constrained to aggregate evidence."""
         by_domain = {
@@ -1675,6 +1731,4 @@ class ResearchNodes:
                 )
             )
             seen.add(key)
-            if len(selected) == candidate_limit:
-                break
         return selected

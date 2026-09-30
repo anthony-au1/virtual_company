@@ -14,6 +14,8 @@ from virtual_company.config import Settings
 from virtual_company.db.models import Campaign
 from virtual_company.domain.criteria import CriterionRequirement
 from virtual_company.domain.qualification import (
+    CompanyQualification,
+    CompanyQualificationStatus,
     CriterionQualification,
     QualificationStatus,
 )
@@ -31,7 +33,10 @@ from virtual_company.research.models import (
 )
 from virtual_company.services.research import ResearchService
 from virtual_company.tools.web_fetch import WebFetchError
-from virtual_company.workflows.research.graph import ResearchWorkflow
+from virtual_company.workflows.research.graph import (
+    ResearchWorkflow,
+    route_candidate_pool,
+)
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
@@ -72,6 +77,8 @@ class ResearchServiceFake:
     def __init__(self) -> None:
         self.runs: dict[UUID, SimpleNamespace] = {}
         self.targets: list[str] = []
+        self.company_ids: dict[str, UUID] = {}
+        self.persist_company_calls: list[list[str]] = []
         self.qualifications: dict = {}
         self.evidence: list[SimpleNamespace] = []
 
@@ -83,13 +90,24 @@ class ResearchServiceFake:
     async def persist_companies(
         self, *, campaign_id: UUID, companies: list[DiscoveredCompany]
     ) -> SimpleNamespace:
-        self.targets = [c.name for c in companies]
+        self.persist_company_calls.append([company.name for company in companies])
+        created = 0
+        for company in companies:
+            if company.name not in self.company_ids:
+                self.company_ids[company.name] = uuid4()
+                self.targets.append(company.name)
+                created += 1
         persisted = [
-            SimpleNamespace(id=uuid4(), name=c.name, website=c.website, domain=c.domain)
+            SimpleNamespace(
+                id=self.company_ids[c.name],
+                name=c.name,
+                website=c.website,
+                domain=c.domain,
+            )
             for c in companies
         ]
         return SimpleNamespace(
-            companies_found=len(companies),
+            companies_found=created,
             companies=persisted,
             discovered_by_company_id={
                 company.id: discovered
@@ -307,7 +325,7 @@ def test_staged_prompt_semantics() -> None:
     )
     assert (
         EXTRACT_COMPANY_CANDIDATES_PROMPT.version == "v1"
-        and RANK_COMPANY_CANDIDATES_PROMPT.version == "v1"
+        and RANK_COMPANY_CANDIDATES_PROMPT.version == "v2"
     )
     assert (
         "optimizes for recall" in extraction and "do not rank companies" in extraction
@@ -319,6 +337,9 @@ def test_staged_prompt_semantics() -> None:
     assert (
         "do not discover additional companies" in ranking
         and "unstated knowledge" in ranking
+        and "every supplied candidate exactly once" in ranking
+        and "prioritization, not qualification" in ranking
+        and "absence of evidence is unknown" in ranking
     )
 
 
@@ -375,7 +396,7 @@ async def test_aggregation_merges_variants_and_keeps_single_mention() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ranking_receives_aggregates_limits_results_and_validates_urls() -> None:
+async def test_ranking_preserves_full_order_and_validates_urls() -> None:
     model = campaign()
     aggregate = [
         AggregatedCompanyCandidate(
@@ -384,12 +405,12 @@ async def test_ranking_receives_aggregates_limits_results_and_validates_urls() -
             supporting_urls=[f"https://{i}.example"],
             supporting_results=[SearchResult(title=str(i), url=f"https://{i}.example")],
         )
-        for i in range(10)
+        for i in range(15)
     ]
     research = ResearchFake(
         [
             found(f"Candidate {i}", [f"https://{i}.example", "https://wrong.example"])
-            for i in range(10)
+            for i in range(15)
         ]
     )
     output = await make_nodes(
@@ -400,7 +421,10 @@ async def test_ranking_receives_aggregates_limits_results_and_validates_urls() -
             "aggregated_company_candidates": aggregate,
         }
     )  # type: ignore[arg-type]
-    assert len(output["discovered_companies"]) == 9
+    assert len(output["discovered_companies"]) == 15
+    assert [item.name for item in output["discovered_companies"]] == [
+        f"Candidate {i}" for i in range(15)
+    ]
     assert output["discovered_companies"][0].supporting_urls == ["https://0.example"]
     assert (
         "Aggregated company candidates" in research.prompts[0]
@@ -409,7 +433,7 @@ async def test_ranking_receives_aggregates_limits_results_and_validates_urls() -
 
 
 @pytest.mark.asyncio
-async def test_workflow_investigates_only_ranked_companies() -> None:
+async def test_workflow_refills_ranked_companies_without_reranking() -> None:
     model = campaign()
     results = [
         SearchResult(title=f"Candidate {i}", url=f"https://source-{i}.example")
@@ -433,8 +457,122 @@ async def test_workflow_investigates_only_ranked_companies() -> None:
     )
     await workflow.run(model.id)
     assert service.targets == [f"Candidate {i}" for i in range(9)]
+    assert service.persist_company_calls == [
+        [f"Candidate {i}" for i in range(3)],
+        [f"Candidate {i}" for i in range(3, 6)],
+        [f"Candidate {i}" for i in range(6, 9)],
+    ]
+    assert research.models.count(DiscoveredCompanies) == 1
     assert research.models.count(GeneratedCompanySearchQueries) == 0
     assert len(workflow._nodes._web_fetch.calls) == 9
+    assert workflow._nodes._web_fetch.calls == [
+        f"https://source-{i}.example" for i in range(9)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_activation_refills_only_the_qualification_shortfall() -> None:
+    model = campaign()
+    model.target_count = 5
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    ranked = [found(f"Candidate {i}", []) for i in range(1, 16)]
+    state = {
+        "campaign_id": model.id,
+        "campaign": CampaignCriteria.model_validate(model),
+        "discovered_companies": ranked,
+        "companies_found": 0,
+        "research_companies": [],
+        "discovered_companies_by_id": {},
+        "investigations": {},
+        "company_qualifications": {},
+    }
+
+    state.update(await nodes.persist_companies(state))  # type: ignore[arg-type]
+    assert [company.name for company in state["research_companies"]] == [
+        f"Candidate {i}" for i in range(1, 6)
+    ]
+    assert len(state["active_company_ids"]) == 5
+
+    first_ids = [company.id for company in state["research_companies"]]
+    state["company_qualifications"] = {
+        company_id: CompanyQualification(
+            company_id=company_id,
+            status=(
+                CompanyQualificationStatus.QUALIFIED
+                if index < 2
+                else CompanyQualificationStatus.INSUFFICIENT_EVIDENCE
+            ),
+            criteria=[],
+        )
+        for index, company_id in enumerate(first_ids)
+    }
+    state.update(await nodes.persist_companies(state))  # type: ignore[arg-type]
+    assert [company.name for company in state["research_companies"][-3:]] == [
+        "Candidate 6",
+        "Candidate 7",
+        "Candidate 8",
+    ]
+    assert len(state["active_company_ids"]) == 3
+
+    refill_ids = [company.id for company in state["research_companies"][-3:]]
+    state["company_qualifications"].update(
+        {
+            refill_ids[0]: CompanyQualification(
+                refill_ids[0], CompanyQualificationStatus.QUALIFIED, []
+            ),
+            refill_ids[1]: CompanyQualification(
+                refill_ids[1], CompanyQualificationStatus.QUALIFIED, []
+            ),
+            refill_ids[2]: CompanyQualification(
+                refill_ids[2],
+                CompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
+                [],
+            ),
+        }
+    )
+    state.update(await nodes.persist_companies(state))  # type: ignore[arg-type]
+    assert [
+        company.name
+        for company in state["research_companies"]
+        if company.id in state["active_company_ids"]
+    ] == ["Candidate 9"]
+    assert len({company.id for company in state["research_companies"]}) == 9
+    assert nodes._research.persist_company_calls == [
+        [f"Candidate {i}" for i in range(1, 6)],
+        ["Candidate 6", "Candidate 7", "Candidate 8"],
+        ["Candidate 9"],
+    ]
+
+    candidate_nine_id = state["active_company_ids"][0]
+    state["company_qualifications"][candidate_nine_id] = CompanyQualification(
+        candidate_nine_id, CompanyQualificationStatus.QUALIFIED, []
+    )
+    assert route_candidate_pool(state) == "complete"  # type: ignore[arg-type]
+
+
+def test_candidate_pool_route_completes_when_exhausted_below_target() -> None:
+    model = campaign()
+    model.target_count = 5
+    ranked = [found(f"Candidate {i}", []) for i in range(1, 4)]
+    ids = [uuid4() for _ in ranked]
+    state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "discovered_companies": ranked,
+        "discovered_companies_by_id": dict(zip(ids, ranked, strict=True)),
+        "company_qualifications": {
+            company_id: CompanyQualification(
+                company_id,
+                (
+                    CompanyQualificationStatus.QUALIFIED
+                    if index == 0
+                    else CompanyQualificationStatus.INSUFFICIENT_EVIDENCE
+                ),
+                [],
+            )
+            for index, company_id in enumerate(ids)
+        },
+    }
+    assert route_candidate_pool(state) == "complete"  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

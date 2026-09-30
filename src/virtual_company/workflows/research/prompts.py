@@ -37,7 +37,7 @@ class QualificationEvidencePromptItem(Protocol):
 
 SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
 EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v1")
-RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v1")
+RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v2")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v3")
 EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v1")
 FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity(
@@ -109,14 +109,17 @@ def rank_company_candidates_system_prompt() -> str:
     """Return instructions for evidence-bound candidate prioritization."""
     return (
         "You are ranking an already extracted set of company candidates. Do not discover additional "
-        "companies. Do not remove a company merely because detailed downstream criteria are currently "
-        "unknown. Select the companies most worth additional investigation for the campaign. Rank using "
+        "companies. Return every supplied candidate exactly once where possible, ordered from most "
+        "promising to least promising for further investigation. This is prioritization, not "
+        "qualification. Do not remove or penalize a company merely because evidence for a campaign "
+        "criterion is absent; absence of evidence is unknown, not a mismatch. Rank using "
         "clear target-industry relevance, meaningful target geography or market connection, supporting "
         "source quality, identity clarity, multiple independent mentions when available, and company-size "
         "compatibility only when supplied evidence supports it. Unknown company size and technology stack "
-        "are not negatives. Do not use your own unstated knowledge to disqualify a company; technology "
-        "verification belongs to downstream investigation. Prefer plausible, well-supported companies. "
-        "Return up to the supplied discovery candidate limit. For each selected candidate, provide a concise "
+        "are not negatives. Use only the supplied discovery information; do not use your own unstated "
+        "knowledge to qualify or disqualify a company. Technology verification belongs to downstream "
+        "investigation. Prefer plausible, well-supported companies earlier in the ordering. For each "
+        "candidate, provide a concise "
         "discovery reason and zero to three supporting URLs chosen only from that candidate's supplied "
         "supporting URLs."
     )
@@ -125,13 +128,11 @@ def rank_company_candidates_system_prompt() -> str:
 def rank_company_candidates_user_prompt(
     campaign: CampaignCriteria,
     candidates: list[AggregatedCompanyCandidate],
-    candidate_limit: int,
 ) -> str:
     """Serialize compact, aggregated discovery evidence for ranking."""
     evidence = [candidate.model_dump() for candidate in candidates]
     return (
         f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"
-        f"Discovery candidate limit: {candidate_limit}\n\n"
         f"Aggregated company candidates:\n{json.dumps(evidence)}"
     )
 

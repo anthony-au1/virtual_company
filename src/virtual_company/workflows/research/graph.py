@@ -48,8 +48,6 @@ class ResearchWorkflow:
             web_search_max_results=resolved_settings.web_search_max_results,
             web_search_max_total_results=resolved_settings.web_search_max_total_results,
             web_search_concurrency=resolved_settings.web_search_concurrency,
-            discovery_candidate_multiplier=resolved_settings.discovery_candidate_multiplier,
-            discovery_candidate_max=resolved_settings.discovery_candidate_max,
             company_research_query_count=resolved_settings.company_research_query_count,
             company_research_max_results_per_query=(
                 resolved_settings.company_research_max_results_per_query
@@ -115,7 +113,7 @@ class ResearchWorkflow:
                         "company_qualifications": {},
                         "error": None,
                     },
-                    config={"recursion_limit": 100},
+                    config={"recursion_limit": 1_000},
                 )
         except Exception as error:
             observability.record(
@@ -290,7 +288,14 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     )
     graph.add_edge("generate_followup_queries", "search_company_sources")
     graph.add_edge("qualify_companies", "persist_company_qualifications")
-    graph.add_edge("persist_company_qualifications", "complete_research_run")
+    graph.add_conditional_edges(
+        "persist_company_qualifications",
+        route_candidate_pool,
+        {
+            "refill": "persist_companies",
+            "complete": "complete_research_run",
+        },
+    )
     graph.add_edge("complete_research_run", END)
     return graph.compile()
 
@@ -300,6 +305,17 @@ def route_investigation(state: ResearchWorkflowState) -> str:
     if not state["active_company_ids"]:
         return "done"
     return "follow_up" if state["company_search_started"] else "initial_search"
+
+
+def route_candidate_pool(state: ResearchWorkflowState) -> str:
+    """Refill from the ranked queue until target success or pool exhaustion."""
+    campaign = state["campaign"]
+    if campaign is None:
+        raise ValueError("Campaign was not loaded")
+    qualified_count = ResearchNodes._qualified_count(state)
+    if qualified_count >= campaign.target_count:
+        return "complete"
+    return "refill" if ResearchNodes._pending_ranked_companies(state) else "complete"
 
 
 def _with_failure_handling(
