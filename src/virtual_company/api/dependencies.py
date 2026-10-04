@@ -16,6 +16,7 @@ from virtual_company.services import (
     CampaignService,
     CompanyService,
     EvidenceService,
+    ResearchResultsService,
     ResearchService,
 )
 from virtual_company.tools import (
@@ -47,6 +48,13 @@ def get_evidence_service(session: SessionDependency) -> EvidenceService:
 def get_research_service(session: SessionDependency) -> ResearchService:
     """Build the persistence service used by the research workflow."""
     return ResearchService(session)
+
+
+def get_research_results_service(
+    session: SessionDependency,
+) -> ResearchResultsService:
+    """Build the product-facing research results service."""
+    return ResearchResultsService(session)
 
 
 def get_llm_provider() -> LLMProvider:

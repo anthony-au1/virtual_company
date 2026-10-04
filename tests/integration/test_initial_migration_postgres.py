@@ -57,12 +57,16 @@ async def test_initial_migration_creates_complete_schema() -> None:
                 assert "company_size_min" not in campaign_columns
                 assert "company_size_max" not in campaign_columns
                 qualification_columns = {
-                    column["name"]
+                    column["name"]: column
                     for column in inspector.get_columns(
                         "company_qualifications", schema=schema
                     )
                 }
                 assert "criteria_results" in qualification_columns
+                assert qualification_columns["review_status"]["nullable"] is False
+                assert "UNREVIEWED" in str(
+                    qualification_columns["review_status"]["default"]
+                )
 
             await connection.run_sync(verify)
             revision = (

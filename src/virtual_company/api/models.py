@@ -9,7 +9,16 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from virtual_company.domain.criteria import CompanySizeCriteria, TechnologyCriteria
+from virtual_company.domain.criteria import (
+    CompanySizeCriteria,
+    CriterionRequirement,
+    TechnologyCriteria,
+)
+from virtual_company.domain.qualification import (
+    CompanyQualificationStatus,
+    QualificationStatus,
+)
+from virtual_company.domain.review import ReviewStatus
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
 
 CampaignStatus = Literal["DRAFT", "RUNNING", "PAUSED", "COMPLETED", "FAILED"]
@@ -120,3 +129,122 @@ class EvidenceResponse(BaseModel):
     confidence: Decimal | None
     observed_at: datetime
     created_at: datetime
+
+
+class RequiredCriterionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    value: str | None
+    requirement: CriterionRequirement
+
+
+class CampaignCriteriaResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    target_market: RequiredCriterionResponse
+    industry: RequiredCriterionResponse
+    technologies: TechnologyCriteria
+    company_size: CompanySizeCriteria | None
+
+
+class ResearchResultCampaignResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    description: str | None
+    target_count: int
+    criteria: CampaignCriteriaResponse
+
+
+class ResearchRunResultResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    campaign_id: UUID
+    status: str
+    started_at: datetime
+    completed_at: datetime | None
+    error: str | None
+    companies_found: int
+    created_at: datetime
+
+
+class QualificationCountsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    matched: int
+    mismatched: int
+    unknown: int
+
+
+class CompanyCriterionSummaryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    required: QualificationCountsResponse
+    preferred: QualificationCountsResponse
+
+
+class ResearchSummaryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    researched: int
+    qualified: int
+    not_qualified: int
+    insufficient_evidence: int
+
+
+class CriterionEvidenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    claim: str
+    evidence_text: str
+    source_url: str
+    source_title: str | None
+    source_type: str | None
+
+
+class CriterionResultResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    criterion: str
+    subject: str | None
+    requirement: CriterionRequirement
+    status: QualificationStatus
+    reason: str
+    evidence: list[CriterionEvidenceResponse]
+
+
+class CompanyResearchResultResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    company_id: UUID
+    name: str
+    website: str | None
+    qualification_status: CompanyQualificationStatus
+    review_status: ReviewStatus
+    summary: CompanyCriterionSummaryResponse
+    criteria: list[CriterionResultResponse]
+
+
+class ResearchResultsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    research_run: ResearchRunResultResponse
+    campaign: ResearchResultCampaignResponse
+    summary: ResearchSummaryResponse
+    companies: list[CompanyResearchResultResponse]
+
+
+class ReviewUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: ReviewStatus
+
+
+class ReviewResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    company_id: UUID
+    review_status: ReviewStatus

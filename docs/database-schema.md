@@ -127,6 +127,7 @@ Table: `company_qualifications`
 | `campaign_id`      | UUID            | NO       | FK to campaign(id)                              |
 | `company_id`       | UUID            | NO       | FK to company(id)                               |
 | `status`           | VARCHAR(30)     | NO       | QUALIFIED, NOT_QUALIFIED, INSUFFICIENT_EVIDENCE |
+| `review_status`    | VARCHAR(30)     | NO       | UNREVIEWED, ACCEPTED, REJECTED                  |
 | `criteria_results` | JSONB           | NO       | Object containing a criteria array              |
 | `created_at`       | TIMESTAMPTZ     | NO       | Database timestamp, default now()               |
 
@@ -136,3 +137,7 @@ Each criterion includes criterion, subject, requirement, status, evidence_ids (U
 and reason. No Evidence content is copied. Retries replace status and JSON while
 preserving ID and created_at. Snapshots commit with research-run completion; no
 intermediate rounds or legacy-run backfill are stored.
+
+`review_status` defaults to `UNREVIEWED` and is a human decision scoped to the
+snapshot's `(research_run_id, company_id)`. Qualification snapshot upserts do not
+change it.

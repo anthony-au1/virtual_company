@@ -173,6 +173,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("status", sa.String(30), nullable=False),
+        sa.Column(
+            "review_status",
+            sa.String(30),
+            server_default="UNREVIEWED",
+            nullable=False,
+        ),
         sa.Column("criteria_results", postgresql.JSONB(), nullable=False),
         sa.Column(
             "created_at",

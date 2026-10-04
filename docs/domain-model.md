@@ -21,3 +21,10 @@ Any required mismatch makes a company `NOT_QUALIFIED`. Otherwise, any required
 unknown yields `INSUFFICIENT_EVIDENCE`. A company is `QUALIFIED` when every required
 criterion matches. Preferred results remain in the qualification snapshot but never
 change eligibility.
+
+# Human lead review
+
+Each final company qualification snapshot has an independent human review status:
+`UNREVIEWED`, `ACCEPTED`, or `REJECTED`. It belongs to one company within one
+research run, may move freely between all three values, and never changes automated
+qualification, criterion results, or evidence.

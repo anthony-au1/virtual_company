@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from virtual_company.db.models import ResearchRun
 from virtual_company.repositories._helpers import apply_updates, create_values
@@ -27,6 +28,16 @@ class ResearchRunRepository:
 
     async def get_by_id(self, research_run_id: UUID) -> ResearchRun | None:
         return await self._session.get(ResearchRun, research_run_id)
+
+    async def get_by_id_with_campaign(
+        self, research_run_id: UUID
+    ) -> ResearchRun | None:
+        statement = (
+            select(ResearchRun)
+            .options(selectinload(ResearchRun.campaign))
+            .where(ResearchRun.id == research_run_id)
+        )
+        return await self._session.scalar(statement)
 
     async def list(self) -> list[ResearchRun]:
         return list(await self._session.scalars(select(ResearchRun)))

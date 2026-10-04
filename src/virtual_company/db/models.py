@@ -22,6 +22,7 @@ from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from virtual_company.db.base import Base
+from virtual_company.domain.review import ReviewStatus
 
 
 class Campaign(Base):
@@ -191,6 +192,12 @@ class CompanyQualificationSnapshot(Base):
         PostgreSQLUUID(as_uuid=True), ForeignKey("company.id"), nullable=False
     )
     status: Mapped[str] = mapped_column(String(30), nullable=False)
+    review_status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default=ReviewStatus.UNREVIEWED.value,
+        server_default=ReviewStatus.UNREVIEWED.value,
+    )
     criteria_results: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

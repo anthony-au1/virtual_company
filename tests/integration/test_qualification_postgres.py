@@ -16,6 +16,7 @@ from virtual_company.db.models import (
     CompanyQualificationSnapshot,
     ResearchRun,
 )
+from virtual_company.domain.review import ReviewStatus
 from virtual_company.repositories.company_qualification import (
     CompanyQualificationRepository,
 )
@@ -107,11 +108,30 @@ async def test_committed_snapshots_are_idempotent_and_run_scoped() -> None:
             assert len(rows) == 3
             stored = next(row for row in rows if row.id == identity)
             assert stored.status == "INSUFFICIENT_EVIDENCE"
+            assert stored.review_status == "UNREVIEWED"
             assert stored.criteria_results == {"criteria": []}
             assert stored.created_at.tzinfo is not None
             assert all(
                 row.criteria_results == payload for row in rows if row.id != identity
             )
+            repository = CompanyQualificationRepository(session)
+            await repository.update_review_status(
+                research_run_id=run_a,
+                company_id=company_a,
+                review_status=ReviewStatus.ACCEPTED,
+            )
+            await session.commit()
+        async with sessions() as session:
+            accepted = await session.scalar(
+                select(CompanyQualificationSnapshot).where(
+                    CompanyQualificationSnapshot.research_run_id == run_a,
+                    CompanyQualificationSnapshot.company_id == company_a,
+                )
+            )
+            assert accepted is not None
+            assert accepted.review_status == "ACCEPTED"
+            assert accepted.status == "INSUFFICIENT_EVIDENCE"
+            assert accepted.criteria_results == {"criteria": []}
     finally:
         async with engine.begin() as connection:
             await connection.execute(DropSchema(schema, cascade=True, if_exists=True))
