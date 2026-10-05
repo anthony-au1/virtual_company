@@ -10,6 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from virtual_company.api.dependencies import get_research_results_service
 from virtual_company.api.models import (
     ResearchResultsResponse,
+    ResearchRunListCampaignResponse,
+    ResearchRunListItemResponse,
+    ResearchRunListSummaryResponse,
     ReviewResponse,
     ReviewUpdateRequest,
 )
@@ -39,9 +42,30 @@ async def get_research_results(
     return ResearchResultsResponse.model_validate(result)
 
 
-@router.patch(
-    "/{run_id}/companies/{company_id}/review", response_model=ReviewResponse
-)
+@router.get("", response_model=list[ResearchRunListItemResponse])
+async def list_research_runs(
+    service: ResearchResultsServiceDependency,
+) -> list[ResearchRunListItemResponse]:
+    """Return compact summaries for every persisted research run."""
+    return [
+        ResearchRunListItemResponse(
+            run_id=item.run_id,
+            status=item.status,
+            created_at=item.created_at,
+            started_at=item.started_at,
+            completed_at=item.completed_at,
+            campaign=ResearchRunListCampaignResponse(
+                id=item.campaign_id,
+                name=item.campaign_name,
+                target_count=item.target_count,
+            ),
+            summary=ResearchRunListSummaryResponse.model_validate(item.summary),
+        )
+        for item in await service.list_runs()
+    ]
+
+
+@router.patch("/{run_id}/companies/{company_id}/review", response_model=ReviewResponse)
 async def update_company_review(
     run_id: UUID,
     company_id: UUID,

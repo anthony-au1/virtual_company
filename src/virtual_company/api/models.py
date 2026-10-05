@@ -237,6 +237,33 @@ class ResearchResultsResponse(BaseModel):
     companies: list[CompanyResearchResultResponse]
 
 
+class ResearchRunListCampaignResponse(BaseModel):
+    id: UUID
+    name: str
+    target_count: int
+
+
+class ResearchRunListSummaryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    researched: int
+    qualified: int
+    not_qualified: int
+    insufficient_evidence: int
+    accepted: int
+    rejected: int
+    unreviewed: int
+
+
+class ResearchRunListItemResponse(BaseModel):
+    run_id: UUID
+    status: str
+    created_at: datetime
+    started_at: datetime
+    completed_at: datetime | None
+    campaign: ResearchRunListCampaignResponse
+    summary: ResearchRunListSummaryResponse
+
+
 class ReviewUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

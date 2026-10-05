@@ -16,10 +16,20 @@ from virtual_company.services import (
 
 
 class ResearchResultsServiceStub:
-    def __init__(self, *, results: object = None, review: object = None) -> None:
+    def __init__(
+        self,
+        *,
+        results: object = None,
+        review: object = None,
+        runs: list[object] | None = None,
+    ) -> None:
         self.results = results
         self.review = review
+        self.runs = runs or []
         self.review_args: dict[str, object] | None = None
+
+    async def list_runs(self) -> list[object]:
+        return self.runs
 
     async def get_results(self, _run_id: object) -> object:
         if isinstance(self.results, Exception):
@@ -66,9 +76,7 @@ def research_results() -> SimpleNamespace:
                 ),
                 industry=SimpleNamespace(value="fin tech", requirement="required"),
                 technologies={"required": ["java"], "preferred": ["kafka"]},
-                company_size={
-                    "min": {"value": 500, "requirement": "preferred"}
-                },
+                company_size={"min": {"value": 500, "requirement": "preferred"}},
             ),
         ),
         summary=SimpleNamespace(
@@ -132,9 +140,55 @@ def test_get_results_returns_complete_product_projection() -> None:
         "insufficient_evidence": 0,
     }
     assert body["companies"][0]["review_status"] == "UNREVIEWED"
-    assert body["companies"][0]["criteria"][0]["evidence"][0]["claim"] == (
-        "Uses Java"
+    assert body["companies"][0]["criteria"][0]["evidence"][0]["claim"] == ("Uses Java")
+
+
+def test_list_research_runs_returns_compact_run_summaries() -> None:
+    now = datetime.now(UTC)
+    run_id, campaign_id = uuid4(), uuid4()
+    item = SimpleNamespace(
+        run_id=run_id,
+        status="COMPLETED",
+        created_at=now,
+        started_at=now,
+        completed_at=now,
+        campaign_id=campaign_id,
+        campaign_name="Australian Fintech Java Research",
+        target_count=5,
+        summary=SimpleNamespace(
+            researched=10,
+            qualified=4,
+            not_qualified=3,
+            insufficient_evidence=3,
+            accepted=2,
+            rejected=1,
+            unreviewed=7,
+        ),
     )
+    app.dependency_overrides[get_research_results_service] = lambda: (
+        ResearchResultsServiceStub(runs=[item])
+    )
+
+    response = TestClient(app).get("/api/v1/research-runs")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["run_id"] == str(run_id)
+    assert body[0]["campaign"] == {
+        "id": str(campaign_id),
+        "name": "Australian Fintech Java Research",
+        "target_count": 5,
+    }
+    assert body[0]["summary"] == {
+        "researched": 10,
+        "qualified": 4,
+        "not_qualified": 3,
+        "insufficient_evidence": 3,
+        "accepted": 2,
+        "rejected": 1,
+        "unreviewed": 7,
+    }
 
 
 def test_patch_review_returns_updated_run_scoped_decision() -> None:
@@ -168,9 +222,7 @@ def test_get_results_maps_missing_run_to_not_found() -> None:
         )
     )
 
-    response = TestClient(app).get(
-        f"/api/v1/research-runs/{uuid4()}/results"
-    )
+    response = TestClient(app).get(f"/api/v1/research-runs/{uuid4()}/results")
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Research run not found"}

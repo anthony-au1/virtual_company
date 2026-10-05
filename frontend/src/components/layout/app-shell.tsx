@@ -1,4 +1,8 @@
+"use client";
+
 import { BriefcaseBusiness, Search, Users } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 import { Separator } from "@/components/ui/separator";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
@@ -11,6 +15,7 @@ const navigation = [
 ];
 
 export function AppShell({ children }: React.PropsWithChildren) {
+  const pathname = usePathname();
   return (
     <div className="grid min-h-screen grid-rows-[3.5rem_auto_1fr] md:grid-cols-[14rem_1fr] md:grid-rows-[3.5rem_1fr]">
       <header className="bg-background col-span-full flex items-center justify-between border-b px-4 md:px-5">
@@ -33,26 +38,46 @@ export function AppShell({ children }: React.PropsWithChildren) {
           <ul className="flex gap-1 overflow-x-auto md:flex-col">
             {navigation.map(({ label, icon: Icon }, index) => (
               <li key={label}>
-                <span
-                  aria-current={index === 0 ? "page" : undefined}
-                  aria-disabled="true"
-                  className={cn(
-                    "text-sidebar-foreground flex h-8 min-w-max cursor-default items-center gap-2 rounded-md px-2.5 text-sm",
-                    index === 0
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  <Icon aria-hidden="true" className="size-4" />
-                  {label}
-                </span>
+                {label === "Research" ? (
+                  <Link
+                    aria-current={
+                      pathname.startsWith("/research") ? "page" : undefined
+                    }
+                    className={cn(
+                      "text-sidebar-foreground flex h-8 min-w-max items-center gap-2 rounded-md px-2.5 text-sm",
+                      pathname.startsWith("/research")
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                        : "text-muted-foreground hover:bg-sidebar-accent/70",
+                    )}
+                    href="/research"
+                  >
+                    <Icon aria-hidden="true" className="size-4" />
+                    {label}
+                  </Link>
+                ) : (
+                  <span
+                    aria-current={
+                      index === 0 && pathname === "/" ? "page" : undefined
+                    }
+                    aria-disabled="true"
+                    className={cn(
+                      "text-sidebar-foreground flex h-8 min-w-max cursor-default items-center gap-2 rounded-md px-2.5 text-sm",
+                      index === 0 && pathname === "/"
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    <Icon aria-hidden="true" className="size-4" />
+                    {label}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
         </nav>
         <Separator className="hidden md:block" />
         <p className="text-muted-foreground hidden px-5 py-4 text-xs leading-relaxed md:block">
-          Product workflows will be added in upcoming iterations.
+          Research results and human review.
         </p>
       </aside>
 

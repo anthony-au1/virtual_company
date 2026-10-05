@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { ThemeProvider } from "next-themes";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next/navigation", () => ({ usePathname: () => "/" }));
 
 import { AppShell } from "@/components/layout/app-shell";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -21,6 +23,10 @@ describe("AppShell", () => {
     expect(
       screen.getByRole("navigation", { name: "Primary" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Research" })).toHaveAttribute(
+      "href",
+      "/research",
+    );
     expect(screen.getByText("Campaigns")).toHaveAttribute(
       "aria-disabled",
       "true",

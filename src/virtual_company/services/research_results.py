@@ -134,6 +134,30 @@ class ReviewResultView:
     review_status: ReviewStatus
 
 
+@dataclass(frozen=True)
+class ResearchRunListSummaryView:
+    researched: int
+    qualified: int
+    not_qualified: int
+    insufficient_evidence: int
+    accepted: int
+    rejected: int
+    unreviewed: int
+
+
+@dataclass(frozen=True)
+class ResearchRunListItemView:
+    run_id: UUID
+    status: str
+    created_at: datetime
+    started_at: datetime
+    completed_at: datetime | None
+    campaign_id: UUID
+    campaign_name: str
+    target_count: int
+    summary: ResearchRunListSummaryView
+
+
 class ResearchResultsService:
     """Build product-facing results exclusively from persisted workflow state."""
 
@@ -142,6 +166,23 @@ class ResearchResultsService:
         self._runs = ResearchRunRepository(session)
         self._qualifications = CompanyQualificationRepository(session)
         self._evidence = EvidenceRepository(session)
+
+    async def list_runs(self) -> list[ResearchRunListItemView]:
+        """Return compact run summaries without loading result criteria or evidence."""
+        return [
+            ResearchRunListItemView(
+                run_id=run.id,
+                status=run.status,
+                created_at=run.created_at,
+                started_at=run.started_at,
+                completed_at=run.completed_at,
+                campaign_id=campaign.id,
+                campaign_name=campaign.name,
+                target_count=campaign.target_count,
+                summary=ResearchRunListSummaryView(**counts),
+            )
+            for run, campaign, counts in await self._runs.list_with_summary()
+        ]
 
     async def get_results(self, research_run_id: UUID) -> ResearchResultsView:
         run = await self._runs.get_by_id_with_campaign(research_run_id)
@@ -245,9 +286,7 @@ class ResearchResultsService:
             ),
             summary=ResearchSummaryView(
                 researched=len(companies),
-                qualified=qualification_counts[
-                    CompanyQualificationStatus.QUALIFIED
-                ],
+                qualified=qualification_counts[CompanyQualificationStatus.QUALIFIED],
                 not_qualified=qualification_counts[
                     CompanyQualificationStatus.NOT_QUALIFIED
                 ],
@@ -273,9 +312,7 @@ class ResearchResultsService:
             review_status=review_status,
         )
         if snapshot is None:
-            raise ResearchCompanyNotFoundError(
-                "Company not found in research run"
-            )
+            raise ResearchCompanyNotFoundError("Company not found in research run")
         await self._session.commit()
         return ReviewResultView(
             company_id=snapshot.company_id,
