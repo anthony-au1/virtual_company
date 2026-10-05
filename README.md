@@ -1,8 +1,91 @@
-## Run
+# Virtual Consultancy
 
-docker compose up --build uv run alembic upgrade head
+Virtual Consultancy combines a FastAPI research backend with a Next.js frontend
+foundation for campaign, evidence, and lead workflows.
 
-uv run uvicorn virtual_company.main:app --reload
+## Prerequisites
+
+- Docker with Docker Compose for the complete local stack
+- Python 3.12 and `uv` for native backend development
+- Node.js 20.9 or newer, Corepack, and the pnpm version pinned in
+  `frontend/package.json` for native frontend development
+
+## Run the application
+
+Copy the backend environment example and provide any provider credentials needed by
+the workflows:
+
+```bash
+cp .env.example .env
+make start
+```
+
+The frontend is available at `http://localhost:3000`, and the FastAPI service remains
+available directly at `http://localhost:8000`. `make start` migrates the database and
+builds and starts the complete Compose stack. Use `make backend-up` when only FastAPI
+and PostgreSQL are needed, `make logs` to follow both application services, and
+`make down` to stop the stack and remove its local database volume.
+
+## Frontend development
+
+The frontend uses Next.js App Router, React 19, strict TypeScript, Tailwind CSS 4,
+shadcn/ui backed by Base UI, and Lucide icons. The recommended native workflow keeps
+Next.js hot reload outside Docker:
+
+```bash
+cp frontend/.env.example frontend/.env.local
+make backend-up
+make frontend-install
+make frontend-dev
+```
+
+Corepack reads the pinned pnpm version automatically. Equivalent raw commands can be
+run from `frontend/`, for example `corepack pnpm dev` or `corepack pnpm build`.
+
+`BACKEND_API_URL` is server-only. Native development points it at the backend's host
+address, while Compose uses the internal `http://app:8000` service address. Browser
+requests use the same-origin `/api/backend` proxy, so Docker hostnames and secrets are
+never exposed through `NEXT_PUBLIC_*`, and backend CORS is not required.
+
+The proxy and `apiFetch<T>` are transport foundations only; product-specific clients
+will be added with their screens. The intended contract workflow is:
+
+```text
+Pydantic backend DTOs -> OpenAPI -> generated TypeScript types/client -> frontend
+```
+
+Large backend DTOs should not be duplicated manually. Local component state is the
+current UI-state strategy. Add TanStack Query when polling, caching, refetching, and
+mutation invalidation become concrete requirements. Add React Hook Form with Zod when
+the first real product form is implemented; Zod is already available for schema and
+configuration validation.
+
+## Checks and builds
+
+Repository-level commands run the relevant backend and frontend checks:
+
+```bash
+make test
+make lint
+make check
+make build
+```
+
+Targeted frontend commands are also available:
+
+```bash
+make frontend-test
+make frontend-lint
+make frontend-format
+make frontend-format-check
+make frontend-build
+make frontend-e2e-install
+make frontend-e2e
+```
+
+`frontend-e2e-install` installs the Playwright Chromium binary once. The production
+frontend image uses Next.js standalone output and runs the built Node server rather
+than the development server.
 
 ## Observability
 

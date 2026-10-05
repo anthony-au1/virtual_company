@@ -1,5 +1,17 @@
 services:
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: virtual_company_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      BACKEND_API_URL: http://app:8000
+    depends_on:
+      - app
+
   app:
     build:
       context: .

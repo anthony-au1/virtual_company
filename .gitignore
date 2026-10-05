@@ -35,6 +35,13 @@ docker-compose.override.yml
 dist/
 build/
 *.egg-info/
+.pnpm-store/
+*.tsbuildinfo
+frontend/.next/
+frontend/coverage/
+frontend/node_modules/
+frontend/playwright-report/
+frontend/test-results/
 
 # uv
 .uv/
