@@ -381,12 +381,18 @@ class ResearchNodes:
             candidate_limit,
         )
         context = {
+            "aggregated_candidate_count": len(state["aggregated_company_candidates"]),
             "discovered_candidate_count": len(ranking_candidates),
             "unique_candidate_count": len(ranking_candidates),
+            "llm_submitted_candidate_count": len(ranking_candidates),
+            "llm_returned_candidate_count": len(response.companies),
             "ranked_candidate_count": len(companies),
             "ranked_pool_size": len(companies),
+            "ranked_pool_count": len(companies),
             "candidate_pool_limit": candidate_limit,
+            "calculated_candidate_limit": candidate_limit,
             "configured_candidate_pool_max": self._research_max_candidate_pool_size,
+            "configured_max_candidate_pool_size": self._research_max_candidate_pool_size,
             "target_count": campaign.target_count,
             "ranked_candidate_names": [company.name for company in companies],
         }
@@ -435,6 +441,8 @@ class ResearchNodes:
             qualified_count=qualified_count,
             target_count=campaign.target_count,
             pending_candidate_count=pending_count,
+            remaining_candidate_count=pending_count,
+            ranked_pool_count=len(state["discovered_companies"]),
         )
         return {
             "companies_found": state.get("companies_found", 0) + persisted.companies_found,

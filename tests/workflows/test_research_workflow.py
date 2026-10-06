@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from contextlib import nullcontext
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -285,6 +286,23 @@ class ResearchFake:
         return DiscoveredCompanies(companies=self.ranked)
 
 
+class ObservabilityFake:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    def context(self, **_: object):
+        return nullcontext()
+
+    def span(self, *_: object, **__: object):
+        return nullcontext()
+
+    def event(self, name: str, **context: object) -> None:
+        self.events.append((name, context))
+
+    def record(self, *_: object, **__: object) -> None:
+        pass
+
+
 def campaign() -> Campaign:
     return Campaign(
         id=uuid4(),
@@ -331,7 +349,7 @@ def test_staged_prompt_semantics() -> None:
     )
     assert (
         EXTRACT_COMPANY_CANDIDATES_PROMPT.version == "v1"
-        and RANK_COMPANY_CANDIDATES_PROMPT.version == "v3"
+        and RANK_COMPANY_CANDIDATES_PROMPT.version == "v4"
     )
     assert (
         "optimizes for recall" in extraction and "do not rank companies" in extraction
@@ -344,6 +362,9 @@ def test_staged_prompt_semantics() -> None:
         "do not discover additional companies" in ranking
         and "unstated knowledge" in ranking
         and "at most the supplied discovery candidate limit" in ranking
+        and "target_count" in ranking
+        and "discovery candidate limit controls that number exclusively" in ranking
+        and "exactly the discovery candidate limit" in ranking
         and "prioritization, not qualification" in ranking
         and "absence of evidence is unknown" in ranking
     )
@@ -437,6 +458,138 @@ async def test_ranking_bounds_pool_preserves_order_and_validates_urls() -> None:
         and "Discovery candidate limit: 15" in research.prompts[0]
         and "Search results:" not in research.prompts[0]
     )
+
+
+@pytest.mark.parametrize(
+    ("aggregated_count", "expected_ranked_count", "expected_activation_count"),
+    [(20, 10, 5), (7, 7, 5), (3, 3, 3)],
+)
+@pytest.mark.asyncio
+async def test_ranked_pool_limit_is_separate_from_initial_activation(
+    aggregated_count: int,
+    expected_ranked_count: int,
+    expected_activation_count: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import virtual_company.workflows.research.nodes as research_nodes_module
+
+    model = campaign()
+    model.target_count = 5
+    observability = ObservabilityFake()
+    monkeypatch.setattr(
+        research_nodes_module, "get_observability", lambda: observability
+    )
+    aggregate = [
+        AggregatedCompanyCandidate(
+            name=f"Candidate {index}",
+            mention_count=1,
+            supporting_urls=[f"https://{index}.example"],
+            supporting_results=[
+                SearchResult(title=str(index), url=f"https://{index}.example")
+            ],
+        )
+        for index in range(aggregated_count)
+    ]
+    research = ResearchFake(
+        [
+            found(candidate.name, candidate.supporting_urls)
+            for candidate in aggregate
+        ]
+    )
+    nodes = make_nodes(
+        ExtractionFake({}), research, model, max_candidate_pool_size=10
+    )
+
+    ranking = await nodes.rank_company_candidates(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "aggregated_company_candidates": aggregate,
+        }
+    )  # type: ignore[arg-type]
+    ranked = ranking["discovered_companies"]
+
+    assert len(ranked) == expected_ranked_count
+    assert f"Discovery candidate limit: {min(aggregated_count, 10)}" in research.prompts[0]
+
+    state = {
+        "campaign_id": model.id,
+        "campaign": CampaignCriteria.model_validate(model),
+        "discovered_companies": ranked,
+        "companies_found": 0,
+        "research_companies": [],
+        "discovered_companies_by_id": {},
+        "investigations": {},
+        "company_qualifications": {},
+    }
+    state.update(await nodes.persist_companies(state))  # type: ignore[arg-type]
+
+    assert len(state["research_companies"]) == expected_activation_count
+    assert len(nodes._pending_ranked_companies(state)) == (
+        expected_ranked_count - expected_activation_count
+    )
+    assert len(state["discovered_companies"]) == expected_ranked_count
+    activation_event = next(
+        context
+        for name, context in observability.events
+        if name == "company_candidates_activated"
+    )
+    assert activation_event["ranked_pool_count"] == expected_ranked_count
+    assert activation_event["initial_activation_count"] == expected_activation_count
+    assert activation_event["remaining_candidate_count"] == (
+        expected_ranked_count - expected_activation_count
+    )
+
+
+@pytest.mark.asyncio
+async def test_short_ranking_response_is_distinguishable_in_observability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import virtual_company.workflows.research.nodes as research_nodes_module
+
+    model = campaign()
+    model.target_count = 5
+    aggregate = [
+        AggregatedCompanyCandidate(
+            name=f"Candidate {index}",
+            mention_count=1,
+            supporting_urls=[f"https://{index}.example"],
+            supporting_results=[
+                SearchResult(title=str(index), url=f"https://{index}.example")
+            ],
+        )
+        for index in range(20)
+    ]
+    observability = ObservabilityFake()
+    monkeypatch.setattr(
+        research_nodes_module, "get_observability", lambda: observability
+    )
+    research = ResearchFake(
+        [
+            found(candidate.name, candidate.supporting_urls)
+            for candidate in aggregate[:5]
+        ]
+    )
+
+    output = await make_nodes(
+        ExtractionFake({}), research, model, max_candidate_pool_size=10
+    ).rank_company_candidates(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "aggregated_company_candidates": aggregate,
+        }
+    )  # type: ignore[arg-type]
+
+    ranked_event = next(
+        context
+        for name, context in observability.events
+        if name == "company_candidates_ranked"
+    )
+    assert len(output["discovered_companies"]) == 5
+    assert ranked_event["aggregated_candidate_count"] == 20
+    assert ranked_event["candidate_pool_limit"] == 10
+    assert ranked_event["target_count"] == 5
+    assert ranked_event["llm_returned_candidate_count"] == 5
+    assert ranked_event["ranked_pool_count"] == 5
 
 
 @pytest.mark.asyncio

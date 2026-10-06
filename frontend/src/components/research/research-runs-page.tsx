@@ -8,8 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { listResearchRuns } from "@/lib/api/research";
-
-export const researchRunsQueryKey = ["research-runs"] as const;
+import { researchRunsQueryKey } from "@/lib/queries/query-keys";
 
 export function ResearchRunsPage() {
   const query = useQuery({

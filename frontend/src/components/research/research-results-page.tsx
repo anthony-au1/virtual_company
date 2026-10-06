@@ -28,9 +28,7 @@ import {
   updateCompanyReview,
 } from "@/lib/api/research";
 import { cn } from "@/lib/utils";
-
-export const researchRunResultsQueryKey = (runId: string) =>
-  ["research-run-results", runId] as const;
+import { researchRunResultsQueryKey } from "@/lib/queries/query-keys";
 
 const filters = [
   "ALL",

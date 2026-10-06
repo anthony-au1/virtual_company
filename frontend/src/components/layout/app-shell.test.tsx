@@ -27,9 +27,9 @@ describe("AppShell", () => {
       "href",
       "/research",
     );
-    expect(screen.getByText("Campaigns")).toHaveAttribute(
-      "aria-disabled",
-      "true",
+    expect(screen.getByRole("link", { name: "Campaigns" })).toHaveAttribute(
+      "href",
+      "/campaigns",
     );
     expect(
       screen.getByRole("heading", { name: "Foundation content" }),

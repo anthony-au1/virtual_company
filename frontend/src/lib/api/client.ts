@@ -11,6 +11,39 @@ export class ApiError extends Error {
   }
 }
 
+type ValidationDetail = {
+  loc?: Array<string | number>;
+  msg?: string;
+};
+
+export function apiErrorMessages(error: unknown): string[] {
+  if (!(error instanceof ApiError)) {
+    return [error instanceof Error ? error.message : "Request failed."];
+  }
+
+  if (
+    error.payload &&
+    typeof error.payload === "object" &&
+    "detail" in error.payload
+  ) {
+    const { detail } = error.payload;
+    if (typeof detail === "string") return [detail];
+    if (Array.isArray(detail)) {
+      const messages = detail.flatMap((item: ValidationDetail) => {
+        if (typeof item?.msg !== "string") return [];
+        const path = (item.loc ?? [])
+          .filter((part) => part !== "body")
+          .map(String)
+          .join(" → ");
+        return [path ? `${path}: ${item.msg}` : item.msg];
+      });
+      if (messages.length) return messages;
+    }
+  }
+
+  return [error.message];
+}
+
 export type ApiFetchOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
 };

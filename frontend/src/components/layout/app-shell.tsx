@@ -9,8 +9,8 @@ import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { cn } from "@/lib/utils";
 
 const navigation = [
-  { label: "Campaigns", icon: BriefcaseBusiness },
-  { label: "Research", icon: Search },
+  { label: "Campaigns", icon: BriefcaseBusiness, href: "/campaigns" },
+  { label: "Research", icon: Search, href: "/research" },
   { label: "Leads", icon: Users },
 ];
 
@@ -36,35 +36,30 @@ export function AppShell({ children }: React.PropsWithChildren) {
       <aside className="bg-sidebar border-b md:border-r md:border-b-0">
         <nav aria-label="Primary" className="p-2 md:p-3">
           <ul className="flex gap-1 overflow-x-auto md:flex-col">
-            {navigation.map(({ label, icon: Icon }, index) => (
+            {navigation.map(({ label, icon: Icon, href }) => (
               <li key={label}>
-                {label === "Research" ? (
+                {href ? (
                   <Link
                     aria-current={
-                      pathname.startsWith("/research") ? "page" : undefined
+                      pathname.startsWith(href) ? "page" : undefined
                     }
                     className={cn(
                       "text-sidebar-foreground flex h-8 min-w-max items-center gap-2 rounded-md px-2.5 text-sm",
-                      pathname.startsWith("/research")
+                      pathname.startsWith(href)
                         ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
                         : "text-muted-foreground hover:bg-sidebar-accent/70",
                     )}
-                    href="/research"
+                    href={href}
                   >
                     <Icon aria-hidden="true" className="size-4" />
                     {label}
                   </Link>
                 ) : (
                   <span
-                    aria-current={
-                      index === 0 && pathname === "/" ? "page" : undefined
-                    }
                     aria-disabled="true"
                     className={cn(
                       "text-sidebar-foreground flex h-8 min-w-max cursor-default items-center gap-2 rounded-md px-2.5 text-sm",
-                      index === 0 && pathname === "/"
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                        : "text-muted-foreground",
+                      "text-muted-foreground",
                     )}
                   >
                     <Icon aria-hidden="true" className="size-4" />
@@ -77,7 +72,7 @@ export function AppShell({ children }: React.PropsWithChildren) {
         </nav>
         <Separator className="hidden md:block" />
         <p className="text-muted-foreground hidden px-5 py-4 text-xs leading-relaxed md:block">
-          Research results and human review.
+          Campaign setup, research runs, and human review.
         </p>
       </aside>
 

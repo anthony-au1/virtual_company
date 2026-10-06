@@ -37,7 +37,7 @@ class QualificationEvidencePromptItem(Protocol):
 
 SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
 EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v1")
-RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v3")
+RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v4")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v3")
 EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v1")
 FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity(
@@ -111,7 +111,9 @@ def rank_company_candidates_system_prompt() -> str:
         "You are ranking an already extracted set of company candidates. Do not discover additional "
         "companies. Select only from the supplied candidates and return at most the supplied discovery "
         "candidate limit, ordered from most promising to least promising for further investigation. "
-        "When enough valid candidates are supplied, return exactly that many. This is prioritization, not "
+        "The campaign target_count in the criteria does not control how many candidates this ranking step "
+        "returns; the Discovery candidate limit controls that number exclusively. When at least that many "
+        "valid candidates are supplied, return exactly the Discovery candidate limit. This is prioritization, not "
         "qualification. Do not remove or penalize a company merely because evidence for a campaign "
         "criterion is absent; absence of evidence is unknown, not a mismatch. Rank using "
         "clear target-industry relevance, meaningful target geography or market connection, supporting "
