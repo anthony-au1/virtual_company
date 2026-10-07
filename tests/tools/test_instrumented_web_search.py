@@ -7,15 +7,18 @@ import pytest
 from virtual_company.research.models import SearchResult, WebPage
 from virtual_company.tools.instrumented_web_fetch import InstrumentedWebFetchTool
 from virtual_company.tools.instrumented_web_search import InstrumentedWebSearchTool
+from virtual_company.tools.web_search import SearchResponse, SearchUsage
 
 
 class ObservabilityFake:
     def __init__(self) -> None:
         self.events: list[str] = []
+        self.event_contexts: list[tuple[str, dict[str, object]]] = []
         self.metrics: list[tuple[str, dict[str, object]]] = []
 
-    def event(self, name: str, **_context: object) -> None:
+    def event(self, name: str, **context: object) -> None:
         self.events.append(name)
+        self.event_contexts.append((name, context))
 
     def record(self, name: str, _value: float = 1, **attributes: object) -> None:
         self.metrics.append((name, attributes))
@@ -55,8 +58,35 @@ async def test_instrumented_search_records_low_cardinality_metrics() -> None:
     await tool.search("not a metric attribute", limit=1)
 
     assert observability.events == ["web_search_started", "web_search_completed"]
-    assert ("web_search_requests_total", {"status": "completed", "provider": "tavily", "search_depth": "basic"}) in observability.metrics
-    assert ("web_search_results_total", {"provider": "tavily", "search_depth": "basic"}) in observability.metrics
+    assert (
+        "web_search_requests_total",
+        {"status": "completed", "provider": "tavily", "search_depth": "basic"},
+    ) in observability.metrics
+    assert (
+        "web_search_results_total",
+        {"provider": "tavily", "search_depth": "basic"},
+    ) in observability.metrics
+
+
+@pytest.mark.asyncio
+async def test_instrumented_search_emits_provider_usage_as_actual() -> None:
+    class UsageToolFake(ToolFake):
+        async def search(self, _query: str, _limit: int) -> SearchResponse:
+            return SearchResponse(
+                results=[SearchResult(title="Acme", url="https://acme.example")],
+                usage=SearchUsage(amount=2, unit="credits", is_actual=True),
+            )
+
+    observability = ObservabilityFake()
+    tool = InstrumentedWebSearchTool(
+        UsageToolFake(),
+        observability=observability,  # type: ignore[arg-type]
+    )
+
+    response = await tool.search("query", limit=1)
+
+    assert response.usage == SearchUsage(amount=2, unit="credits", is_actual=True)
+    assert any(name == "web_search_usage_reported" for name in observability.events)
 
 
 @pytest.mark.asyncio

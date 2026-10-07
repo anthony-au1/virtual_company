@@ -50,7 +50,7 @@ from virtual_company.tools.web_fetch import (
     WebFetchTimeoutError,
     WebFetchTool,
 )
-from virtual_company.tools.web_search import WebSearchTool
+from virtual_company.tools.web_search import SearchResponse, WebSearchTool
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
@@ -218,12 +218,17 @@ class ResearchNodes:
     ) -> dict[str, list[SearchResult]]:
         """Search queries with bounded concurrency, then deduplicate by URL."""
         semaphore = asyncio.Semaphore(self._web_search_concurrency)
+        observability = get_observability()
 
         async def search_query(query: str) -> list[SearchResult]:
-            async with semaphore:
-                return await self._web_search.search(
-                    query, limit=self._web_search_max_results
-                )
+            with observability.context(search_phase="discovery"):
+                async with semaphore:
+                    response = await self._web_search.search(
+                        query, limit=self._web_search_max_results
+                    )
+            return (
+                response.results if isinstance(response, SearchResponse) else response
+            )
 
         result_groups = await asyncio.gather(
             *(search_query(query) for query in state["queries"])
@@ -720,13 +725,21 @@ class ResearchNodes:
         async def search_company_query(
             company: ResearchCompany, query: str
         ) -> list[SearchResult]:
+            investigation = state.get("investigations", {}).get(company.id)
+            round_number = investigation.round if investigation is not None else 1
+            search_phase = "investigation" if round_number <= 1 else "followup"
             with observability.context(
-                company_id=str(company.id), company_domain=company.domain
+                company_id=str(company.id),
+                company_domain=company.domain,
+                search_phase=search_phase,
             ):
                 async with semaphore:
-                    return await self._web_search.search(
+                    response = await self._web_search.search(
                         query, limit=self._company_research_max_results_per_query
                     )
+            return (
+                response.results if isinstance(response, SearchResponse) else response
+            )
 
         result_groups = await asyncio.gather(
             *(search_company_query(company, query) for company, query in work)
@@ -924,20 +937,24 @@ class ResearchNodes:
                 except asyncio.QueueEmpty:
                     return
                 try:
+                    normalized_url = self._source_state_key(source.url)
+                    attempt_number = (
+                        investigations[company_id].transient_fetch_failures.get(
+                            normalized_url, 0
+                        )
+                        + 1
+                    )
                     with observability.context(
-                        company_id=str(company_id), source_url=source.url
+                        company_id=str(company_id),
+                        source_url=source.url,
+                        fetch_attempt=attempt_number,
+                        fetch_retry=attempt_number > 1,
                     ):
                         page = await self._web_fetch.fetch(source.url)
                     successes[(company_id, index)] = page.model_copy(
                         update={"title": page.title or source.title}
                     )
                 except WebFetchError as error:
-                    normalized_url = self._source_state_key(source.url)
-                    attempt_number = (
-                        investigations[company_id]
-                        .transient_fetch_failures.get(normalized_url, 0)
-                        + 1
-                    )
                     retryable = self._fetch_error_is_retryable(error)
                     retry_remaining = retryable and attempt_number < 2
                     observability.event(

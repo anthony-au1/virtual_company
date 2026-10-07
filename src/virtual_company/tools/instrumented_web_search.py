@@ -5,20 +5,21 @@ from __future__ import annotations
 from time import perf_counter
 
 from virtual_company.observability import Observability, get_observability
-from virtual_company.research.models import SearchResult
-from virtual_company.tools.web_search import WebSearchTool
+from virtual_company.tools.web_search import SearchResponse, WebSearchTool
 
 
 class InstrumentedWebSearchTool:
     """Record one correlated span and bounded metrics per provider request."""
 
-    def __init__(self, tool: WebSearchTool, observability: Observability | None = None) -> None:
+    def __init__(
+        self, tool: WebSearchTool, observability: Observability | None = None
+    ) -> None:
         self._tool = tool
         self._observability = observability or get_observability()
         self.provider = getattr(tool, "provider", "unknown")
         self._search_depth = getattr(tool, "search_depth", None)
 
-    async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+    async def search(self, query: str, limit: int = 10) -> SearchResponse:
         """Search while recording provider-level timing and result-count telemetry."""
         metadata = {"provider": self.provider}
         if self._search_depth is not None:
@@ -27,25 +28,56 @@ class InstrumentedWebSearchTool:
         started = perf_counter()
         try:
             with self._observability.span("web_search", **metadata):
-                results = await self._tool.search(query, limit)
+                response = await self._tool.search(query, limit)
         except Exception as error:
             duration = perf_counter() - started
-            self._observability.record("web_search_requests_total", status="failed", **metadata)
+            self._observability.record(
+                "web_search_requests_total", status="failed", **metadata
+            )
             self._observability.record("web_search_request_failures_total", **metadata)
             self._observability.record(
-                "web_search_request_duration_seconds", duration, status="failed", **metadata
+                "web_search_request_duration_seconds",
+                duration,
+                status="failed",
+                **metadata,
             )
             self._observability.event(
-                "web_search_failed", duration_ms=int(duration * 1000), error_type=type(error).__name__, **metadata
+                "web_search_failed",
+                duration_ms=int(duration * 1000),
+                error_type=type(error).__name__,
+                **metadata,
             )
             raise
         duration = perf_counter() - started
-        self._observability.record("web_search_requests_total", status="completed", **metadata)
         self._observability.record(
-            "web_search_request_duration_seconds", duration, status="completed", **metadata
+            "web_search_requests_total", status="completed", **metadata
         )
-        self._observability.record("web_search_results_total", len(results), **metadata)
+        self._observability.record(
+            "web_search_request_duration_seconds",
+            duration,
+            status="completed",
+            **metadata,
+        )
+        if isinstance(response, SearchResponse):
+            search_response = response
+        else:
+            # Accept older/custom providers while they migrate to SearchResponse.
+            search_response = SearchResponse(results=response)  # type: ignore[arg-type]
+        self._observability.record(
+            "web_search_results_total", len(search_response.results), **metadata
+        )
         self._observability.event(
-            "web_search_completed", duration_ms=int(duration * 1000), result_count=len(results), **metadata
+            "web_search_completed",
+            duration_ms=int(duration * 1000),
+            result_count=len(search_response.results),
+            **metadata,
         )
-        return results
+        if search_response.usage is not None:
+            self._observability.event(
+                "web_search_usage_reported",
+                usage_amount=search_response.usage.amount,
+                usage_unit=search_response.usage.unit,
+                usage_is_actual=search_response.usage.is_actual,
+                **metadata,
+            )
+        return search_response

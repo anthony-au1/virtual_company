@@ -89,9 +89,27 @@ than the development server.
 
 ## Observability
 
-Application events use standard logging (`LOG_FORMAT=console` locally or `json` for
-machine-readable output). OpenTelemetry records workflow, node, HTTP, and LLM spans
-plus lightweight metrics. Langfuse is optional and disabled by default.
+Application events use structured JSON logs by default, with UTC timestamps and
+campaign/run correlation fields. OpenTelemetry records workflow, node, HTTP, and LLM
+spans plus lightweight metrics. Langfuse is optional and disabled by default.
+
+The Research Workflow reports read the app container's retained Docker logs and
+select the latest completed run by default:
+
+```bash
+make research-observability
+make research-cost
+make research-log
+```
+
+Select a particular execution with `make research-observability RUN_ID=<uuid>` or
+filter for the latest completed run of a campaign with
+`make research-cost CAMPAIGN_ID=<uuid>`. Tavily credits are displayed only when
+the provider reports actual usage; unavailable credits and LLM token counts are
+shown as `N/A`.
+
+If you already have a `.env` file created before JSON became the default, set
+`LOG_FORMAT=json` there and restart the app container before collecting new runs.
 
 To enable Langfuse locally, set `LANGFUSE_ENABLED=true` plus its public/secret keys
 and base URL in `.env`, then restart the app. Prompts and structured outputs are not

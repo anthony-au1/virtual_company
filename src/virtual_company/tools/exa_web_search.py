@@ -10,6 +10,7 @@ from pydantic import SecretStr
 
 from virtual_company.research.models import SearchResult
 from virtual_company.tools.web_search import (
+    SearchResponse,
     WebSearchAuthenticationError,
     WebSearchConfigurationError,
     WebSearchError,
@@ -35,7 +36,7 @@ class ExaWebSearchTool:
             )
         self._client = client or AsyncExa(api_key=resolved_api_key)
 
-    async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+    async def search(self, query: str, limit: int = 10) -> SearchResponse:
         """Return Exa's auto-ranked results with short source highlights only."""
         try:
             response = await self._client.search(
@@ -55,12 +56,14 @@ class ExaWebSearchTool:
             raise WebSearchError("Exa web search failed") from error
         except Exception as error:
             raise WebSearchError("Exa web search failed") from error
-        return [
-            SearchResult(
-                title=result.title or "",
-                url=result.url,
-                snippet="\n".join(result.highlights) if result.highlights else None,
-            )
-            for result in response.results
-            if result.url
-        ]
+        return SearchResponse(
+            results=[
+                SearchResult(
+                    title=result.title or "",
+                    url=result.url,
+                    snippet="\n".join(result.highlights) if result.highlights else None,
+                )
+                for result in response.results
+                if result.url
+            ]
+        )

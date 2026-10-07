@@ -79,6 +79,10 @@ class Observability:
         )
         _context.set(current)
 
+    def clear_context(self) -> None:
+        """Clear event correlation before beginning an independent workflow run."""
+        _context.set({})
+
     @contextmanager
     def context(self, **values: str | None) -> Generator[None, None, None]:
         """Temporarily enrich correlated telemetry without leaking values to later work."""

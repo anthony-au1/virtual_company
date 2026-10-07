@@ -15,6 +15,7 @@ from virtual_company.tools.instrumented_web_search import InstrumentedWebSearchT
 from virtual_company.tools.registry import create_web_search_tool
 from virtual_company.tools.tavily_web_search import TavilyWebSearchTool
 from virtual_company.tools.web_search import (
+    SearchResponse,
     WebSearchAuthenticationError,
     WebSearchConfigurationError,
     WebSearchRateLimitError,
@@ -48,13 +49,19 @@ class ExaClientFake:
 @pytest.mark.asyncio
 async def test_tavily_maps_compact_results_and_forwards_limit() -> None:
     client = TavilyClientFake(
-        {"results": [{"title": "Acme", "url": "https://acme.example", "content": "Fintech"}]}
+        {
+            "results": [
+                {"title": "Acme", "url": "https://acme.example", "content": "Fintech"}
+            ]
+        }
     )
     tool = TavilyWebSearchTool(api_key="test-key", search_depth="basic", client=client)
 
-    assert await tool.search("Australian fintech", limit=7) == [
-        SearchResult(title="Acme", url="https://acme.example", snippet="Fintech")
-    ]
+    assert await tool.search("Australian fintech", limit=7) == SearchResponse(
+        results=[
+            SearchResult(title="Acme", url="https://acme.example", snippet="Fintech")
+        ]
+    )
     assert client.calls == [
         {
             "query": "Australian fintech",
@@ -64,14 +71,17 @@ async def test_tavily_maps_compact_results_and_forwards_limit() -> None:
             "include_answer": False,
             "include_raw_content": False,
             "include_images": False,
+            "include_usage": True,
         }
     ]
 
 
 @pytest.mark.asyncio
 async def test_tavily_empty_response_and_known_failures() -> None:
-    empty = TavilyWebSearchTool(api_key="test-key", client=TavilyClientFake({"results": []}))
-    assert await empty.search("nothing") == []
+    empty = TavilyWebSearchTool(
+        api_key="test-key", client=TavilyClientFake({"results": []})
+    )
+    assert (await empty.search("nothing")).results == []
 
     auth = TavilyWebSearchTool(
         api_key="test-key", client=TavilyClientFake(InvalidAPIKeyError("bad key"))
@@ -90,13 +100,15 @@ async def test_tavily_empty_response_and_known_failures() -> None:
 async def test_exa_maps_highlights_and_forwards_limit() -> None:
     response = SimpleNamespace(
         results=[
-            SimpleNamespace(title="Acme", url="https://acme.example", highlights=["Fintech", "Java"])
+            SimpleNamespace(
+                title="Acme", url="https://acme.example", highlights=["Fintech", "Java"]
+            )
         ]
     )
     client = ExaClientFake(response)
     tool = ExaWebSearchTool(api_key="test-key", client=client)
 
-    assert await tool.search("Australian fintech", limit=6) == [
+    assert (await tool.search("Australian fintech", limit=6)).results == [
         SearchResult(title="Acme", url="https://acme.example", snippet="Fintech\nJava")
     ]
     assert client.calls == [
@@ -113,17 +125,21 @@ async def test_exa_maps_highlights_and_forwards_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_exa_empty_response_and_known_failures() -> None:
-    empty = ExaWebSearchTool(api_key="test-key", client=ExaClientFake(SimpleNamespace(results=[])))
-    assert await empty.search("nothing") == []
+    empty = ExaWebSearchTool(
+        api_key="test-key", client=ExaClientFake(SimpleNamespace(results=[]))
+    )
+    assert (await empty.search("nothing")).results == []
 
     auth = ExaWebSearchTool(
-        api_key="test-key", client=ExaClientFake(ValueError("Request failed with status code 401"))
+        api_key="test-key",
+        client=ExaClientFake(ValueError("Request failed with status code 401")),
     )
     with pytest.raises(WebSearchAuthenticationError, match="authentication"):
         await auth.search("query")
 
     limited = ExaWebSearchTool(
-        api_key="test-key", client=ExaClientFake(ValueError("Request failed with status code 429"))
+        api_key="test-key",
+        client=ExaClientFake(ValueError("Request failed with status code 429")),
     )
     with pytest.raises(WebSearchRateLimitError, match="rate limit"):
         await limited.search("query")
@@ -135,20 +151,51 @@ async def test_exa_empty_response_and_known_failures() -> None:
     [
         TavilyWebSearchTool(
             api_key="test-key",
-            client=TavilyClientFake({"results": [{"title": "T", "url": "https://t.example"}]}),
+            client=TavilyClientFake(
+                {"results": [{"title": "T", "url": "https://t.example"}]}
+            ),
         ),
         ExaWebSearchTool(
             api_key="test-key",
             client=ExaClientFake(
-                SimpleNamespace(results=[SimpleNamespace(title="E", url="https://e.example", highlights=None)])
+                SimpleNamespace(
+                    results=[
+                        SimpleNamespace(
+                            title="E", url="https://e.example", highlights=None
+                        )
+                    ]
+                )
             ),
         ),
     ],
 )
-async def test_provider_contract_returns_application_search_results(tool: object) -> None:
+async def test_provider_contract_returns_application_search_results(
+    tool: object,
+) -> None:
     results = await tool.search("query", limit=1)  # type: ignore[union-attr]
     assert all(isinstance(result, SearchResult) for result in results)
     assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_tavily_exposes_provider_reported_credit_usage() -> None:
+    client = TavilyClientFake(
+        {
+            "results": [],
+            "usage": {"credits": 3},
+        }
+    )
+    tool = TavilyWebSearchTool(api_key="test-key", client=client)
+
+    response = await tool.search("query")
+
+    assert response.results == []
+    assert response.usage is not None
+    assert (response.usage.amount, response.usage.unit, response.usage.is_actual) == (
+        3.0,
+        "credits",
+        True,
+    )
 
 
 def test_factory_selects_only_configured_provider_and_validates_key() -> None:

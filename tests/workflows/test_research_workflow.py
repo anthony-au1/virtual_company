@@ -2019,6 +2019,38 @@ async def test_qualification_failure_marks_run_failed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_workflow_node_events_bind_campaign_and_research_run_ids(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from virtual_company.observability import get_observability
+    from virtual_company.workflows.research.graph import _with_failure_handling
+
+    observability = get_observability()
+    observability.clear_context()
+    service = ResearchServiceFake()
+
+    async def node(_: dict) -> dict[str, object]:
+        observability.event("test_operation")
+        return {}
+
+    wrapped = _with_failure_handling(node, "test_node", service)
+    run_id, campaign_id = uuid4(), uuid4()
+    with caplog.at_level(logging.INFO, logger="virtual_company.observability.runtime"):
+        await wrapped({"campaign_id": campaign_id, "research_run_id": run_id})
+
+    relevant = [
+        record
+        for record in caplog.records
+        if record.getMessage() in {"workflow_node_started", "test_operation"}
+    ]
+    assert len(relevant) == 2
+    assert all(record.context["campaign_id"] == str(campaign_id) for record in relevant)
+    assert all(record.context["research_run_id"] == str(run_id) for record in relevant)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "invalid", ["missing_result", "wrong_company", "active", "missing_run"]
 )

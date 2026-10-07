@@ -10,6 +10,8 @@ from tavily import AsyncTavilyClient, InvalidAPIKeyError, UsageLimitExceededErro
 
 from virtual_company.research.models import SearchResult
 from virtual_company.tools.web_search import (
+    SearchResponse,
+    SearchUsage,
     WebSearchAuthenticationError,
     WebSearchConfigurationError,
     WebSearchError,
@@ -38,7 +40,7 @@ class TavilyWebSearchTool:
         self.search_depth = search_depth
         self._client = client or AsyncTavilyClient(api_key=resolved_api_key)
 
-    async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+    async def search(self, query: str, limit: int = 10) -> SearchResponse:
         """Return Tavily-ranked search results without generated answers or page text."""
         try:
             response = await self._client.search(
@@ -49,6 +51,7 @@ class TavilyWebSearchTool:
                 include_answer=False,
                 include_raw_content=False,
                 include_images=False,
+                include_usage=True,
             )
         except InvalidAPIKeyError as error:
             raise WebSearchAuthenticationError("Tavily authentication failed") from error
@@ -58,12 +61,23 @@ class TavilyWebSearchTool:
             raise WebSearchTimeoutError("Tavily web search timed out") from error
         except Exception as error:
             raise WebSearchError("Tavily web search failed") from error
-        return [
-            SearchResult(
-                title=result.get("title") or "",
-                url=result["url"],
-                snippet=result.get("content"),
-            )
-            for result in response.get("results", [])
-            if result.get("url")
-        ]
+        raw_usage = response.get("usage")
+        raw_credits = raw_usage.get("credits") if isinstance(raw_usage, dict) else None
+        usage = (
+            SearchUsage(amount=float(raw_credits), unit="credits", is_actual=True)
+            if isinstance(raw_credits, (int, float))
+            and not isinstance(raw_credits, bool)
+            else None
+        )
+        return SearchResponse(
+            results=[
+                SearchResult(
+                    title=result.get("title") or "",
+                    url=result["url"],
+                    snippet=result.get("content"),
+                )
+                for result in response.get("results", [])
+                if result.get("url")
+            ],
+            usage=usage,
+        )

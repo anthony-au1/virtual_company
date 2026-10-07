@@ -5,7 +5,10 @@ WAIT_ATTEMPTS ?= 30
 .PHONY: start up backend-up migrate wait-for-db down logs build check \
 	test lint backend-test backend-lint frontend-install frontend-dev \
 	frontend-build frontend-test frontend-lint frontend-format \
-	frontend-format-check frontend-e2e-install frontend-e2e
+	frontend-format-check frontend-e2e-install frontend-e2e \
+	research-observability research-cost research-log
+
+RESEARCH_REPORT_ARGS = $(if $(RUN_ID),--run-id $(RUN_ID),) $(if $(CAMPAIGN_ID),--campaign-id $(CAMPAIGN_ID),)
 
 start: up
 
@@ -33,10 +36,22 @@ wait-for-db:
 	done
 
 down:
+	$(COMPOSE) down
+
+down-reset:
 	$(COMPOSE) down -v
 
 logs:
 	$(COMPOSE) logs -f app frontend
+
+research-observability:
+	uv run python -m virtual_company.observability.research_report summary $(RESEARCH_REPORT_ARGS)
+
+research-cost:
+	uv run python -m virtual_company.observability.research_report cost $(RESEARCH_REPORT_ARGS)
+
+research-log:
+	uv run python -m virtual_company.observability.research_report log $(RESEARCH_REPORT_ARGS)
 
 build:
 	$(COMPOSE) build app frontend

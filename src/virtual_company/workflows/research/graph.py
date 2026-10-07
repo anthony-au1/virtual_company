@@ -80,8 +80,9 @@ class ResearchWorkflow:
     async def run(self, campaign_id: UUID) -> ResearchWorkflowResult:
         """Execute research and return its concise application result."""
         observability = get_observability()
+        observability.clear_context()
         observability.bind(campaign_id=str(campaign_id), workflow="company_research")
-        observability.event("research_run_started")
+        observability.event("research_workflow_started")
         observability.record(
             "research_runs_total", status="started", workflow="company_research"
         )
@@ -131,6 +132,11 @@ class ResearchWorkflow:
         if research_run_id is None:
             raise ValueError("Research workflow completed without a research run")
         observability.bind(research_run_id=str(research_run_id))
+        campaign = state["campaign"]
+        if campaign is None:
+            raise ValueError("Research campaign was not loaded")
+        qualified_count = ResearchNodes._qualified_count(state)
+        target_reached = qualified_count >= campaign.target_count
         observability.record(
             "research_runs_total", status="completed", workflow="company_research"
         )
@@ -140,7 +146,15 @@ class ResearchWorkflow:
             workflow="company_research",
         )
         observability.event(
-            "research_run_completed", companies_found=state["companies_found"]
+            "research_run_completed",
+            campaign_name=campaign.name,
+            companies_found=state["companies_found"],
+            target_count=campaign.target_count,
+            qualified_count=qualified_count,
+            target_reached=target_reached,
+            stop_reason=(
+                "TARGET_REACHED" if target_reached else "CANDIDATE_POOL_EXHAUSTED"
+            ),
         )
         return ResearchWorkflowResult(
             research_run_id=research_run_id,
@@ -153,7 +167,12 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     """Compile the fixed, sequential research workflow graph."""
     graph = StateGraph(ResearchWorkflowState)
     graph.add_node("load_campaign", nodes.load_campaign)
-    graph.add_node("create_research_run", nodes.create_research_run)
+    graph.add_node(
+        "create_research_run",
+        _with_failure_handling(
+            nodes.create_research_run, "create_research_run", research
+        ),
+    )
     graph.add_node(
         "generate_search_queries",
         _with_failure_handling(
@@ -328,33 +347,44 @@ def _with_failure_handling(
 
     async def wrapped(state: ResearchWorkflowState) -> dict[str, object]:
         observability = get_observability()
-        observability.event("workflow_node_started", workflow_node=node_name)
-        started = perf_counter()
-        try:
-            with observability.span(node_name, workflow_node=node_name):
-                result = await node(state)
-            research_run_id = result.get("research_run_id")
-            if research_run_id is not None:
-                observability.bind(research_run_id=str(research_run_id))
-            observability.event(
-                "workflow_node_completed",
-                workflow_node=node_name,
-                duration_ms=int((perf_counter() - started) * 1000),
-            )
-            return result
-        except Exception as error:
-            research_run_id = state["research_run_id"]
-            if research_run_id is not None:
-                await research.fail_run(
-                    research_run_id,
-                    f"Research workflow failed in {node_name}: {type(error).__name__}",
+        campaign_id = state.get("campaign_id")
+        research_run_id = state.get("research_run_id")
+        with observability.context(
+            campaign_id=str(campaign_id) if campaign_id is not None else None,
+            research_run_id=(
+                str(research_run_id) if research_run_id is not None else None
+            ),
+            workflow="company_research",
+        ):
+            observability.event("workflow_node_started", workflow_node=node_name)
+            started = perf_counter()
+            try:
+                with observability.span(node_name, workflow_node=node_name):
+                    result = await node(state)
+                created_run_id = result.get("research_run_id")
+                if created_run_id is not None:
+                    observability.bind(research_run_id=str(created_run_id))
+                    observability.event("research_run_created")
+                    observability.event("research_run_started")
+                observability.event(
+                    "workflow_node_completed",
+                    workflow_node=node_name,
+                    duration_ms=int((perf_counter() - started) * 1000),
                 )
-            observability.event(
-                "workflow_node_failed",
-                workflow_node=node_name,
-                duration_ms=int((perf_counter() - started) * 1000),
-                error_type=type(error).__name__,
-            )
-            raise
+                return result
+            except Exception as error:
+                failed_run_id = state.get("research_run_id")
+                if failed_run_id is not None:
+                    await research.fail_run(
+                        failed_run_id,
+                        f"Research workflow failed in {node_name}: {type(error).__name__}",
+                    )
+                observability.event(
+                    "workflow_node_failed",
+                    workflow_node=node_name,
+                    duration_ms=int((perf_counter() - started) * 1000),
+                    error_type=type(error).__name__,
+                )
+                raise
 
     return wrapped

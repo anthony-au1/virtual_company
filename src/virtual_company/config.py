@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     database_url: str = DEFAULT_DATABASE_URL
     environment: str = "local"
     log_level: str = "INFO"
-    log_format: str = "console"
+    log_format: str = "json"
     otel_enabled: bool = True
     otel_service_name: str = "virtual-company"
     langfuse_enabled: bool = False

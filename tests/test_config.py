@@ -8,6 +8,14 @@ from pydantic import ValidationError
 from virtual_company.config import Settings
 
 
+def test_json_logging_is_default_for_machine_readable_research_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LOG_FORMAT", raising=False)
+
+    assert Settings().log_format == "json"
+
+
 def test_research_max_candidate_pool_size_loads_from_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

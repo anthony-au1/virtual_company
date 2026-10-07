@@ -112,6 +112,12 @@ class QualificationEvidenceExtractor:
             "prompt_version": EXTRACT_QUALIFICATION_FACTS_PROMPT.version,
             "evidence_count": len(evidence_ids),
         }
+        if attempt_number > 1:
+            observability.event(
+                "qualification_fact_extraction_retry",
+                attempt_number=attempt_number,
+                **metadata,
+            )
         try:
             async with self._semaphore, asyncio.timeout(self._timeout_seconds):
                 response = await self._provider.generate_structured(
