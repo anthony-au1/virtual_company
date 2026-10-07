@@ -2129,22 +2129,13 @@ class ResearchNodes:
         """Keep ranked selections and provenance constrained to aggregate evidence."""
         if candidate_limit == 0:
             return []
-        by_domain = {
-            domain: candidate
-            for candidate in candidates
-            if (domain := normalize_domain(candidate.domain or candidate.website))
-            is not None
-        }
-        by_name = {
-            normalize_company_name(candidate.name): candidate
-            for candidate in candidates
-        }
         selected: list[DiscoveredCompany] = []
         seen: set[str] = set()
         for company in companies:
             domain = normalize_domain(company.domain or company.website)
-            candidate = by_domain.get(domain) if domain else None
-            candidate = candidate or by_name.get(normalize_company_name(company.name))
+            candidate = ResearchNodes._ranked_candidate_source(
+                company, candidates, domain
+            )
             if candidate is None:
                 continue
             key = normalize_domain(
@@ -2170,3 +2161,62 @@ class ResearchNodes:
             if len(selected) == candidate_limit:
                 break
         return selected
+
+    @staticmethod
+    def _ranked_candidate_source(
+        company: DiscoveredCompany,
+        candidates: list[AggregatedCompanyCandidate],
+        domain: str | None,
+    ) -> AggregatedCompanyCandidate | None:
+        """Resolve a ranked representation only when its source is unambiguous."""
+        if domain:
+            domain_matches = [
+                candidate
+                for candidate in candidates
+                if normalize_domain(candidate.domain or candidate.website) == domain
+            ]
+            if len(domain_matches) == 1:
+                return domain_matches[0]
+            if len(domain_matches) > 1:
+                return ResearchNodes._disambiguate_ranked_sources(
+                    company, domain_matches
+                )
+
+        exact_matches = [
+            candidate for candidate in candidates if candidate.name == company.name
+        ]
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+        if len(exact_matches) > 1:
+            return ResearchNodes._disambiguate_ranked_sources(
+                company, exact_matches
+            )
+
+        normalized_name = normalize_company_name(company.name)
+        normalized_matches = [
+            candidate
+            for candidate in candidates
+            if normalize_company_name(candidate.name) == normalized_name
+        ]
+        if len(normalized_matches) == 1:
+            return normalized_matches[0]
+        if len(normalized_matches) > 1:
+            return ResearchNodes._disambiguate_ranked_sources(
+                company, normalized_matches
+            )
+        return None
+
+    @staticmethod
+    def _disambiguate_ranked_sources(
+        company: DiscoveredCompany,
+        candidates: list[AggregatedCompanyCandidate],
+    ) -> AggregatedCompanyCandidate | None:
+        """Use selected URLs only if they identify exactly one source candidate."""
+        if not company.supporting_urls:
+            return None
+        matches = [
+            candidate
+            for candidate in candidates
+            if any(url in candidate.supporting_urls for url in company.supporting_urls)
+        ]
+        return matches[0] if len(matches) == 1 else None

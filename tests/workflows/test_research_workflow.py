@@ -603,6 +603,159 @@ async def test_ranking_bounds_pool_preserves_order_and_validates_urls() -> None:
     )
 
 
+def test_ranked_validation_preserves_airwallex_selected_representation() -> None:
+    candidates = [
+        AggregatedCompanyCandidate(
+            name="Airwallex Pty Ltd",
+            mention_count=1,
+            supporting_urls=[
+                "https://imarc.example/airwallex",
+                "https://builtin.example/melbourne/airwallex",
+                "https://mordor.example/airwallex",
+            ],
+        ),
+        AggregatedCompanyCandidate(
+            name="Airwallex",
+            domain="airwallex.com",
+            mention_count=1,
+            supporting_urls=["https://ieu.example/article/airwallex"],
+        ),
+    ]
+    chosen_urls = candidates[0].supporting_urls
+
+    validated = ResearchNodes._validated_ranked_companies(
+        [found("Airwallex Pty Ltd", chosen_urls)], candidates, 2
+    )
+
+    assert len(validated) == 1
+    assert validated[0].name == "Airwallex Pty Ltd"
+    assert validated[0].supporting_urls == chosen_urls
+    assert "https://ieu.example/article/airwallex" not in validated[0].supporting_urls
+
+
+def test_ranked_validation_prefers_exact_name_for_normalized_collision() -> None:
+    candidates = [
+        AggregatedCompanyCandidate(
+            name="Foo Pty Ltd",
+            mention_count=1,
+            supporting_urls=["https://pty.example"],
+        ),
+        AggregatedCompanyCandidate(
+            name="Foo",
+            mention_count=1,
+            supporting_urls=["https://plain.example"],
+        ),
+    ]
+
+    validated = ResearchNodes._validated_ranked_companies(
+        [found("Foo Pty Ltd", ["https://pty.example"])], candidates, 2
+    )
+
+    assert [item.supporting_urls for item in validated] == [["https://pty.example"]]
+
+
+def test_ranked_validation_keeps_unique_normalized_name_fallback() -> None:
+    candidate = AggregatedCompanyCandidate(
+        name="Foo Pty Ltd",
+        mention_count=1,
+        supporting_urls=["https://foo.example"],
+    )
+
+    validated = ResearchNodes._validated_ranked_companies(
+        [found("FOO", ["https://foo.example"])], [candidate], 1
+    )
+
+    assert len(validated) == 1
+    assert validated[0].name == "Foo Pty Ltd"
+    assert validated[0].supporting_urls == ["https://foo.example"]
+
+
+def test_ranked_validation_skips_ambiguous_normalized_collision() -> None:
+    candidates = [
+        AggregatedCompanyCandidate(
+            name="Foo Pty Ltd",
+            mention_count=1,
+            supporting_urls=["https://pty.example"],
+        ),
+        AggregatedCompanyCandidate(
+            name="Foo",
+            mention_count=1,
+            supporting_urls=["https://plain.example"],
+        ),
+    ]
+
+    validated = ResearchNodes._validated_ranked_companies(
+        [found("FOO LTD", ["https://unknown.example"])], candidates, 2
+    )
+
+    assert validated == []
+
+
+def test_ranked_validation_rejects_url_outside_candidate_provenance() -> None:
+    candidate = AggregatedCompanyCandidate(
+        name="Foo",
+        mention_count=1,
+        supporting_urls=["https://foo.example"],
+    )
+
+    validated = ResearchNodes._validated_ranked_companies(
+        [found("Foo", ["https://invented.example"])], [candidate], 1
+    )
+
+    assert len(validated) == 1
+    assert validated[0].supporting_urls == []
+
+
+@pytest.mark.asyncio
+async def test_validated_airwallex_sources_reach_discovery_source_reuse() -> None:
+    model = campaign()
+    candidates = [
+        AggregatedCompanyCandidate(
+            name="Airwallex Pty Ltd",
+            mention_count=1,
+            supporting_urls=["https://imarc.example/airwallex"],
+            supporting_results=[
+                SearchResult(
+                    title="IMARC Airwallex profile",
+                    url="https://imarc.example/airwallex",
+                )
+            ],
+        ),
+        AggregatedCompanyCandidate(
+            name="Airwallex",
+            domain="airwallex.com",
+            mention_count=1,
+            supporting_urls=["https://ieu.example/article/airwallex"],
+            supporting_results=[
+                SearchResult(
+                    title="IE University article",
+                    url="https://ieu.example/article/airwallex",
+                )
+            ],
+        ),
+    ]
+    validated = ResearchNodes._validated_ranked_companies(
+        [found("Airwallex Pty Ltd", ["https://imarc.example/airwallex"])],
+        candidates,
+        2,
+    )
+    company = ResearchCompany(id=uuid4(), name="Airwallex Pty Ltd")
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+
+    reused = await nodes.reuse_discovery_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "discovered_companies_by_id": {company.id: validated[0]},
+            "aggregated_company_candidates": candidates,
+        }
+    )  # type: ignore[arg-type]
+
+    assert [item.url for item in reused["company_search_results"][company.id]] == [
+        "https://imarc.example/airwallex"
+    ]
+
+
 @pytest.mark.parametrize(
     ("aggregated_count", "expected_ranked_count", "expected_activation_count"),
     [(20, 10, 5), (7, 7, 5), (3, 3, 3)],
