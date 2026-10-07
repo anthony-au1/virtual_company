@@ -270,8 +270,14 @@ def qualification_facts_from_prompt(prompt: str) -> QualificationFacts:
 
 
 class ResearchFake:
-    def __init__(self, ranked: list[DiscoveredCompany]) -> None:
+    def __init__(
+        self,
+        ranked: list[DiscoveredCompany],
+        *,
+        company_queries: list[str] | None = None,
+    ) -> None:
         self.ranked = ranked
+        self.company_queries = company_queries or ["company evidence"]
         self.prompts: list[str] = []
         self.models: list[type[object]] = []
 
@@ -282,7 +288,7 @@ class ResearchFake:
         if model is GeneratedSearchQueries:
             return GeneratedSearchQueries(queries=["Australian fintech companies"])
         if model is GeneratedCompanySearchQueries:
-            return GeneratedCompanySearchQueries(queries=["company evidence"])
+            return GeneratedCompanySearchQueries(queries=self.company_queries)
         return DiscoveredCompanies(companies=self.ranked)
 
 
@@ -340,6 +346,125 @@ def make_nodes(
         web_search_concurrency=2,
         research_max_candidate_pool_size=max_candidate_pool_size,
     )
+
+
+@pytest.mark.asyncio
+async def test_search_result_caps_fairly_retain_later_query_groups() -> None:
+    queries = [f"query {index}" for index in range(5)]
+    groups = {
+        query: [SearchResult(title=query, url=f"https://source-{index}.example/page")]
+        for index, query in enumerate(queries)
+    }
+
+    class QuerySearchFake:
+        async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+            return groups[query]
+
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=ResearchServiceFake(),
+        research_llm=ResearchFake([]),
+        extraction_llm=ExtractionFake({}),
+        web_search=QuerySearchFake(),  # type: ignore[arg-type]
+        web_fetch=FetchFake({}),
+        web_search_max_total_results=5,
+        company_research_max_results_per_company=5,
+    )
+    discovery = await nodes.search_web({"queries": queries})  # type: ignore[arg-type]
+    assert [item.title for item in discovery["search_results"]] == queries
+
+    company_results = await nodes.search_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "company_research_queries": {company.id: queries},
+            "investigations": {
+                company.id: CompanyInvestigationState(company_id=company.id)
+            },
+        }
+    )  # type: ignore[arg-type]
+    assert [
+        item.title for item in company_results["company_search_results"][company.id]
+    ] == queries
+
+
+def test_fair_result_merge_deduplicates_overlapping_urls() -> None:
+    groups = [
+        [
+            SearchResult(title="A", url="https://example.com/a"),
+            SearchResult(title="B", url="https://example.com/b"),
+        ],
+        [
+            SearchResult(title="A duplicate", url="https://example.com/a"),
+            SearchResult(title="C", url="https://example.com/c"),
+        ],
+        [
+            SearchResult(title="D", url="https://example.com/d"),
+            SearchResult(title="E", url="https://example.com/e"),
+        ],
+    ]
+    results, contributions = ResearchNodes._fair_merge_search_results(
+        groups, 4, lambda value: value
+    )
+    assert [item.title for item in results] == ["A", "C", "D", "B"]
+    assert len({item.url for item in results}) == len(results)
+    assert contributions == [2, 1, 1]
+
+
+@pytest.mark.asyncio
+async def test_source_selection_reserves_available_sources_for_required_criteria() -> None:
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = {"required": ["Java", "Spring Boot"], "preferred": []}
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._company_research_followup_max_fetches_per_company = 2
+    output = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "adaptive_mode": True,
+            "company_search_results": {
+                company.id: [
+                    SearchResult(
+                        title="Engineering careers technology",
+                        url="https://acme.example/careers/engineering/technology",
+                    ),
+                    SearchResult(
+                        title="Java systems",
+                        snippet="Java services are used by Acme",
+                        url="https://third-party.example/acme-java",
+                    ),
+                    SearchResult(
+                        title="Spring Boot architecture",
+                        snippet="Acme uses Spring Boot",
+                        url="https://third-party.example/acme-spring",
+                    ),
+                ]
+            },
+            "criterion_qualifications": {
+                company.id: [
+                    CriterionQualification(
+                        "technology", subject, CriterionRequirement.REQUIRED,
+                        QualificationStatus.UNKNOWN, [], "Missing"
+                    )
+                    for subject in ("Java", "Spring Boot")
+                ]
+            },
+            "investigations": {
+                company.id: CompanyInvestigationState(company_id=company.id)
+            },
+        }
+    )  # type: ignore[arg-type]
+    urls = {
+        item.url
+        for item in output["selected_company_sources"][company.id]
+    }
+    assert "https://third-party.example/acme-java" in urls
+    assert "https://third-party.example/acme-spring" in urls
 
 
 def test_staged_prompt_semantics() -> None:
@@ -1209,7 +1334,10 @@ async def test_followup_queries_contain_only_missing_criteria() -> None:
             },
             "investigations": {
                 company.id: CompanyInvestigationState(
-                    company_id=company.id, coverage=coverage
+                    company_id=company.id,
+                    coverage=coverage,
+                    attempted_queries=["Acme fintech careers"],
+                    attempted_strategy_focuses=["careers and job evidence"],
                 )
             },
         }
@@ -1218,7 +1346,117 @@ async def test_followup_queries_contain_only_missing_criteria() -> None:
     missing_section = prompt.split("Unresolved criteria:", 1)[1]
     assert "Kafka" in missing_section
     assert "Australia" not in missing_section
+    assert "Acme fintech careers" in prompt
+    assert "careers and job evidence" in prompt
     assert output["investigations"][company.id].round == 1
+
+
+@pytest.mark.asyncio
+async def test_followup_filters_duplicates_and_resolved_criteria() -> None:
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = {"required": ["Java", "Spring Boot"], "preferred": []}
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    prior_query = "Acme Java engineering"
+    research = ResearchFake(
+        [],
+        company_queries=[
+            " ACME   java ENGINEERING ",
+            "Acme Spring Boot careers",
+            " acme spring boot   CAREERS ",
+            "Acme Java developer jobs",
+        ],
+    )
+    nodes = make_nodes(ExtractionFake({}), research, model)
+    output = await nodes.generate_followup_queries(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "criterion_qualifications": {
+                company.id: [
+                    CriterionQualification(
+                        "technology",
+                        "Java",
+                        CriterionRequirement.REQUIRED,
+                        QualificationStatus.MATCH,
+                        [uuid4()],
+                        "Matched",
+                    ),
+                    CriterionQualification(
+                        "technology",
+                        "Spring Boot",
+                        CriterionRequirement.REQUIRED,
+                        QualificationStatus.UNKNOWN,
+                        [],
+                        "Missing",
+                    ),
+                ]
+            },
+            "investigations": {
+                company.id: CompanyInvestigationState(
+                    company_id=company.id,
+                    round=1,
+                    attempted_queries=[prior_query],
+                )
+            },
+        }
+    )  # type: ignore[arg-type]
+    prompt = research.prompts[-1]
+    queries = output["company_research_queries"][company.id]
+    assert queries == ["Acme Spring Boot careers"]
+    assert prior_query in prompt
+    assert "Java engineering" in prompt
+    assert output["investigations"][company.id].alternative_strategy_attempted
+    await nodes.search_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "company_research_queries": output["company_research_queries"],
+            "investigations": output["investigations"],
+        }
+    )  # type: ignore[arg-type]
+    assert nodes._web_search.calls == [("Acme Spring Boot careers", 5)]
+
+
+@pytest.mark.asyncio
+async def test_required_criteria_receive_query_coverage_when_queries_exist() -> None:
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = {"required": ["Java", "Spring Boot"], "preferred": []}
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    research = ResearchFake(
+        [],
+        company_queries=[
+            "Acme Java engineering",
+            "Acme Spring Boot architecture",
+            "Acme Java careers",
+        ],
+    )
+    nodes = make_nodes(ExtractionFake({}), research, model)
+    qualifications = [
+        CriterionQualification(
+            "technology", subject, CriterionRequirement.REQUIRED,
+            QualificationStatus.UNKNOWN, [], "Missing"
+        )
+        for subject in ("Java", "Spring Boot")
+    ]
+    output = await nodes.generate_followup_queries(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "criterion_qualifications": {company.id: qualifications},
+            "investigations": {
+                company.id: CompanyInvestigationState(company_id=company.id)
+            },
+        }
+    )  # type: ignore[arg-type]
+    queries = output["company_research_queries"][company.id]
+    assert any("Java" in query for query in queries)
+    assert any("Spring Boot" in query for query in queries)
 
 
 @pytest.mark.asyncio
@@ -1261,6 +1499,7 @@ async def test_coverage_stops_companies_independently() -> None:
     complete = ResearchCompany(id=uuid4(), name="Complete")
     stalled = ResearchCompany(id=uuid4(), name="Stalled")
     progressing = ResearchCompany(id=uuid4(), name="Progressing")
+    exhausted = ResearchCompany(id=uuid4(), name="Exhausted")
     run_id = uuid4()
     service = ResearchServiceFake()
     service.evidence = [
@@ -1287,7 +1526,7 @@ async def test_coverage_stops_companies_independently() -> None:
         {
             "campaign": CampaignCriteria.model_validate(model),
             "research_run_id": run_id,
-            "research_companies": [complete, stalled, progressing],
+            "research_companies": [complete, stalled, progressing, exhausted],
             "investigations": {
                 complete.id: CompanyInvestigationState(company_id=complete.id),
                 stalled.id: CompanyInvestigationState(
@@ -1301,14 +1540,21 @@ async def test_coverage_stops_companies_independently() -> None:
                     round=1,
                     new_evidence_count=1,
                 ),
+                exhausted.id: CompanyInvestigationState(
+                    company_id=exhausted.id,
+                    round=2,
+                    unresolved_before={"required|technology|kafka"},
+                    alternative_strategy_attempted=True,
+                ),
             },
         }
     )  # type: ignore[arg-type]
     states = output["investigations"]
     assert states[complete.id].stop_reason is InvestigationStopReason.COVERAGE_COMPLETE
-    assert states[stalled.id].stop_reason is InvestigationStopReason.NO_PROGRESS
+    assert states[stalled.id].stop_reason is None
     assert states[progressing.id].stop_reason is None
-    assert output["active_company_ids"] == [progressing.id]
+    assert states[exhausted.id].stop_reason is InvestigationStopReason.NO_PROGRESS
+    assert output["active_company_ids"] == [stalled.id, progressing.id]
 
 
 @pytest.mark.asyncio
@@ -1965,7 +2211,7 @@ async def test_preferred_unknown_uses_remaining_rounds_then_qualifies() -> None:
     state.update(await nodes.check_evidence_coverage(state))
     assert (
         state["investigations"][company.id].stop_reason
-        is InvestigationStopReason.NO_PROGRESS
+        is InvestigationStopReason.MAX_ROUNDS
     )
     result = (await nodes.qualify_companies(state))["company_qualifications"][
         company.id

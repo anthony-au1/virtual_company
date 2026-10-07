@@ -137,7 +137,10 @@ class CompanyInvestigationState(BaseModel):
     round: int = Field(default=0, ge=0)
     coverage: list[CriterionCoverage] = Field(default_factory=list)
     attempted_urls: set[str] = Field(default_factory=set)
+    attempted_queries: list[str] = Field(default_factory=list, max_length=60)
+    attempted_strategy_focuses: list[str] = Field(default_factory=list, max_length=4)
     unresolved_before: set[str] = Field(default_factory=set)
+    alternative_strategy_attempted: bool = False
     new_evidence_count: int = 0
     stopped: bool = False
     stop_reason: InvestigationStopReason | None = None

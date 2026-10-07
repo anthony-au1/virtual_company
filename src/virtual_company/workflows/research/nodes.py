@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Sequence
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -220,16 +221,17 @@ class ResearchNodes:
         result_groups = await asyncio.gather(
             *(search_query(query) for query in state["queries"])
         )
-        seen_urls: set[str] = set()
-        results: list[SearchResult] = []
-        for result_group in result_groups:
-            for result in result_group:
-                normalized_url = normalize_url(result.url)
-                if normalized_url not in seen_urls:
-                    seen_urls.add(normalized_url)
-                    results.append(result)
-                    if len(results) == self._web_search_max_total_results:
-                        return {"search_results": results}
+        results, contributions = self._fair_merge_search_results(
+            result_groups,
+            self._web_search_max_total_results,
+            normalize_url,
+        )
+        get_observability().event(
+            "discovery_search_results_merged",
+            query_count=len(result_groups),
+            retained_result_count=len(results),
+            result_contributions=contributions,
+        )
         return {"search_results": results}
 
     async def extract_company_candidates(
@@ -523,6 +525,13 @@ class ResearchNodes:
         active_companies = self._active_companies(state)
         for company in active_companies:
             targets = self._investigation_targets(state, company.id)
+            blocked_targets = [
+                item
+                for item in state.get("criterion_qualifications", {}).get(
+                    company.id, []
+                )
+                if item.status is not QualificationStatus.UNKNOWN
+            ]
             investigation = investigations[company.id]
             next_round = investigation.round + 1
             with observability.context(
@@ -546,12 +555,21 @@ class ResearchNodes:
                     is CriterionRequirement.PREFERRED
                     else self._company_research_query_count
                 )
-                queries = response.queries[:query_limit]
+                queries = self._select_investigation_queries(
+                    response.queries,
+                    investigation.attempted_queries,
+                    targets,
+                    query_limit,
+                    blocked_targets=blocked_targets,
+                )
                 company_queries[company.id] = queries
                 observability.event(
                     "company_research_queries_generated",
                     investigation_round=next_round,
                     query_count=len(queries),
+                    duplicate_queries_skipped=self._duplicate_query_count(
+                        response.queries, investigation.attempted_queries
+                    ),
                     query_subjects=self._query_subjects(targets),
                 )
                 observability.record(
@@ -562,6 +580,14 @@ class ResearchNodes:
             investigations[company.id] = investigation.model_copy(
                 update={
                     "round": next_round,
+                    "attempted_queries": self._append_unique_queries(
+                        investigation.attempted_queries, queries
+                    ),
+                    "attempted_strategy_focuses": self._strategy_focuses(
+                        investigation.attempted_strategy_focuses,
+                        queries,
+                        company,
+                    ),
                     "unresolved_before": self._target_keys(targets),
                     "new_evidence_count": 0,
                 }
@@ -588,6 +614,13 @@ class ResearchNodes:
         for company in self._active_companies(state):
             investigation = investigations[company.id]
             missing = self._investigation_targets(state, company.id)
+            blocked_targets = [
+                item
+                for item in state.get("criterion_qualifications", {}).get(
+                    company.id, []
+                )
+                if item.status is not QualificationStatus.UNKNOWN
+            ]
             next_round = investigation.round + 1
             with observability.context(
                 company_id=str(company.id),
@@ -597,16 +630,26 @@ class ResearchNodes:
                 prompt_version=FOLLOWUP_COMPANY_QUERY_PROMPT.version,
                 investigation_round=str(next_round),
             ):
+                attempted_queries = investigation.attempted_queries
+                attempted_focuses = investigation.attempted_strategy_focuses
                 response = await self._research_llm.generate_structured(
                     system_prompt=followup_company_query_system_prompt(),
                     user_prompt=followup_company_query_user_prompt(
-                        campaign, company, missing
+                        campaign,
+                        company,
+                        missing,
+                        attempted_queries=attempted_queries,
+                        attempted_strategy_focuses=attempted_focuses,
                     ),
                     response_model=GeneratedCompanySearchQueries,
                 )
-                queries = response.queries[
-                    : self._company_research_followup_search_queries_per_company
-                ]
+                queries = self._select_investigation_queries(
+                    response.queries,
+                    attempted_queries,
+                    missing,
+                    self._company_research_followup_search_queries_per_company,
+                    blocked_targets=blocked_targets,
+                )
                 queries_by_company[company.id] = queries
                 observability.event(
                     "followup_company_queries_generated",
@@ -621,6 +664,10 @@ class ResearchNodes:
                     ],
                     query_subjects=self._query_subjects(missing),
                     query_count=len(queries),
+                    duplicate_queries_skipped=self._duplicate_query_count(
+                        response.queries, attempted_queries
+                    ),
+                    attempted_strategy_focuses=attempted_focuses,
                 )
                 observability.record(
                     "followup_queries_generated_total",
@@ -630,6 +677,15 @@ class ResearchNodes:
             investigations[company.id] = investigation.model_copy(
                 update={
                     "round": next_round,
+                    "attempted_queries": self._append_unique_queries(
+                        attempted_queries, queries
+                    ),
+                    "attempted_strategy_focuses": self._strategy_focuses(
+                        attempted_focuses, queries, company
+                    ),
+                    "alternative_strategy_attempted": (
+                        investigation.alternative_strategy_attempted or bool(queries)
+                    ),
                     "unresolved_before": self._target_keys(missing),
                     "new_evidence_count": 0,
                 }
@@ -679,19 +735,32 @@ class ResearchNodes:
             )
             for company in active_companies
         }
-        for (company, _query), result_group in zip(work, result_groups, strict=True):
-            results = results_by_company[company.id]
-            seen_urls = seen_urls_by_company[company.id]
-            for result in result_group:
-                if len(results) >= self._company_research_max_results_per_company:
-                    break
-                try:
-                    normalized_url = normalize_fetch_url(result.url)
-                except ValueError:
-                    continue
-                if normalized_url not in seen_urls:
-                    seen_urls.add(normalized_url)
-                    results.append(result)
+        grouped_results: dict[UUID, list[list[SearchResult]]] = {
+            company.id: [] for company in active_companies
+        }
+        grouped_queries: dict[UUID, list[str]] = {
+            company.id: [] for company in active_companies
+        }
+        for (company, query), result_group in zip(work, result_groups, strict=True):
+            grouped_results[company.id].append(result_group)
+            grouped_queries[company.id].append(query)
+        for company in active_companies:
+            results, contributions = self._fair_merge_search_results(
+                grouped_results[company.id],
+                self._company_research_max_results_per_company,
+                normalize_fetch_url,
+                excluded_urls=seen_urls_by_company[company.id],
+            )
+            results_by_company[company.id] = results
+            with observability.context(
+                company_id=str(company.id), company_domain=company.domain
+            ):
+                observability.event(
+                    "company_search_results_merged",
+                    query_count=len(grouped_queries[company.id]),
+                    result_count=len(results),
+                    result_contributions=contributions,
+                )
         for company in active_companies:
             with observability.context(
                 company_id=str(company.id), company_domain=company.domain
@@ -739,18 +808,49 @@ class ResearchNodes:
                     continue
                 seen_urls.add(key)
                 unique_results.append((index, result))
+            targets = self._investigation_targets(state, company.id)
             ordered = sorted(
                 unique_results,
                 key=lambda item: (
                     -self._source_selection_score(
-                        item[1],
-                        company,
-                        self._investigation_targets(state, company.id),
+                        item[1], company, targets
                     ),
                     item[0],
                 ),
             )
-            sources = [result for _, result in ordered[:fetch_limit]]
+            sources: list[SearchResult] = []
+            selected_keys: set[str] = set()
+            history = investigations.get(
+                company.id, CompanyInvestigationState(company_id=company.id)
+            )
+            for target in self._prioritize_targets_by_history(
+                [
+                    item
+                    for item in targets
+                    if item.requirement is CriterionRequirement.REQUIRED
+                ],
+                history.attempted_queries,
+            ):
+                candidate = next(
+                    (
+                        result
+                        for _, result in ordered
+                        if normalize_fetch_url(result.url) not in selected_keys
+                        and self._result_matches_target(result, target)
+                    ),
+                    None,
+                )
+                if candidate is None or len(sources) >= fetch_limit:
+                    continue
+                sources.append(candidate)
+                selected_keys.add(normalize_fetch_url(candidate.url))
+            for _, result in ordered:
+                if len(sources) >= fetch_limit:
+                    break
+                key = normalize_fetch_url(result.url)
+                if key not in selected_keys:
+                    sources.append(result)
+                    selected_keys.add(key)
             selected[company.id] = sources
             investigation = investigations.get(
                 company.id, CompanyInvestigationState(company_id=company.id)
@@ -1230,6 +1330,7 @@ class ResearchNodes:
                 previous.round > 0
                 and previous.unresolved_before
                 and previous.unresolved_before == unresolved_keys
+                and previous.alternative_strategy_attempted
             ):
                 stop_reason = InvestigationStopReason.NO_PROGRESS
             elif previous.round >= self._company_research_max_investigation_rounds:
@@ -1627,6 +1728,205 @@ class ResearchNodes:
             )
             for item in criteria
         }
+
+    @staticmethod
+    def _normalize_query(query: str) -> str:
+        return " ".join(query.casefold().split())
+
+    @classmethod
+    def _duplicate_query_count(
+        cls, queries: Sequence[str], attempted_queries: Sequence[str]
+    ) -> int:
+        seen = {cls._normalize_query(query) for query in attempted_queries}
+        duplicates = 0
+        for query in queries:
+            key = cls._normalize_query(query)
+            if key in seen:
+                duplicates += 1
+            else:
+                seen.add(key)
+        return duplicates
+
+    @classmethod
+    def _append_unique_queries(
+        cls, previous: Sequence[str], new_queries: Sequence[str]
+    ) -> list[str]:
+        result = list(previous)
+        seen = {cls._normalize_query(query) for query in previous}
+        for query in new_queries:
+            key = cls._normalize_query(query)
+            if key not in seen:
+                seen.add(key)
+                result.append(query)
+        return result[-60:]
+
+    @staticmethod
+    def _query_matches_target(
+        query: str, target: CriterionQualification
+    ) -> bool:
+        searchable = " ".join(query.casefold().split())
+        subject = " ".join((target.subject or "").casefold().split())
+        if target.criterion == EvidenceCriterion.COMPANY_SIZE.value:
+            return any(
+                term in searchable
+                for term in ("employee", "headcount", "workforce", "staff")
+            )
+        return bool(subject and subject in searchable)
+
+    @classmethod
+    def _prioritize_targets_by_history(
+        cls,
+        targets: list[CriterionQualification],
+        attempted_queries: Sequence[str],
+    ) -> list[CriterionQualification]:
+        counts = [
+            sum(cls._query_matches_target(query, target) for query in attempted_queries)
+            for target in targets
+        ]
+        return [
+            target
+            for _, target in sorted(
+                enumerate(targets), key=lambda item: (counts[item[0]], item[0])
+            )
+        ]
+
+    @classmethod
+    def _select_investigation_queries(
+        cls,
+        queries: Sequence[str],
+        attempted_queries: Sequence[str],
+        targets: list[CriterionQualification],
+        limit: int,
+        *,
+        blocked_targets: Sequence[CriterionQualification] = (),
+    ) -> list[str]:
+        seen = {cls._normalize_query(query) for query in attempted_queries}
+        candidates: list[str] = []
+        for query in queries:
+            key = cls._normalize_query(query)
+            explicitly_resolved = any(
+                cls._query_matches_target(query, target) for target in blocked_targets
+            )
+            explicitly_unresolved = any(
+                cls._query_matches_target(query, target) for target in targets
+            )
+            if key and key not in seen and not (
+                explicitly_resolved and not explicitly_unresolved
+            ):
+                candidates.append(query)
+                seen.add(key)
+
+        selected: list[str] = []
+        selected_keys: set[str] = set()
+        required = cls._prioritize_targets_by_history(
+            [
+                item
+                for item in targets
+                if item.requirement is CriterionRequirement.REQUIRED
+            ],
+            attempted_queries,
+        )
+        for target in required:
+            candidate = next(
+                (
+                    query
+                    for query in candidates
+                    if cls._normalize_query(query) not in selected_keys
+                    and cls._query_matches_target(query, target)
+                ),
+                None,
+            )
+            if candidate is not None and len(selected) < limit:
+                selected.append(candidate)
+                selected_keys.add(cls._normalize_query(candidate))
+        for query in candidates:
+            if len(selected) >= limit:
+                break
+            key = cls._normalize_query(query)
+            if key not in selected_keys:
+                selected.append(query)
+                selected_keys.add(key)
+        return selected
+
+    @classmethod
+    def _strategy_focuses(
+        cls,
+        previous: Sequence[str],
+        queries: Sequence[str],
+        company: ResearchCompany,
+    ) -> list[str]:
+        focuses = list(previous)
+        for query in queries:
+            searchable = query.casefold()
+            if any(token in searchable for token in ("career", "job", "hiring")):
+                focus = "careers and job evidence"
+            elif company.domain and f"site:{company.domain.casefold()}" in searchable:
+                focus = "official company sources"
+            elif any(
+                token in searchable
+                for token in ("architecture", "engineering", "technical blog", "migration")
+            ):
+                focus = "engineering and architecture articles"
+            else:
+                focus = "third-party technical sources"
+            if focus not in focuses:
+                focuses.append(focus)
+        return focuses[-4:]
+
+    @staticmethod
+    def _result_matches_target(
+        result: SearchResult, target: CriterionQualification
+    ) -> bool:
+        if target.criterion == EvidenceCriterion.COMPANY_SIZE.value:
+            search_text = " ".join(
+                value.casefold()
+                for value in (result.title, result.snippet or "")
+            )
+            return any(
+                token in search_text
+                for token in ("employee", "headcount", "workforce", "staff", "people")
+            )
+        subject = " ".join((target.subject or "").casefold().split())
+        searchable = " ".join(
+            value.casefold()
+            for value in (result.title, result.snippet or "", result.url)
+        )
+        return bool(subject and subject in searchable)
+
+    @staticmethod
+    def _fair_merge_search_results(
+        result_groups: Sequence[Sequence[SearchResult]],
+        limit: int,
+        normalize: Callable[[str], str],
+        *,
+        excluded_urls: set[str] | None = None,
+    ) -> tuple[list[SearchResult], list[int]]:
+        results: list[SearchResult] = []
+        contributions = [0 for _ in result_groups]
+        seen = set(excluded_urls or ())
+        cursors = [0 for _ in result_groups]
+        while len(results) < limit:
+            progressed = False
+            for group_index, group in enumerate(result_groups):
+                while cursors[group_index] < len(group):
+                    result = group[cursors[group_index]]
+                    cursors[group_index] += 1
+                    try:
+                        url = normalize(result.url)
+                    except ValueError:
+                        continue
+                    if url in seen:
+                        continue
+                    seen.add(url)
+                    results.append(result)
+                    contributions[group_index] += 1
+                    progressed = True
+                    break
+                if len(results) >= limit:
+                    break
+            if not progressed:
+                break
+        return results, contributions
 
     def _validated_evidence(
         self,

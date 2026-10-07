@@ -38,10 +38,10 @@ class QualificationEvidencePromptItem(Protocol):
 SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
 EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v1")
 RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v4")
-COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v3")
+COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v4")
 EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v1")
 FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity(
-    "generate_followup_company_queries", "v2"
+    "generate_followup_company_queries", "v3"
 )
 VALIDATE_COMPANY_PAGE_ATTRIBUTION_PROMPT = PromptIdentity(
     "validate_company_page_attribution", "v1"
@@ -146,13 +146,16 @@ def company_query_system_prompt() -> str:
     """Return instructions for source-discovery queries about one known company."""
     return (
         "Generate concise web-search queries for ONLY the supplied evidence targets. "
-        "The application has already selected REQUIRED or PREFERRED priority. Combine "
-        "Include the supplied company name in every query so results stay attributable. "
-        "related targets when one source can establish several. You are generating research queries, "
+        "The application has already selected REQUIRED or PREFERRED priority. Include the "
+        "supplied company name in every query so results stay attributable. Combine related "
+        "targets when one source can establish several. You are generating research queries, "
         "not asserting facts: queries may investigate and disprove hypotheses. When a company "
         "domain is supplied, include some official-domain site: queries and some relevant "
-        "third-party queries. Favor engineering, careers, job advertisements, technical blogs, "
-        "conference material, architecture articles, migrations, and credible news where relevant."
+        "third-party queries. Cover every unresolved REQUIRED criterion with at least one "
+        "query that names its subject when the query limit allows; spread queries across "
+        "required criteria before giving one criterion several searches. Favor engineering, "
+        "careers, job advertisements, technical blogs, conference material, architecture "
+        "articles, migrations, and credible news where relevant."
     )
 
 
@@ -175,9 +178,13 @@ def followup_company_query_system_prompt() -> str:
         "Generate a small set of concise web-search queries designed to find source-grounded "
         "evidence for ONLY the listed unresolved campaign criteria for this company. "
         "The application determines their requirement level and priority. Include the "
-        "company name in every query. Combine related criteria when sensible. Prefer queries "
+        "company name in every query. Cover every unresolved REQUIRED criterion with at least "
+        "one query naming its subject when the query limit allows, before assigning multiple "
+        "queries to one criterion. Do not repeat prior queries. Choose a meaningfully different "
+        "search strategy and, when the prior channel did not resolve the criteria, prefer a "
+        "different source or channel. Combine related criteria when sensible. Prefer queries "
         "likely to surface official careers, engineering, technical, company, or credible "
-        "business sources. Do not target already-found criteria except as necessary context. "
+        "business sources. Do not target already-resolved criteria except as necessary context. "
         "Do not invent facts or assume a missing technology exists: each query is only a "
         "research hypothesis. Return search queries only."
     )
@@ -187,12 +194,18 @@ def followup_company_query_user_prompt(
     campaign: CampaignCriteria,
     company: ResearchCompany,
     missing: list[CriterionQualification],
+    *,
+    attempted_queries: Sequence[str] = (),
+    attempted_strategy_focuses: Sequence[str] = (),
 ) -> str:
     """Serialize one company and only its missing coverage expectations."""
     return (
         f"Company:\n{company.model_dump_json()}\n\n"
         f"Campaign context:\n{campaign.model_dump_json()}\n\n"
-        f"Unresolved criteria:\n{_targets_json(missing)}"
+        f"Unresolved criteria:\n{_targets_json(missing)}\n\n"
+        f"Previous queries attempted:\n{json.dumps(list(attempted_queries))}\n\n"
+        "Previous search strategy focuses:\n"
+        f"{json.dumps(list(attempted_strategy_focuses))}"
     )
 
 
