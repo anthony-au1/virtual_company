@@ -9,12 +9,19 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from virtual_company.domain.criteria import TechnologyCriteria
+from virtual_company.domain.criteria import (
+    CompanySizeBound,
+    CompanySizeCriteria,
+    CriterionRequirement,
+    TechnologyCriteria,
+)
+from virtual_company.domain.qualification import QualificationStatus
 from virtual_company.research.models import (
     CategoricalEvidenceFact,
     EmployeeCountEvidenceFact,
     QualificationFacts,
 )
+from virtual_company.services.qualification import qualify_company
 from virtual_company.services.qualification_evidence_extractor import (
     QualificationEvidenceExtractor,
 )
@@ -47,18 +54,26 @@ class ProviderStub:
             self.active -= 1
 
 
-def campaign() -> SimpleNamespace:
+def campaign(technologies: list[str] | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         target_market="Australia",
         industry="fintech",
-        technologies=TechnologyCriteria(required=["Kafka"]),
+        technologies=TechnologyCriteria(required=technologies or ["Kafka"]),
         company_size=None,
     )
 
 
-def evidence(text: str, criterion: str = "technology") -> SimpleNamespace:
+def evidence(
+    text: str,
+    criterion: str = "technology",
+    subject: str | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
-        id=uuid4(), criterion=criterion, subject=None, claim=text, evidence_text=text
+        id=uuid4(),
+        criterion=criterion,
+        subject=subject,
+        claim=text,
+        evidence_text=text,
     )
 
 
@@ -75,7 +90,9 @@ def evidence(text: str, criterion: str = "technology") -> SimpleNamespace:
 async def test_different_wording_reaches_the_same_semantic_schema(
     wording: str, criterion_id: str
 ) -> None:
-    item = evidence(wording)
+    criterion = "technology" if criterion_id == "criterion_2" else "industry"
+    subject = "Kafka" if criterion == "technology" else "fintech"
+    item = evidence(wording, criterion, subject)
     output = QualificationFacts(
         categorical=[
             CategoricalEvidenceFact(
@@ -110,6 +127,123 @@ async def test_explicit_and_vague_size_are_not_strengthened() -> None:
     )
     assert result.facts == output
     assert not any(vague.id in fact.evidence_ids for fact in output.employee_counts)
+
+
+@pytest.mark.asyncio
+async def test_wrong_technology_evidence_is_downgraded_to_unknown() -> None:
+    java = evidence("Our backend uses Java", subject="Java")
+    output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2", state="supported", evidence_ids=[java.id]
+            )
+        ]
+    )
+    result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
+        campaign(["Spring"]), [java]
+    )
+    assert result.facts is not None
+    assert result.facts.categorical[0].state == "unknown"
+    assert result.facts.categorical[0].evidence_ids == []
+
+
+@pytest.mark.asyncio
+async def test_matching_and_directional_technology_implication_are_admissible() -> None:
+    spring = evidence("Spring services", subject="Spring")
+    spring_boot = evidence("Spring Boot services", subject="Spring Boot")
+    for item in (spring, spring_boot):
+        output = QualificationFacts(
+            categorical=[
+                CategoricalEvidenceFact(
+                    criterion_id="criterion_2",
+                    state="supported",
+                    evidence_ids=[item.id],
+                )
+            ]
+        )
+        result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
+            campaign(["Spring"]), [item]
+        )
+        assert result.facts == output
+
+    spring_only = evidence("Spring framework", subject="Spring")
+    reverse_output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[spring_only.id],
+            )
+        ]
+    )
+    reverse = await QualificationEvidenceExtractor(ProviderStub(reverse_output)).extract(
+        campaign(["Spring Boot"]), [spring_only]
+    )
+    assert reverse.facts is not None
+    assert reverse.facts.categorical[0].state == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_shared_multi_technology_excerpt_can_support_both_criteria() -> None:
+    shared = evidence(
+        "Our services are built using Java and Spring Boot.", subject="Java"
+    )
+    output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2", state="supported", evidence_ids=[shared.id]
+            ),
+            CategoricalEvidenceFact(
+                criterion_id="criterion_3", state="supported", evidence_ids=[shared.id]
+            ),
+        ]
+    )
+    result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
+        campaign(["Java", "Spring"]), [shared]
+    )
+    assert result.facts == output
+
+
+@pytest.mark.asyncio
+async def test_technology_evidence_cannot_support_employee_count() -> None:
+    technology = evidence("Uses Kafka", subject="Kafka")
+    output = QualificationFacts(
+        employee_counts=[
+            EmployeeCountEvidenceFact(
+                value=1500, relation="exact", evidence_ids=[technology.id]
+            )
+        ]
+    )
+    result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
+        campaign(), [technology]
+    )
+    assert result.facts == QualificationFacts()
+    size_campaign = campaign()
+    size_campaign.company_size = CompanySizeCriteria(
+        min=CompanySizeBound(value=1000, requirement=CriterionRequirement.REQUIRED)
+    )
+    assert qualify_company(size_campaign, result.facts)[-1].status is QualificationStatus.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_invalid_fact_does_not_discard_a_valid_fact() -> None:
+    java = evidence("Our backend uses Java", subject="Java")
+    output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2", state="supported", evidence_ids=[java.id]
+            ),
+            CategoricalEvidenceFact(
+                criterion_id="criterion_3", state="supported", evidence_ids=[java.id]
+            ),
+        ]
+    )
+    result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
+        campaign(["Java", "Spring"]), [java]
+    )
+    assert result.facts is not None
+    assert result.facts.categorical[0].state == "supported"
+    assert result.facts.categorical[1].state == "unknown"
 
 
 @pytest.mark.asyncio
