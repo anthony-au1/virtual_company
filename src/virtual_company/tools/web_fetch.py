@@ -44,6 +44,12 @@ class WebFetchTimeoutError(WebFetchError):
     category = "timeout"
 
 
+class WebFetchNetworkError(WebFetchError):
+    """Raised for transport-level failures that may succeed on a later attempt."""
+
+    category = "network_error"
+
+
 class WebFetchHttpError(WebFetchError):
     """Raised for non-successful HTTP responses."""
 

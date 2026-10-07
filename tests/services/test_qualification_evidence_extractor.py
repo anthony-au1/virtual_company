@@ -20,6 +20,7 @@ from virtual_company.research.models import (
     CategoricalEvidenceFact,
     EmployeeCountEvidenceFact,
     QualificationFacts,
+    QualificationFactsCacheStatus,
 )
 from virtual_company.services.qualification import qualify_company
 from virtual_company.services.qualification_evidence_extractor import (
@@ -52,6 +53,21 @@ class ProviderStub:
             return cast(T, self.output)
         finally:
             self.active -= 1
+
+
+class ProviderSequence:
+    def __init__(self, outputs: list[object]) -> None:
+        self.outputs = list(outputs)
+        self.calls = 0
+
+    async def generate_structured(
+        self, *, system_prompt: str, user_prompt: str, response_model: type[T]
+    ) -> T:
+        self.calls += 1
+        output = self.outputs.pop(0)
+        if isinstance(output, BaseException):
+            raise output
+        return cast(T, output)
 
 
 def campaign(technologies: list[str] | None = None) -> SimpleNamespace:
@@ -244,6 +260,70 @@ async def test_invalid_fact_does_not_discard_a_valid_fact() -> None:
     assert result.facts is not None
     assert result.facts.categorical[0].state == "supported"
     assert result.facts.categorical[1].state == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_operational_extraction_failure_retries_once_for_same_evidence() -> None:
+    item = evidence("Kafka services", subject="Kafka")
+    output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2", state="supported", evidence_ids=[item.id]
+            )
+        ]
+    )
+    provider = ProviderSequence([RuntimeError("temporary provider error"), output])
+    extractor = QualificationEvidenceExtractor(provider)
+    first = await extractor.extract(campaign(), [item])
+    assert first.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
+    assert first.attempt_count == 1 and first.facts is None
+
+    second = await extractor.extract(campaign(), [item], previous_entry=first)
+    assert second.status is QualificationFactsCacheStatus.SUCCESS
+    assert second.attempt_count == 2 and second.facts == output
+    assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_operational_extraction_failure_exhausts_after_one_retry() -> None:
+    item = evidence("Kafka services", subject="Kafka")
+    provider = ProviderSequence(
+        [RuntimeError("first failure"), RuntimeError("second failure"), QualificationFacts()]
+    )
+    extractor = QualificationEvidenceExtractor(provider)
+    first = await extractor.extract(campaign(), [item])
+    second = await extractor.extract(campaign(), [item], previous_entry=first)
+    third = await extractor.extract(campaign(), [item], previous_entry=second)
+    assert first.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
+    assert second.status is QualificationFactsCacheStatus.FAILED_EXHAUSTED
+    assert second.attempt_count == 2 and second.facts is None
+    assert third == second
+    assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_successful_semantic_unknown_and_task1_downgrade_are_cached_as_success() -> None:
+    java = evidence("Our backend uses Java", subject="Java")
+    unsupported_spring = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[java.id],
+            )
+        ]
+    )
+    provider = ProviderSequence([QualificationFacts(), unsupported_spring])
+    extractor = QualificationEvidenceExtractor(provider)
+    unknown = await extractor.extract(campaign(["Kafka"]), [java])
+    assert unknown.status is QualificationFactsCacheStatus.SUCCESS
+    assert unknown.facts == QualificationFacts()
+
+    downgraded = await extractor.extract(campaign(["Spring"]), [java])
+    assert downgraded.status is QualificationFactsCacheStatus.SUCCESS
+    assert downgraded.facts is not None
+    assert downgraded.facts.categorical[0].state == "unknown"
+    assert provider.calls == 2
 
 
 @pytest.mark.asyncio

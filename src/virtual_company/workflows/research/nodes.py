@@ -23,6 +23,7 @@ from virtual_company.research.models import (
     ExtractedEvidence,
     ExtractedEvidenceItems,
     QualificationFactsCacheEntry,
+    QualificationFactsCacheStatus,
     SearchResult,
     WebPage,
 )
@@ -42,7 +43,13 @@ from virtual_company.services.qualification_evidence_extractor import (
     EvidenceForExtraction,
     QualificationEvidenceExtractor,
 )
-from virtual_company.tools.web_fetch import WebFetchError, WebFetchTool
+from virtual_company.tools.web_fetch import (
+    WebFetchError,
+    WebFetchHttpError,
+    WebFetchNetworkError,
+    WebFetchTimeoutError,
+    WebFetchTool,
+)
 from virtual_company.tools.web_search import WebSearchTool
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
@@ -791,10 +798,14 @@ class ResearchNodes:
             else self._company_research_max_fetches_per_company
         )
         for company in active_companies:
-            seen_urls: set[str] = set(
-                investigations.get(
-                    company.id, CompanyInvestigationState(company_id=company.id)
-                ).attempted_urls
+            investigation = investigations.get(
+                company.id, CompanyInvestigationState(company_id=company.id)
+            )
+            seen_urls = set(investigation.attempted_urls)
+            seen_urls.update(
+                url
+                for url, attempt_count in investigation.transient_fetch_failures.items()
+                if attempt_count >= 2
             )
             unique_results: list[tuple[int, SearchResult]] = []
             for index, result in enumerate(
@@ -852,14 +863,6 @@ class ResearchNodes:
                     sources.append(result)
                     selected_keys.add(key)
             selected[company.id] = sources
-            investigation = investigations.get(
-                company.id, CompanyInvestigationState(company_id=company.id)
-            )
-            attempted = set(investigation.attempted_urls)
-            attempted.update(normalize_fetch_url(source.url) for source in sources)
-            investigations[company.id] = investigation.model_copy(
-                update={"attempted_urls": attempted}
-            )
             with observability.context(
                 company_id=str(company.id), company_domain=company.domain
             ):
@@ -892,17 +895,24 @@ class ResearchNodes:
 
     async def fetch_company_sources(
         self, state: ResearchWorkflowState
-    ) -> dict[str, dict[UUID, list[WebPage]]]:
+    ) -> dict[str, object]:
         """Fetch selected sources with a bounded worker pool and partial failures."""
         observability = get_observability()
+        active_companies = self._active_companies(state)
+        investigations = dict(state.get("investigations", {}))
+        for company in active_companies:
+            investigations.setdefault(
+                company.id, CompanyInvestigationState(company_id=company.id)
+            )
         work = [
             (company.id, index, result)
-            for company in self._active_companies(state)
+            for company in active_companies
             for index, result in enumerate(
                 state["selected_company_sources"].get(company.id, [])
             )
         ]
         successes: dict[tuple[UUID, int], WebPage] = {}
+        failures: dict[tuple[UUID, int], WebFetchError] = {}
         queue: asyncio.Queue[tuple[UUID, int, SearchResult]] = asyncio.Queue()
         for item in work:
             queue.put_nowait(item)
@@ -922,13 +932,26 @@ class ResearchNodes:
                         update={"title": page.title or source.title}
                     )
                 except WebFetchError as error:
+                    normalized_url = self._source_state_key(source.url)
+                    attempt_number = (
+                        investigations[company_id]
+                        .transient_fetch_failures.get(normalized_url, 0)
+                        + 1
+                    )
+                    retryable = self._fetch_error_is_retryable(error)
+                    retry_remaining = retryable and attempt_number < 2
                     observability.event(
                         "company_source_fetch_failed",
                         company_id=str(company_id),
                         url=source.url,
                         failure_category=error.category,
                         http_status=getattr(error, "status_code", None),
+                        attempt_number=attempt_number,
+                        retryable=retryable,
+                        retry_remaining=retry_remaining,
+                        exhausted=not retry_remaining,
                     )
+                    failures[(company_id, index)] = error
                 finally:
                     queue.task_done()
 
@@ -938,6 +961,34 @@ class ResearchNodes:
         ]
         if workers:
             await asyncio.gather(*workers)
+        for company in active_companies:
+            investigation = investigations[company.id]
+            attempted_urls = set(investigation.attempted_urls)
+            transient_failures = dict(investigation.transient_fetch_failures)
+            for index, source in enumerate(
+                state["selected_company_sources"].get(company.id, [])
+            ):
+                normalized_url = self._source_state_key(source.url)
+                key = (company.id, index)
+                if key in successes:
+                    attempted_urls.add(normalized_url)
+                    transient_failures.pop(normalized_url, None)
+                    continue
+                error = failures.get(key)
+                if error is None:
+                    continue
+                attempt_number = transient_failures.get(normalized_url, 0) + 1
+                if self._fetch_error_is_retryable(error) and attempt_number < 2:
+                    transient_failures[normalized_url] = attempt_number
+                else:
+                    attempted_urls.add(normalized_url)
+                    transient_failures.pop(normalized_url, None)
+            investigations[company.id] = investigation.model_copy(
+                update={
+                    "attempted_urls": attempted_urls,
+                    "transient_fetch_failures": transient_failures,
+                }
+            )
         pages_by_company = {
             company.id: [
                 successes[(company.id, index)]
@@ -946,9 +997,9 @@ class ResearchNodes:
                 )
                 if (company.id, index) in successes
             ]
-            for company in self._active_companies(state)
+            for company in active_companies
         }
-        for company in self._active_companies(state):
+        for company in active_companies:
             selected_count = len(state["selected_company_sources"].get(company.id, []))
             fetched_count = len(pages_by_company[company.id])
             observability.event(
@@ -965,7 +1016,25 @@ class ResearchNodes:
         }
         with observability.span("fetch_company_sources", **context):
             observability.event("company_sources_fetch_completed", **context)
-        return {"company_web_pages": pages_by_company}
+        return {
+            "company_web_pages": pages_by_company,
+            "investigations": investigations,
+        }
+
+    @staticmethod
+    def _fetch_error_is_retryable(error: WebFetchError) -> bool:
+        if isinstance(error, (WebFetchTimeoutError, WebFetchNetworkError)):
+            return True
+        if isinstance(error, WebFetchHttpError):
+            return error.status_code in {408, 429} or error.status_code >= 500
+        return False
+
+    @staticmethod
+    def _source_state_key(url: str) -> str:
+        try:
+            return normalize_fetch_url(url)
+        except ValueError:
+            return url.strip().casefold()
 
     async def extract_company_evidence(
         self, state: ResearchWorkflowState
@@ -1266,7 +1335,9 @@ class ResearchNodes:
         extracted = await asyncio.gather(
             *(
                 self._qualification_extractor.extract(
-                    campaign, evidence_by_company[company.id]
+                    campaign,
+                    evidence_by_company[company.id],
+                    previous_entry=fact_cache.get(company.id),
                 )
                 for company in pending_companies
             )
@@ -1539,7 +1610,9 @@ class ResearchNodes:
         extracted = await asyncio.gather(
             *(
                 self._qualification_extractor.extract(
-                    campaign, evidence_by_company[company.id]
+                    campaign,
+                    evidence_by_company[company.id],
+                    previous_entry=fact_cache.get(company.id),
                 )
                 for company in stale_companies
             )
@@ -1584,7 +1657,10 @@ class ResearchNodes:
             with observability.span("company_qualification", **metadata):
                 observability.event("company_qualified", **metadata)
             results[company.id] = result
-        return {"company_qualifications": results}
+        return {
+            "company_qualifications": results,
+            "qualification_facts": fact_cache,
+        }
 
     @staticmethod
     def _facts_are_stale(
@@ -1592,7 +1668,11 @@ class ResearchNodes:
         evidence: list[EvidenceForExtraction],
     ) -> bool:
         evidence_ids = sorted({item.id for item in evidence}, key=str)
-        return cached is None or cached.evidence_ids != evidence_ids
+        return (
+            cached is None
+            or cached.evidence_ids != evidence_ids
+            or cached.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
+        )
 
     async def persist_company_qualifications(
         self, state: ResearchWorkflowState

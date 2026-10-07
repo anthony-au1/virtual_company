@@ -29,11 +29,16 @@ from virtual_company.research.models import (
     ExtractedEvidence,
     ExtractedEvidenceItems,
     QualificationFacts,
+    QualificationFactsCacheEntry,
+    QualificationFactsCacheStatus,
     SearchResult,
     WebPage,
 )
 from virtual_company.services.research import ResearchService
-from virtual_company.tools.web_fetch import WebFetchError
+from virtual_company.tools.web_fetch import (
+    WebFetchHttpError,
+    WebFetchTimeoutError,
+)
 from virtual_company.workflows.research.graph import (
     ResearchWorkflow,
     route_candidate_pool,
@@ -172,6 +177,19 @@ class FetchFake:
     async def fetch(self, url: str) -> WebPage:
         self.calls.append(url)
         value = self.pages.get(url, WebPage(url=url, content="Fetched page"))
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+class FetchSequenceFake:
+    def __init__(self, values: dict[str, list[WebPage | Exception]]) -> None:
+        self.values = {url: list(items) for url, items in values.items()}
+        self.calls: list[str] = []
+
+    async def fetch(self, url: str) -> WebPage:
+        self.calls.append(url)
+        value = self.values[url].pop(0)
         if isinstance(value, Exception):
             raise value
         return value
@@ -1056,7 +1074,7 @@ async def test_fetch_sources_retains_partial_successes() -> None:
     fetch = FetchFake(
         {
             "https://a.example/one": WebPage(url="https://a.example/one", content="A"),
-            "https://a.example/two": WebFetchError("timeout"),
+            "https://a.example/two": WebFetchTimeoutError("timeout"),
             "https://b.example": WebPage(url="https://b.example", content="B"),
         }
     )
@@ -1487,7 +1505,269 @@ async def test_attempted_urls_are_not_selected_or_fetched_again() -> None:
     assert [item.url for item in output["selected_company_sources"][company.id]] == [
         new_url
     ]
-    assert output["investigations"][company.id].attempted_urls == {old_url, new_url}
+    assert output["investigations"][company.id].attempted_urls == {old_url}
+    nodes._web_fetch = FetchFake(
+        {new_url: WebPage(url=new_url, content="Source examined")}
+    )
+    fetched = await nodes.fetch_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "selected_company_sources": output["selected_company_sources"],
+            "investigations": output["investigations"],
+        }
+    )  # type: ignore[arg-type]
+    assert fetched["investigations"][company.id].attempted_urls == {old_url, new_url}
+    repeated = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "adaptive_mode": True,
+            "company_search_results": {company.id: [SearchResult(title="New", url=new_url)]},
+            "investigations": fetched["investigations"],
+        }
+    )  # type: ignore[arg-type]
+    assert repeated["selected_company_sources"][company.id] == []
+
+
+@pytest.mark.asyncio
+async def test_transient_fetch_failure_remains_available_for_one_later_retry() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    url = "https://acme.example/java"
+    result = SearchResult(title="Java engineering", url=url)
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._web_fetch = FetchSequenceFake(
+        {url: [WebFetchTimeoutError("timeout"), WebPage(url=url, content="Acme uses Java.")]}
+    )
+    investigation = CompanyInvestigationState(company_id=company.id)
+    first_selection = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "company_search_results": {company.id: [result]},
+            "investigations": {company.id: investigation},
+        }
+    )  # type: ignore[arg-type]
+    assert first_selection["investigations"][company.id].attempted_urls == set()
+    first_fetch = await nodes.fetch_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "selected_company_sources": first_selection["selected_company_sources"],
+            "investigations": first_selection["investigations"],
+        }
+    )  # type: ignore[arg-type]
+    failed_state = first_fetch["investigations"][company.id]
+    assert failed_state.transient_fetch_failures == {url: 1}
+    assert url not in failed_state.attempted_urls
+
+    second_selection = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "company_search_results": {company.id: [result]},
+            "investigations": first_fetch["investigations"],
+        }
+    )  # type: ignore[arg-type]
+    assert second_selection["selected_company_sources"][company.id] == [result]
+    second_fetch = await nodes.fetch_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "selected_company_sources": second_selection["selected_company_sources"],
+            "investigations": second_selection["investigations"],
+        }
+    )  # type: ignore[arg-type]
+    successful_state = second_fetch["investigations"][company.id]
+    assert successful_state.transient_fetch_failures == {}
+    assert url in successful_state.attempted_urls
+    page = second_fetch["company_web_pages"][company.id][0]
+
+    attributed = await nodes.validate_company_page_attribution(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "company_web_pages": {company.id: [page]},
+        }
+    )  # type: ignore[arg-type]
+    assert attributed["attributable_company_web_pages"][company.id] == [page]
+    nodes._extraction_llm = EvidenceExtractionFake(
+        {
+            url: [
+                ExtractedEvidence(
+                    criterion=EvidenceCriterion.TECHNOLOGY,
+                    subject="Java",
+                    claim="Acme uses Java.",
+                    evidence_text="Acme uses Java.",
+                )
+            ]
+        }
+    )
+    extracted = await nodes.extract_company_evidence(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_run_id": uuid4(),
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "company_web_pages": {company.id: [page]},
+            "attributable_company_web_pages": attributed[
+                "attributable_company_web_pages"
+            ],
+        }
+    )  # type: ignore[arg-type]
+    assert len(extracted["validated_evidence"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_transient_fetch_retry_exhaustion_and_nonretryable_failure_are_terminal() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    url = "https://acme.example/page"
+    result = SearchResult(title="Company page", url=url)
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+
+    async def fetch_once(
+        fetch: FetchSequenceFake,
+        investigation: CompanyInvestigationState,
+        source: SearchResult = result,
+    ) -> CompanyInvestigationState:
+        nodes._web_fetch = fetch
+        return (
+            await nodes.fetch_company_sources(
+                {
+                    "research_companies": [company],
+                    "active_company_ids": [company.id],
+                    "selected_company_sources": {company.id: [source]},
+                    "investigations": {company.id: investigation},
+                }
+            )  # type: ignore[arg-type]
+        )["investigations"][company.id]
+
+    transient_fetch = FetchSequenceFake(
+        {url: [WebFetchTimeoutError("first"), WebFetchTimeoutError("second")]}
+    )
+    first = await fetch_once(transient_fetch, CompanyInvestigationState(company_id=company.id))
+    assert first.transient_fetch_failures[url] == 1
+    second = await fetch_once(transient_fetch, first)
+    assert url in second.attempted_urls
+    assert second.transient_fetch_failures == {}
+    assert len(transient_fetch.calls) == 2
+
+    retry = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "company_search_results": {company.id: [result]},
+            "investigations": {company.id: second},
+        }
+    )  # type: ignore[arg-type]
+    assert retry["selected_company_sources"][company.id] == []
+
+    missing_url = "https://acme.example/missing"
+    missing = SearchResult(title="Missing", url=missing_url)
+    permanent_fetch = FetchSequenceFake(
+        {missing_url: [WebFetchHttpError(404)]}
+    )
+    permanent = await fetch_once(
+        permanent_fetch,
+        CompanyInvestigationState(company_id=company.id),
+        missing,
+    )
+    assert missing_url in permanent.attempted_urls
+    assert permanent.transient_fetch_failures == {}
+    assert len(permanent_fetch.calls) == 1
+
+
+def test_fact_cache_status_and_evidence_snapshot_control_freshness() -> None:
+    evidence_id = uuid4()
+    item = SimpleNamespace(id=evidence_id)
+    retryable = QualificationFactsCacheEntry(
+        evidence_ids=[evidence_id],
+        facts=None,
+        status=QualificationFactsCacheStatus.FAILED_RETRYABLE,
+        attempt_count=1,
+    )
+    exhausted = QualificationFactsCacheEntry(
+        evidence_ids=[evidence_id],
+        facts=None,
+        status=QualificationFactsCacheStatus.FAILED_EXHAUSTED,
+        attempt_count=2,
+    )
+    semantic_unknown = QualificationFactsCacheEntry(
+        evidence_ids=[evidence_id], facts=QualificationFacts()
+    )
+    assert ResearchNodes._facts_are_stale(retryable, [item])
+    assert not ResearchNodes._facts_are_stale(exhausted, [item])
+    assert not ResearchNodes._facts_are_stale(semantic_unknown, [item])
+    assert ResearchNodes._facts_are_stale(exhausted, [SimpleNamespace(id=uuid4())])
+
+
+@pytest.mark.asyncio
+async def test_coverage_retries_failed_fact_extraction_but_caches_semantic_unknown() -> None:
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = {"required": ["Java"], "preferred": []}
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    run_id = uuid4()
+    item = SimpleNamespace(
+        id=uuid4(),
+        company_id=company.id,
+        research_run_id=run_id,
+        criterion="technology",
+        subject="Java",
+        claim="Uses Java.",
+        evidence_text="Uses Java.",
+    )
+    service = ResearchServiceFake()
+    service.evidence = [item]
+
+    class FactProvider:
+        def __init__(self) -> None:
+            self.outputs: list[object] = [RuntimeError("temporary"), QualificationFacts()]
+            self.calls = 0
+
+        async def generate_structured(self, **_: object) -> object:
+            self.calls += 1
+            value = self.outputs.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+    provider = FactProvider()
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=service,
+        research_llm=provider,  # type: ignore[arg-type]
+        extraction_llm=provider,  # type: ignore[arg-type]
+        web_search=SearchFake([]),
+        web_fetch=FetchFake({}),
+        company_research_max_investigation_rounds=2,
+    )
+    state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "research_run_id": run_id,
+        "research_companies": [company],
+        "investigations": {
+            company.id: CompanyInvestigationState(company_id=company.id)
+        },
+    }
+    state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
+    failed = state["qualification_facts"][company.id]
+    assert failed.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
+    assert provider.calls == 1
+
+    state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
+    success = state["qualification_facts"][company.id]
+    assert success.status is QualificationFactsCacheStatus.SUCCESS
+    assert success.facts == QualificationFacts()
+    assert state["criterion_qualifications"][company.id][0].status is QualificationStatus.UNKNOWN
+    assert provider.calls == 2
+
+    state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
+    assert provider.calls == 2
 
 
 @pytest.mark.asyncio
@@ -1665,9 +1945,9 @@ async def test_qualification_reads_current_run_evidence_without_external_calls()
         "validated_evidence": [],
         "research_run_id": run_id,
     }
-    result = (await nodes.qualify_companies(state))["company_qualifications"][
-        company_id
-    ]
+    qualification_result = await nodes.qualify_companies(state)
+    state.update(qualification_result)
+    result = qualification_result["company_qualifications"][company_id]
     assert result.status is CompanyQualificationStatus.QUALIFIED
     assert all(item.evidence_ids == [old.id] for item in result.criteria)
     assert not nodes._research_llm.prompts
@@ -1863,16 +2143,18 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
     state.update(await nodes.check_evidence_coverage(state))
     state["investigations"][company_id].stopped = True
     state["active_company_ids"] = []
-    result = (await nodes.qualify_companies(state))["company_qualifications"][
-        company_id
-    ]
+    qualification_result = await nodes.qualify_companies(state)
+    state.update(qualification_result)
+    result = qualification_result["company_qualifications"][company_id]
     assert result.criteria[0].status is (
         QualificationStatus.MISMATCH
         if outcome == "facts"
         else QualificationStatus.UNKNOWN
     )
     assert result.criteria[0].evidence_ids == ([item.id] if outcome == "facts" else [])
-    provider.generate_structured.assert_awaited_once()
+    assert provider.generate_structured.await_count == (
+        2 if outcome in {"failure", "invalid"} else 1
+    )
     assert not nodes._research_llm.prompts
     assert not nodes._web_search.calls
     assert not nodes._web_fetch.calls
@@ -1880,7 +2162,7 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
     provider.generate_structured.reset_mock()
     model.company_size = None
     state["campaign"] = CampaignCriteria.model_validate(model)
-    await nodes.qualify_companies(state)
+    state.update(await nodes.qualify_companies(state))
     provider.generate_structured.assert_not_awaited()
 
 

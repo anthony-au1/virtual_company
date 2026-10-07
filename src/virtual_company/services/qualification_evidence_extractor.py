@@ -22,6 +22,7 @@ from virtual_company.observability import get_observability
 from virtual_company.research.models import (
     QualificationFacts,
     QualificationFactsCacheEntry,
+    QualificationFactsCacheStatus,
 )
 from virtual_company.workflows.research.prompts import (
     EXTRACT_QUALIFICATION_FACTS_PROMPT,
@@ -56,11 +57,33 @@ class QualificationEvidenceExtractor:
         self,
         campaign: CampaignForQualification,
         evidence: Sequence[EvidenceForExtraction],
+        *,
+        previous_entry: QualificationFactsCacheEntry | None = None,
     ) -> QualificationFactsCacheEntry:
         evidence_ids = sorted({item.id for item in evidence}, key=str)
+        same_evidence = (
+            previous_entry is not None
+            and previous_entry.evidence_ids == evidence_ids
+        )
+        previous_attempts = (
+            previous_entry.attempt_count
+            if same_evidence
+            and previous_entry.status
+            in {
+                QualificationFactsCacheStatus.FAILED_RETRYABLE,
+                QualificationFactsCacheStatus.FAILED_EXHAUSTED,
+            }
+            else 0
+        )
+        if previous_attempts >= 2:
+            return previous_entry
+        attempt_number = previous_attempts + 1
         if not evidence_ids:
             return QualificationFactsCacheEntry(
-                evidence_ids=[], facts=QualificationFacts()
+                evidence_ids=[],
+                facts=QualificationFacts(),
+                status=QualificationFactsCacheStatus.SUCCESS,
+                attempt_count=0,
             )
 
         configured_criteria = campaign_criteria(campaign)
@@ -107,21 +130,40 @@ class QualificationEvidenceExtractor:
                     facts, criterion_by_id, evidence_by_id, allowed_evidence_ids
                 )
         except Exception as error:  # noqa: BLE001 - one company stays unknown
+            status = (
+                QualificationFactsCacheStatus.FAILED_RETRYABLE
+                if attempt_number < 2
+                else QualificationFactsCacheStatus.FAILED_EXHAUSTED
+            )
             observability.event(
                 "qualification_fact_extraction_failed",
                 error_type=type(error).__name__,
-                outcome="unknown",
+                outcome=status.value,
+                attempt_number=attempt_number,
+                retry_remaining=attempt_number < 2,
+                retry_exhausted=attempt_number >= 2,
                 **metadata,
             )
-            return QualificationFactsCacheEntry(evidence_ids=evidence_ids, facts=None)
+            return QualificationFactsCacheEntry(
+                evidence_ids=evidence_ids,
+                facts=None,
+                status=status,
+                attempt_count=attempt_number,
+            )
 
         observability.event(
             "qualification_facts_extracted",
             categorical_count=len(facts.categorical),
             employee_count_fact_count=len(facts.employee_counts),
+            attempt_number=attempt_number,
             **metadata,
         )
-        return QualificationFactsCacheEntry(evidence_ids=evidence_ids, facts=facts)
+        return QualificationFactsCacheEntry(
+            evidence_ids=evidence_ids,
+            facts=facts,
+            status=QualificationFactsCacheStatus.SUCCESS,
+            attempt_count=attempt_number,
+        )
 
     @staticmethod
     def _validate_references(

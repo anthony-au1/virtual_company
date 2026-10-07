@@ -9,6 +9,7 @@ from virtual_company.tools.httpx_web_fetch import HttpxWebFetchTool
 from virtual_company.tools.web_fetch import (
     WebFetchHttpError,
     WebFetchInvalidUrlError,
+    WebFetchNetworkError,
     WebFetchResponseTooLargeError,
     WebFetchSsrfError,
     WebFetchTimeoutError,
@@ -171,4 +172,13 @@ async def test_fetch_maps_timeouts() -> None:
         raise httpx.ReadTimeout("slow")
 
     with pytest.raises(WebFetchTimeoutError):
+        await make_tool(handler).fetch("https://example.com/page")
+
+
+@pytest.mark.asyncio
+async def test_fetch_maps_transport_failures_for_bounded_retry_classification() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection reset")
+
+    with pytest.raises(WebFetchNetworkError):
         await make_tool(handler).fetch("https://example.com/page")

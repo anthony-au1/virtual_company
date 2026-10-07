@@ -1,10 +1,12 @@
 """Pydantic data-transfer models for the research workflow."""
 
+from __future__ import annotations
+
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class SearchResult(BaseModel):
@@ -103,6 +105,12 @@ class QualificationFacts(BaseModel):
     employee_counts: list[EmployeeCountEvidenceFact] = Field(default_factory=list)
 
 
+class QualificationFactsCacheStatus(StrEnum):
+    SUCCESS = "success"
+    FAILED_RETRYABLE = "failed_retryable"
+    FAILED_EXHAUSTED = "failed_exhausted"
+
+
 class QualificationFactsCacheEntry(BaseModel):
     """Transient facts and the exact Evidence set from which they were extracted."""
 
@@ -110,3 +118,19 @@ class QualificationFactsCacheEntry(BaseModel):
 
     evidence_ids: list[UUID]
     facts: QualificationFacts | None
+    status: QualificationFactsCacheStatus = QualificationFactsCacheStatus.SUCCESS
+    attempt_count: int = Field(default=1, ge=0, le=2)
+
+    @model_validator(mode="after")
+    def validate_status(self) -> QualificationFactsCacheEntry:
+        if self.status is QualificationFactsCacheStatus.SUCCESS and self.facts is None:
+            raise ValueError("Successful fact extraction requires facts")
+        if self.status is not QualificationFactsCacheStatus.SUCCESS and self.facts is not None:
+            raise ValueError("Failed fact extraction cannot contain facts")
+        if self.status is QualificationFactsCacheStatus.FAILED_RETRYABLE and self.attempt_count != 1:
+            raise ValueError("Retryable extraction failures require one attempt")
+        if self.status is QualificationFactsCacheStatus.FAILED_EXHAUSTED and self.attempt_count != 2:
+            raise ValueError("Exhausted extraction failures require two attempts")
+        if self.status is QualificationFactsCacheStatus.SUCCESS and self.evidence_ids and self.attempt_count == 0:
+            raise ValueError("Successful extraction of Evidence requires an attempt")
+        return self

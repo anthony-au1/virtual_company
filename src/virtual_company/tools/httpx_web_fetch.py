@@ -17,6 +17,7 @@ from virtual_company.tools.web_fetch import (
     WebFetchError,
     WebFetchHttpError,
     WebFetchInvalidUrlError,
+    WebFetchNetworkError,
     WebFetchResponseTooLargeError,
     WebFetchSsrfError,
     WebFetchTimeoutError,
@@ -89,7 +90,7 @@ class HttpxWebFetchTool:
             except httpx.TimeoutException as error:
                 raise WebFetchTimeoutError("Web page request timed out") from error
             except httpx.HTTPError as error:
-                raise WebFetchError("Web page request failed") from error
+                raise WebFetchNetworkError("Web page request failed") from error
 
             content, title = self._extract_content(body, content_type, response.encoding)
             if not content:

@@ -137,6 +137,7 @@ class CompanyInvestigationState(BaseModel):
     round: int = Field(default=0, ge=0)
     coverage: list[CriterionCoverage] = Field(default_factory=list)
     attempted_urls: set[str] = Field(default_factory=set)
+    transient_fetch_failures: dict[str, int] = Field(default_factory=dict)
     attempted_queries: list[str] = Field(default_factory=list, max_length=60)
     attempted_strategy_focuses: list[str] = Field(default_factory=list, max_length=4)
     unresolved_before: set[str] = Field(default_factory=set)
