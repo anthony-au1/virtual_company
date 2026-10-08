@@ -59,6 +59,7 @@ class QualificationEvidenceExtractor:
         evidence: Sequence[EvidenceForExtraction],
         *,
         previous_entry: QualificationFactsCacheEntry | None = None,
+        target_criterion_ids: set[str] | None = None,
     ) -> QualificationFactsCacheEntry:
         evidence_ids = sorted({item.id for item in evidence}, key=str)
         same_evidence = (
@@ -81,17 +82,49 @@ class QualificationEvidenceExtractor:
         if not evidence_ids:
             return QualificationFactsCacheEntry(
                 evidence_ids=[],
-                facts=QualificationFacts(),
+                facts=(
+                    previous_entry.facts
+                    if previous_entry is not None and previous_entry.facts is not None
+                    else QualificationFacts()
+                ),
                 status=QualificationFactsCacheStatus.SUCCESS,
                 attempt_count=0,
             )
 
         configured_criteria = campaign_criteria(campaign)
+        if target_criterion_ids is not None and not target_criterion_ids:
+            return QualificationFactsCacheEntry(
+                evidence_ids=evidence_ids,
+                facts=(
+                    previous_entry.facts
+                    if previous_entry is not None and previous_entry.facts is not None
+                    else QualificationFacts()
+                ),
+                status=QualificationFactsCacheStatus.SUCCESS,
+                attempt_count=max(
+                    previous_entry.attempt_count if previous_entry is not None else 0,
+                    1,
+                ),
+            )
         extractable_criteria = [
             (index, criterion)
             for index, criterion in enumerate(configured_criteria)
             if criterion.criterion != "company_size"
+            and (
+                target_criterion_ids is None
+                or f"criterion_{index}" in target_criterion_ids
+            )
         ]
+        include_company_size = target_criterion_ids is None or any(
+            criterion.criterion == "company_size"
+            and f"criterion_{index}" in target_criterion_ids
+            for index, criterion in enumerate(configured_criteria)
+        )
+        prompt_evidence = (
+            evidence
+            if include_company_size
+            else [item for item in evidence if item.criterion != "company_size"]
+        )
         criteria = [
             {
                 "criterion_id": f"criterion_{index}",
@@ -123,7 +156,7 @@ class QualificationEvidenceExtractor:
                 response = await self._provider.generate_structured(
                     system_prompt=extract_qualification_facts_system_prompt(),
                     user_prompt=extract_qualification_facts_user_prompt(
-                        criteria, evidence
+                        criteria, prompt_evidence
                     ),
                     response_model=QualificationFacts,
                 )
@@ -152,7 +185,9 @@ class QualificationEvidenceExtractor:
             )
             return QualificationFactsCacheEntry(
                 evidence_ids=evidence_ids,
-                facts=None,
+                facts=(
+                    previous_entry.facts if previous_entry is not None else None
+                ),
                 status=status,
                 attempt_count=attempt_number,
             )

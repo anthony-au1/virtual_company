@@ -112,7 +112,7 @@ class QualificationFactsCacheStatus(StrEnum):
 
 
 class QualificationFactsCacheEntry(BaseModel):
-    """Transient facts and the exact Evidence set from which they were extracted."""
+    """Accumulated facts and the latest Evidence set used for extraction."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -125,8 +125,6 @@ class QualificationFactsCacheEntry(BaseModel):
     def validate_status(self) -> QualificationFactsCacheEntry:
         if self.status is QualificationFactsCacheStatus.SUCCESS and self.facts is None:
             raise ValueError("Successful fact extraction requires facts")
-        if self.status is not QualificationFactsCacheStatus.SUCCESS and self.facts is not None:
-            raise ValueError("Failed fact extraction cannot contain facts")
         if self.status is QualificationFactsCacheStatus.FAILED_RETRYABLE and self.attempt_count != 1:
             raise ValueError("Retryable extraction failures require one attempt")
         if self.status is QualificationFactsCacheStatus.FAILED_EXHAUSTED and self.attempt_count != 2:

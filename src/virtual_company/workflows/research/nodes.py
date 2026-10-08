@@ -7,7 +7,11 @@ from collections.abc import Callable, Sequence
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from virtual_company.domain.criteria import CriterionRequirement, normalize_subject
+from virtual_company.domain.criteria import (
+    CriterionRequirement,
+    campaign_criteria,
+    normalize_subject,
+)
 from virtual_company.domain.qualification import (
     CompanyQualification,
     CompanyQualificationStatus,
@@ -22,6 +26,7 @@ from virtual_company.research.models import (
     EvidenceCriterion,
     ExtractedEvidence,
     ExtractedEvidenceItems,
+    QualificationFacts,
     QualificationFactsCacheEntry,
     QualificationFactsCacheStatus,
     SearchResult,
@@ -1349,12 +1354,14 @@ class ResearchNodes:
                 fact_cache.get(company.id), evidence_by_company[company.id]
             )
         ]
+        previous_qualifications = state.get("criterion_qualifications", {})
         extracted = await asyncio.gather(
             *(
-                self._qualification_extractor.extract(
+                self._extract_incremental_qualification_facts(
                     campaign,
                     evidence_by_company[company.id],
                     previous_entry=fact_cache.get(company.id),
+                    previous_qualifications=previous_qualifications.get(company.id),
                 )
                 for company in pending_companies
             )
@@ -1381,7 +1388,11 @@ class ResearchNodes:
                 research_run_id=research_run_id,
             )
             cached = fact_cache[company.id]
-            criteria = qualify_company(campaign, cached.facts)
+            evaluated_criteria = qualify_company(campaign, cached.facts)
+            criteria = self._preserve_resolved_qualifications(
+                evaluated_criteria,
+                criterion_qualifications.get(company.id),
+            )
             criterion_qualifications[company.id] = criteria
             required = [
                 item
@@ -1624,12 +1635,14 @@ class ResearchNodes:
                 fact_cache.get(company.id), evidence_by_company[company.id]
             )
         ]
+        previous_qualifications = state.get("criterion_qualifications", {})
         extracted = await asyncio.gather(
             *(
-                self._qualification_extractor.extract(
+                self._extract_incremental_qualification_facts(
                     campaign,
                     evidence_by_company[company.id],
                     previous_entry=fact_cache.get(company.id),
+                    previous_qualifications=previous_qualifications.get(company.id),
                 )
                 for company in stale_companies
             )
@@ -1640,11 +1653,20 @@ class ResearchNodes:
                 for company, facts in zip(stale_companies, extracted, strict=True)
             }
         )
+        criterion_qualifications = dict(previous_qualifications)
         for company in state["research_companies"]:
+            evaluated_criteria = qualify_company(
+                campaign, fact_cache[company.id].facts
+            )
+            criteria = self._preserve_resolved_qualifications(
+                evaluated_criteria,
+                criterion_qualifications.get(company.id),
+            )
             result = aggregate_qualification(
                 company.id,
-                qualify_company(campaign, fact_cache[company.id].facts),
+                criteria,
             )
+            criterion_qualifications[company.id] = criteria
             metadata = {
                 "company_id": str(company.id),
                 "company_name": company.name,
@@ -1677,7 +1699,83 @@ class ResearchNodes:
         return {
             "company_qualifications": results,
             "qualification_facts": fact_cache,
+            "criterion_qualifications": criterion_qualifications,
         }
+
+    async def _extract_incremental_qualification_facts(
+        self,
+        campaign: CampaignCriteria,
+        evidence: list[EvidenceForExtraction],
+        *,
+        previous_entry: QualificationFactsCacheEntry | None,
+        previous_qualifications: list[CriterionQualification] | None,
+    ) -> QualificationFactsCacheEntry:
+        target_ids = self._unresolved_criterion_ids(campaign, previous_qualifications)
+        extracted = await self._qualification_extractor.extract(
+            campaign,
+            evidence,
+            previous_entry=previous_entry,
+            target_criterion_ids=target_ids,
+        )
+        if (
+            extracted.status is not QualificationFactsCacheStatus.SUCCESS
+            or extracted.facts is None
+            or previous_entry is None
+            or previous_entry.facts is None
+        ):
+            return extracted
+
+        configured = campaign_criteria(campaign)
+        size_ids = {
+            f"criterion_{index}"
+            for index, criterion in enumerate(configured)
+            if criterion.criterion == "company_size"
+        }
+        previous_facts = previous_entry.facts
+        extracted_facts = extracted.facts
+        merged = QualificationFacts(
+            categorical=[
+                fact
+                for fact in previous_facts.categorical
+                if fact.criterion_id not in target_ids
+            ]
+            + extracted_facts.categorical,
+            employee_counts=(
+                extracted_facts.employee_counts
+                if target_ids & size_ids
+                else previous_facts.employee_counts
+            ),
+        )
+        return extracted.model_copy(update={"facts": merged})
+
+    @staticmethod
+    def _unresolved_criterion_ids(
+        campaign: CampaignCriteria,
+        qualifications: list[CriterionQualification] | None,
+    ) -> set[str]:
+        configured = campaign_criteria(campaign)
+        if qualifications is None:
+            return {f"criterion_{index}" for index in range(len(configured))}
+        return {
+            f"criterion_{index}"
+            for index, item in enumerate(qualifications)
+            if index < len(configured) and item.status is QualificationStatus.UNKNOWN
+        }
+
+    @staticmethod
+    def _preserve_resolved_qualifications(
+        evaluated: list[CriterionQualification],
+        previous: list[CriterionQualification] | None,
+    ) -> list[CriterionQualification]:
+        if previous is None:
+            return evaluated
+        return [
+            previous[index]
+            if index < len(previous)
+            and previous[index].status is not QualificationStatus.UNKNOWN
+            else item
+            for index, item in enumerate(evaluated)
+        ]
 
     @staticmethod
     def _facts_are_stale(

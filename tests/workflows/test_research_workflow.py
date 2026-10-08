@@ -1923,6 +1923,223 @@ async def test_coverage_retries_failed_fact_extraction_but_caches_semantic_unkno
     assert provider.calls == 2
 
 
+def _qualification_evidence(
+    company: ResearchCompany,
+    run_id: UUID,
+    criterion: str,
+    subject: str | None,
+    text: str,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid4(),
+        company_id=company.id,
+        research_run_id=run_id,
+        criterion=criterion,
+        subject=subject,
+        claim=text,
+        evidence_text=text,
+    )
+
+
+class SemanticFactsProvider:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    async def generate_structured(self, **kwargs: object) -> object:
+        prompt = str(kwargs["user_prompt"])
+        self.prompts.append(prompt)
+        return qualification_facts_from_prompt(prompt)
+
+
+def _criteria_from_semantic_prompt(prompt: str) -> list[dict[str, object]]:
+    return json.loads(prompt)["categorical_criteria"]
+
+
+@pytest.mark.asyncio
+async def test_airwallex_followup_only_extracts_unknown_and_preserves_matches() -> None:
+    model = campaign()
+    model.technologies = {"required": ["Java", "Spring"], "preferred": ["Kafka"]}
+    model.company_size = {"min": {"value": 100, "requirement": "preferred"}}
+    company = ResearchCompany(id=uuid4(), name="Airwallex Pty Ltd")
+    run_id = uuid4()
+    service = ResearchServiceFake()
+    service.evidence = [
+        _qualification_evidence(
+            company, run_id, "target_market", "Australia", "Australia"
+        ),
+        _qualification_evidence(company, run_id, "industry", "Fintech", "Fintech"),
+        _qualification_evidence(company, run_id, "technology", "Java", "Uses Java"),
+        _qualification_evidence(company, run_id, "technology", "Spring", "Uses Spring"),
+    ]
+    provider = SemanticFactsProvider()
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=service,
+        research_llm=provider,  # type: ignore[arg-type]
+        extraction_llm=provider,  # type: ignore[arg-type]
+        web_search=SearchFake([]),
+        web_fetch=FetchFake({}),
+    )
+    state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "research_run_id": run_id,
+        "research_companies": [company],
+        "investigations": {
+            company.id: CompanyInvestigationState(company_id=company.id)
+        },
+    }
+
+    state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
+    initial = state["criterion_qualifications"][company.id]
+    assert [item.status for item in initial] == [
+        QualificationStatus.MATCH,
+        QualificationStatus.MATCH,
+        QualificationStatus.MATCH,
+        QualificationStatus.MATCH,
+        QualificationStatus.UNKNOWN,
+        QualificationStatus.UNKNOWN,
+    ]
+    service.evidence.append(
+        _qualification_evidence(company, run_id, "technology", "Kafka", "Uses Kafka")
+    )
+
+    state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
+
+    followup_targets = _criteria_from_semantic_prompt(provider.prompts[-1])
+    assert [item["criterion_id"] for item in followup_targets] == ["criterion_4"]
+    final_criteria = state["criterion_qualifications"][company.id]
+    assert [item.status for item in final_criteria] == [
+        QualificationStatus.MATCH,
+        QualificationStatus.MATCH,
+        QualificationStatus.MATCH,
+        QualificationStatus.MATCH,
+        QualificationStatus.MATCH,
+        QualificationStatus.UNKNOWN,
+    ]
+    state["investigations"][company.id] = state["investigations"][
+        company.id
+    ].model_copy(update={"stopped": True})
+    state["active_company_ids"] = []
+
+    qualified = await nodes.qualify_companies(state)  # type: ignore[arg-type]
+
+    assert qualified["company_qualifications"][company.id].status.value == "QUALIFIED"
+    assert len(provider.prompts) == 2
+
+
+@pytest.mark.asyncio
+async def test_resolved_company_size_mismatch_is_not_re_evaluated() -> None:
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = {"required": [], "preferred": ["Kafka"]}
+    model.company_size = {"min": {"value": 100, "requirement": "preferred"}}
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    run_id = uuid4()
+    service = ResearchServiceFake()
+    service.evidence = [
+        _qualification_evidence(
+            company, run_id, "company_size", None, "40 employees"
+        )
+    ]
+    provider = SemanticFactsProvider()
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=service,
+        research_llm=provider,  # type: ignore[arg-type]
+        extraction_llm=provider,  # type: ignore[arg-type]
+        web_search=SearchFake([]),
+        web_fetch=FetchFake({}),
+    )
+    state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "research_run_id": run_id,
+        "research_companies": [company],
+        "investigations": {
+            company.id: CompanyInvestigationState(company_id=company.id)
+        },
+    }
+    state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
+    assert state["criterion_qualifications"][company.id][1].status is (
+        QualificationStatus.MISMATCH
+    )
+    service.evidence.append(
+        _qualification_evidence(company, run_id, "technology", "Kafka", "Uses Kafka")
+    )
+
+    state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
+
+    assert [item["criterion_id"] for item in _criteria_from_semantic_prompt(provider.prompts[-1])] == [
+        "criterion_0"
+    ]
+    assert "40 employees" not in provider.prompts[-1]
+    assert state["criterion_qualifications"][company.id][1].status is (
+        QualificationStatus.MISMATCH
+    )
+    assert state["criterion_qualifications"][company.id][0].status is (
+        QualificationStatus.MATCH
+    )
+
+
+@pytest.mark.asyncio
+async def test_semantic_targets_shrink_as_criteria_resolve_across_rounds() -> None:
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.technologies = {
+        "required": ["Java", "Spring"],
+        "preferred": ["Kafka"],
+    }
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    run_id = uuid4()
+    service = ResearchServiceFake()
+    provider = SemanticFactsProvider()
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=service,
+        research_llm=provider,  # type: ignore[arg-type]
+        extraction_llm=provider,  # type: ignore[arg-type]
+        web_search=SearchFake([]),
+        web_fetch=FetchFake({}),
+    )
+    state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "research_run_id": run_id,
+        "research_companies": [company],
+        "investigations": {
+            company.id: CompanyInvestigationState(company_id=company.id)
+        },
+    }
+    state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
+    service.evidence.extend(
+        [
+            _qualification_evidence(company, run_id, "technology", "Java", "Uses Java"),
+            _qualification_evidence(company, run_id, "technology", "Spring", "Uses Spring"),
+        ]
+    )
+
+    state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
+    round_two = _criteria_from_semantic_prompt(provider.prompts[-1])
+    assert [item["criterion_id"] for item in round_two] == [
+        "criterion_0",
+        "criterion_1",
+        "criterion_2",
+    ]
+    service.evidence.append(
+        _qualification_evidence(company, run_id, "technology", "Kafka", "Uses Kafka")
+    )
+
+    state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
+    round_three = _criteria_from_semantic_prompt(provider.prompts[-1])
+    assert [item["criterion_id"] for item in round_three] == ["criterion_2"]
+    assert [item.status for item in state["criterion_qualifications"][company.id]] == [
+        QualificationStatus.MATCH,
+        QualificationStatus.MATCH,
+        QualificationStatus.MATCH,
+    ]
+    assert len(provider.prompts) == 2
+
+
 @pytest.mark.asyncio
 async def test_coverage_stops_companies_independently() -> None:
     model = campaign()

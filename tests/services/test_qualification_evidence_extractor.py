@@ -20,6 +20,7 @@ from virtual_company.research.models import (
     CategoricalEvidenceFact,
     EmployeeCountEvidenceFact,
     QualificationFacts,
+    QualificationFactsCacheEntry,
     QualificationFactsCacheStatus,
 )
 from virtual_company.services.qualification import qualify_company
@@ -299,6 +300,36 @@ async def test_operational_extraction_failure_exhausts_after_one_retry() -> None
     assert second.attempt_count == 2 and second.facts is None
     assert third == second
     assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_incremental_refresh_retains_previous_successful_facts() -> None:
+    original = evidence("Kafka services", subject="Kafka")
+    added = evidence("Kafka platform", subject="Kafka")
+    previous_facts = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[original.id],
+            )
+        ]
+    )
+    previous = QualificationFactsCacheEntry(
+        evidence_ids=[original.id], facts=previous_facts
+    )
+    result = await QualificationEvidenceExtractor(
+        ProviderStub(RuntimeError("temporary provider error"))
+    ).extract(
+        campaign(),
+        [original, added],
+        previous_entry=previous,
+        target_criterion_ids={"criterion_2"},
+    )
+
+    assert result.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
+    assert result.evidence_ids == sorted([original.id, added.id], key=str)
+    assert result.facts == previous_facts
 
 
 @pytest.mark.asyncio
