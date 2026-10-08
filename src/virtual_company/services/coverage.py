@@ -10,7 +10,6 @@ from uuid import UUID
 from virtual_company.domain.criteria import (
     campaign_criteria,
     normalize_subject,
-    technology_subjects,
 )
 from virtual_company.research.models import EvidenceCriterion
 from virtual_company.workflows.research.models import (
@@ -46,8 +45,6 @@ def assess_evidence_coverage(
         subjects = (
             {""}
             if criterion == "company_size"
-            else technology_subjects(item.subject)
-            if criterion == "technology"
             else {normalize_subject(criterion, item.subject)}
         )
         for subject_key in subjects:

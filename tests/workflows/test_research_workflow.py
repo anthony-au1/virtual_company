@@ -2429,8 +2429,12 @@ async def test_qualification_reads_current_run_evidence_without_external_calls()
     qualification_result = await nodes.qualify_companies(state)
     state.update(qualification_result)
     result = qualification_result["company_qualifications"][company_id]
-    assert result.status is CompanyQualificationStatus.QUALIFIED
-    assert all(item.evidence_ids == [old.id] for item in result.criteria)
+    assert result.status is CompanyQualificationStatus.INSUFFICIENT_EVIDENCE
+    assert [item.status for item in result.criteria] == [
+        QualificationStatus.UNKNOWN,
+        QualificationStatus.MATCH,
+    ]
+    assert [item.evidence_ids for item in result.criteria] == [[], [old.id]]
     assert not nodes._research_llm.prompts
     state["investigations"][company_id].stopped = False
     with pytest.raises(ValueError, match="terminal"):

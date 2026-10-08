@@ -7,28 +7,20 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-TECHNOLOGY_IMPLICATIONS = {"spring boot": frozenset({"spring"})}
-_TECHNOLOGY_ALIASES = {
+_TECHNOLOGY_FORMAT_VARIANTS = {
     "springboot": "spring boot",
     "spring-boot": "spring boot",
     "spring_boot": "spring boot",
-    "apache kafka": "kafka",
 }
 
 
 def normalize_subject(criterion: str, value: str | None) -> str:
     key = " ".join((value or "").casefold().split())
     if criterion == "technology":
-        return _TECHNOLOGY_ALIASES.get(key, key)
+        return _TECHNOLOGY_FORMAT_VARIANTS.get(key, key)
     if criterion == "industry" and key == "fin tech":
         return "fintech"
     return key
-
-
-def technology_subjects(value: str | None) -> set[str]:
-    """Expand positive technology support, preserving implication direction."""
-    key = normalize_subject("technology", value)
-    return {key, *TECHNOLOGY_IMPLICATIONS.get(key, ())}
 
 
 class CompanySizeCriteria(BaseModel):

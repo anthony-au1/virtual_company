@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
@@ -15,7 +14,6 @@ from virtual_company.domain.criteria import (
     CampaignForQualification,
     campaign_criteria,
     normalize_subject,
-    technology_subjects,
 )
 from virtual_company.llm.base import LLMProvider
 from virtual_company.observability import get_observability
@@ -63,8 +61,7 @@ class QualificationEvidenceExtractor:
     ) -> QualificationFactsCacheEntry:
         evidence_ids = sorted({item.id for item in evidence}, key=str)
         same_evidence = (
-            previous_entry is not None
-            and previous_entry.evidence_ids == evidence_ids
+            previous_entry is not None and previous_entry.evidence_ids == evidence_ids
         )
         previous_attempts = (
             previous_entry.attempt_count
@@ -134,8 +131,7 @@ class QualificationEvidenceExtractor:
             for index, criterion in extractable_criteria
         ]
         criterion_by_id = {
-            f"criterion_{index}": criterion
-            for index, criterion in extractable_criteria
+            f"criterion_{index}": criterion for index, criterion in extractable_criteria
         }
         allowed_evidence_ids = set(evidence_ids)
         evidence_by_id = {item.id: item for item in evidence}
@@ -185,9 +181,7 @@ class QualificationEvidenceExtractor:
             )
             return QualificationFactsCacheEntry(
                 evidence_ids=evidence_ids,
-                facts=(
-                    previous_entry.facts if previous_entry is not None else None
-                ),
+                facts=(previous_entry.facts if previous_entry is not None else None),
                 status=status,
                 attempt_count=attempt_number,
             )
@@ -275,16 +269,4 @@ class QualificationEvidenceExtractor:
             )
         expected = normalize_subject("technology", criterion.subject)
         observed = normalize_subject("technology", evidence.subject)
-        return expected in technology_subjects(observed) or (
-            QualificationEvidenceExtractor._technology_is_named(
-                expected, f"{evidence.claim} {evidence.evidence_text}"
-            )
-        )
-
-    @staticmethod
-    def _technology_is_named(technology: str, text: str) -> bool:
-        words = technology.split()
-        if not words:
-            return False
-        pattern = r"(?<!\w)" + r"[\W_]+".join(map(re.escape, words)) + r"(?!\w)"
-        return re.search(pattern, text, flags=re.IGNORECASE) is not None
+        return expected == observed

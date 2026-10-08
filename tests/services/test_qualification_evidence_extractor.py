@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from virtual_company.domain.criteria import CompanySizeCriteria
+from virtual_company.domain.criteria import CompanySizeCriteria, normalize_subject
 from virtual_company.domain.qualification import QualificationStatus
 from virtual_company.research.models import (
     CategoricalEvidenceFact,
@@ -117,7 +117,28 @@ async def test_different_wording_reaches_the_same_semantic_schema(
     assert result.facts == output
     assert wording in str(provider.calls[0]["user"])
     assert provider.calls[0]["model"] is QualificationFacts
-    assert "semantic meaning" in str(provider.calls[0]["system"])
+    assert "EXACT PROPERTY" in str(provider.calls[0]["system"])
+    assert "prefer unknown" in str(provider.calls[0]["system"])
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Java", "java"),
+        ("java", "java"),
+        (" JAVA ", "java"),
+        ("Spring Boot", "spring boot"),
+        ("spring-boot", "spring boot"),
+        ("spring_boot", "spring boot"),
+        ("springboot", "spring boot"),
+        ("Apache Kafka", "apache kafka"),
+        ("Kafka", "kafka"),
+    ],
+)
+def test_normalization_only_canonicalizes_safe_formatting_variants(
+    value: str, expected: str
+) -> None:
+    assert normalize_subject("technology", value) == expected
 
 
 @pytest.mark.asyncio
@@ -160,23 +181,36 @@ async def test_wrong_technology_evidence_is_downgraded_to_unknown() -> None:
 
 
 @pytest.mark.asyncio
-async def test_matching_and_directional_technology_implication_are_admissible() -> None:
+async def test_technology_evidence_requires_the_exact_normalized_subject() -> None:
     spring = evidence("Spring services", subject="Spring")
     spring_boot = evidence("Spring Boot services", subject="Spring Boot")
-    for item in (spring, spring_boot):
-        output = QualificationFacts(
-            categorical=[
-                CategoricalEvidenceFact(
-                    criterion_id="criterion_2",
-                    state="supported",
-                    evidence_ids=[item.id],
-                )
-            ]
-        )
-        result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
-            campaign(["Spring"]), [item]
-        )
-        assert result.facts == output
+    output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2", state="supported", evidence_ids=[spring.id]
+            )
+        ]
+    )
+    result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
+        campaign(["Spring"]), [spring]
+    )
+    assert result.facts == output
+
+    boot_output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[spring_boot.id],
+            )
+        ]
+    )
+    boot_result = await QualificationEvidenceExtractor(ProviderStub(boot_output)).extract(
+        campaign(["Spring"]), [spring_boot]
+    )
+    assert boot_result.facts is not None
+    assert boot_result.facts.categorical[0].state == "unknown"
+    assert boot_result.facts.categorical[0].evidence_ids == []
 
     spring_only = evidence("Spring framework", subject="Spring")
     reverse_output = QualificationFacts(
@@ -197,21 +231,22 @@ async def test_matching_and_directional_technology_implication_are_admissible() 
 
 @pytest.mark.asyncio
 async def test_shared_multi_technology_excerpt_can_support_both_criteria() -> None:
-    shared = evidence(
-        "Our services are built using Java and Spring Boot.", subject="Java"
+    java = evidence("Our services are built using Java and Spring Boot.", subject="Java")
+    spring_boot = evidence(
+        "Our services are built using Java and Spring Boot.", subject="Spring Boot"
     )
     output = QualificationFacts(
         categorical=[
             CategoricalEvidenceFact(
-                criterion_id="criterion_2", state="supported", evidence_ids=[shared.id]
+                criterion_id="criterion_2", state="supported", evidence_ids=[java.id]
             ),
             CategoricalEvidenceFact(
-                criterion_id="criterion_3", state="supported", evidence_ids=[shared.id]
+                criterion_id="criterion_3", state="supported", evidence_ids=[spring_boot.id]
             ),
         ]
     )
     result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
-        campaign(["Java", "Spring"]), [shared]
+        campaign(["Java", "Spring Boot"]), [java, spring_boot]
     )
     assert result.facts == output
 

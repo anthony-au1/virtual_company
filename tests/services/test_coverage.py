@@ -50,7 +50,7 @@ def test_full_coverage_retains_matching_evidence_ids() -> None:
         item(company_id, run_id, "technology", "Java"),
         item(company_id, run_id, "technology", "Spring"),
         item(company_id, run_id, "technology", "SpringBoot"),
-        item(company_id, run_id, "technology", "Apache Kafka"),
+        item(company_id, run_id, "technology", "Kafka"),
         item(company_id, run_id, "company_size", "2300+ employees"),
     ]
     coverage = assess_evidence_coverage(
@@ -109,21 +109,51 @@ def test_criteria_are_dynamic_and_evidence_is_run_and_company_scoped() -> None:
     )
 
 
-def test_coverage_implication_is_directional_and_retains_ids() -> None:
+def test_technology_criteria_are_independent_and_normalized() -> None:
     company_id, run_id = uuid4(), uuid4()
-    for subject, expected in [
-        ("Spring Boot", [CoverageStatus.FOUND, CoverageStatus.FOUND]),
-        ("Spring", [CoverageStatus.FOUND, CoverageStatus.MISSING]),
-    ]:
-        source = item(company_id, run_id, "technology", subject)
+    spring_boot = item(company_id, run_id, "technology", "SpringBoot")
+    coverage = assess_evidence_coverage(
+        make_campaign(technologies=["Spring", "Spring Boot"]),
+        [spring_boot],
+        company_id=company_id,
+        research_run_id=run_id,
+    )
+    technologies = [result for result in coverage if result.criterion == "technology"]
+    assert [result.status for result in technologies] == [
+        CoverageStatus.MISSING,
+        CoverageStatus.FOUND,
+    ]
+    assert technologies[0].evidence_ids == []
+    assert technologies[1].evidence_ids == [spring_boot.id]
+
+    kafka_evidence = item(company_id, run_id, "technology", "Apache Kafka")
+    kafka_coverage = assess_evidence_coverage(
+        make_campaign(technologies=["Kafka"]),
+        [kafka_evidence],
+        company_id=company_id,
+        research_run_id=run_id,
+    )
+    assert kafka_coverage[-1].status is CoverageStatus.MISSING
+
+
+def test_case_and_format_variants_match_technology_coverage() -> None:
+    company_id, run_id = uuid4(), uuid4()
+    for label in ("Java", "java", " JAVA "):
+        source = item(company_id, run_id, "technology", label)
         coverage = assess_evidence_coverage(
-            make_campaign(technologies=["spring", "spring boot"]),
+            make_campaign(technologies=["java"]),
             [source],
             company_id=company_id,
             research_run_id=run_id,
         )
-        technologies = [
-            result for result in coverage if result.criterion == "technology"
-        ]
-        assert [result.status for result in technologies] == expected
-        assert technologies[0].evidence_ids == [source.id]
+        assert coverage[2].status is CoverageStatus.FOUND
+
+    for label in ("Spring Boot", "spring-boot", "spring_boot", "springboot"):
+        source = item(company_id, run_id, "technology", label)
+        coverage = assess_evidence_coverage(
+            make_campaign(technologies=["Spring Boot"]),
+            [source],
+            company_id=company_id,
+            research_run_id=run_id,
+        )
+        assert coverage[2].status is CoverageStatus.FOUND
