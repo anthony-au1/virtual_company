@@ -401,7 +401,7 @@ class ResearchNodes:
     async def persist_companies(
         self, state: ResearchWorkflowState
     ) -> dict[str, object]:
-        """Activate the next required batch from the retained ranked pool."""
+        """Activate the next batch from the retained ranked pool."""
         campaign = self._campaign(state)
         qualified_count = self._qualified_count(state)
         needed = max(campaign.target_count - qualified_count, 0)
@@ -1363,10 +1363,8 @@ class ResearchNodes:
             ]
             unresolved_keys = self._target_keys(unresolved)
             stop_reason: InvestigationStopReason | None = None
-            if any(item.status is QualificationStatus.MISMATCH for item in criteria):
-                stop_reason = InvestigationStopReason.CRITERION_MISMATCH
-            elif not unresolved:
-                stop_reason = InvestigationStopReason.COVERAGE_COMPLETE
+            if not unresolved:
+                stop_reason = InvestigationStopReason.CRITERIA_RESOLVED
             elif (
                 previous.round > 0
                 and previous.unresolved_before
@@ -1735,13 +1733,26 @@ class ResearchNodes:
         campaign = self._campaign(state)
         qualified_count = self._qualified_count(state)
         pending_count = len(self._pending_ranked_companies(state))
+        companies_researched = len(state["research_companies"])
+        stop_reason = (
+            "TARGET_REACHED"
+            if qualified_count >= campaign.target_count
+            else "RESEARCH_LIMIT_REACHED"
+            if companies_researched >= campaign.max_companies_to_research
+            else "CANDIDATE_POOL_EXHAUSTED"
+            if pending_count == 0
+            else None
+        )
         get_observability().event(
             "candidate_pool_evaluated",
             qualified_count=qualified_count,
             target_count=campaign.target_count,
+            max_companies_to_research=campaign.max_companies_to_research,
+            companies_researched=companies_researched,
             pending_candidate_count=pending_count,
             target_reached=qualified_count >= campaign.target_count,
             pool_exhausted=pending_count == 0,
+            stop_reason=stop_reason,
         )
         return {}
 

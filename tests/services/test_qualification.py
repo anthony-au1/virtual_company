@@ -158,3 +158,15 @@ def test_none_facts_never_become_positive_matches() -> None:
         aggregate_qualification(uuid4(), criteria).status
         is Overall.INSUFFICIENT_EVIDENCE
     )
+
+
+def test_mismatch_takes_precedence_over_unknown() -> None:
+    criteria = qualify_company(
+        campaign(minimum=100),
+        QualificationFacts(
+            employee_counts=[count(40, uuid4())],
+        ),
+    )
+    assert criteria[-1].status is Status.MISMATCH
+    assert any(item.status is Status.UNKNOWN for item in criteria[:-1])
+    assert aggregate_qualification(uuid4(), criteria).status is Overall.NOT_QUALIFIED

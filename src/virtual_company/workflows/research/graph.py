@@ -134,6 +134,13 @@ class ResearchWorkflow:
             raise ValueError("Research campaign was not loaded")
         qualified_count = ResearchNodes._qualified_count(state)
         target_reached = qualified_count >= campaign.target_count
+        companies_researched = len(state["research_companies"])
+        stop_reason = _research_run_stop_reason(
+            qualified_count=qualified_count,
+            companies_researched=companies_researched,
+            target_count=campaign.target_count,
+            max_companies_to_research=campaign.max_companies_to_research,
+        )
         observability.record(
             "research_runs_total", status="completed", workflow="company_research"
         )
@@ -146,12 +153,12 @@ class ResearchWorkflow:
             "research_run_completed",
             campaign_name=campaign.name,
             companies_found=state["companies_found"],
+            companies_researched=companies_researched,
             target_count=campaign.target_count,
+            max_companies_to_research=campaign.max_companies_to_research,
             qualified_count=qualified_count,
             target_reached=target_reached,
-            stop_reason=(
-                "TARGET_REACHED" if target_reached else "CANDIDATE_POOL_EXHAUSTED"
-            ),
+            stop_reason=stop_reason,
         )
         return ResearchWorkflowResult(
             research_run_id=research_run_id,
@@ -327,7 +334,7 @@ def route_investigation(state: ResearchWorkflowState) -> str:
 
 
 def route_candidate_pool(state: ResearchWorkflowState) -> str:
-    """Refill from the ranked queue until target success or pool exhaustion."""
+    """Refill until the qualified target, research cap, or candidate supply ends."""
     campaign = state["campaign"]
     if campaign is None:
         raise ValueError("Campaign was not loaded")
@@ -337,6 +344,21 @@ def route_candidate_pool(state: ResearchWorkflowState) -> str:
     if len(state.get("research_companies", [])) >= campaign.max_companies_to_research:
         return "complete"
     return "refill" if ResearchNodes._pending_ranked_companies(state) else "complete"
+
+
+def _research_run_stop_reason(
+    *,
+    qualified_count: int,
+    companies_researched: int,
+    target_count: int,
+    max_companies_to_research: int,
+) -> str:
+    """Classify the first campaign-level stopping condition reached."""
+    if qualified_count >= target_count:
+        return "TARGET_REACHED"
+    if companies_researched >= max_companies_to_research:
+        return "RESEARCH_LIMIT_REACHED"
+    return "CANDIDATE_POOL_EXHAUSTED"
 
 
 def _with_failure_handling(

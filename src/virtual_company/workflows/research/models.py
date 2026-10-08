@@ -124,8 +124,7 @@ class CoverageSummary(BaseModel):
 
 
 class InvestigationStopReason(StrEnum):
-    COVERAGE_COMPLETE = "coverage_complete"
-    CRITERION_MISMATCH = "criterion_mismatch"
+    CRITERIA_RESOLVED = "criteria_resolved"
     MAX_ROUNDS = "max_rounds"
     NO_PROGRESS = "no_progress"
 

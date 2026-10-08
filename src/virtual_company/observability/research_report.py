@@ -20,6 +20,7 @@ class ResearchUsage:
     run_id: str
     run_timestamp: str
     target_count: int | None
+    max_companies_to_research: int | None
     target_reached: bool | None
     stop_reason: str | None
     discovered_candidates: int | None
@@ -373,6 +374,9 @@ def aggregate_run(
         run_id=run_id,
         run_timestamp=str(completion.get("timestamp") or "N/A"),
         target_count=_optional_integer(completion.get("target_count")),
+        max_companies_to_research=_optional_integer(
+            completion.get("max_companies_to_research")
+        ),
         target_reached=(
             completion.get("target_reached")
             if isinstance(completion.get("target_reached"), bool)
@@ -382,7 +386,13 @@ def aggregate_run(
             str(completion["stop_reason"]) if completion.get("stop_reason") else None
         ),
         discovered_candidates=discovered,
-        researched_companies=len(company_ids) if selected_events else None,
+        researched_companies=(
+            _optional_integer(completion.get("companies_researched"))
+            if _optional_integer(completion.get("companies_researched")) is not None
+            else len(company_ids)
+            if selected_events
+            else None
+        ),
         qualified_companies=(
             _optional_integer(completion.get("qualified_count"))
             if _optional_integer(completion.get("qualified_count")) is not None
@@ -493,6 +503,7 @@ def render_report(usage: ResearchUsage) -> str:
         "",
         "INVESTIGATION",
         _metric("Companies researched", usage.researched_companies),
+        _metric("Research limit", usage.max_companies_to_research),
         _metric("Initial queries", usage.initial_queries),
         _metric("Follow-up queries", usage.followup_queries),
         _metric(
@@ -557,6 +568,8 @@ def render_report(usage: ResearchUsage) -> str:
         _metric(
             "Target", usage.target_count if usage.target_count is not None else "N/A"
         ),
+        _metric("Research limit", usage.max_companies_to_research),
+        _metric("Companies researched", usage.researched_companies),
         _metric("Qualified", usage.qualified_companies),
         _metric("Target reached", _yes_no(usage.target_reached)),
         _metric("Stop reason", usage.stop_reason or "N/A"),

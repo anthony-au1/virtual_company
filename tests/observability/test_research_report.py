@@ -129,6 +129,8 @@ def test_aggregation_uses_actual_usage_and_computes_run_metrics() -> None:
             "run-1",
             campaign_name="Fintech",
             target_count=1,
+            max_companies_to_research=10,
+            companies_researched=1,
             target_reached=True,
             stop_reason="TARGET_REACHED",
         ),
@@ -160,6 +162,9 @@ def test_aggregation_uses_actual_usage_and_computes_run_metrics() -> None:
     assert usage.search_credits_per_researched == 7
     assert usage.search_credits_per_qualified == 7
     assert usage.target_reached is True
+    assert usage.target_count == 1
+    assert usage.max_companies_to_research == 10
+    assert usage.stop_reason == "TARGET_REACHED"
 
 
 def test_estimated_or_missing_usage_is_not_reported_as_actual_and_zero_is_safe() -> (
@@ -185,7 +190,10 @@ def test_estimated_or_missing_usage_is_not_reported_as_actual_and_zero_is_safe()
             "run-2",
             campaign_name="Empty",
             target_count=5,
+            max_companies_to_research=10,
+            companies_researched=10,
             target_reached=False,
+            stop_reason="RESEARCH_LIMIT_REACHED",
         ),
     ]
 
@@ -196,10 +204,16 @@ def test_estimated_or_missing_usage_is_not_reported_as_actual_and_zero_is_safe()
     assert usage.estimated_search_credits == 3
     assert usage.search_credits_per_researched is None
     assert usage.search_credits_per_qualified is None
+    assert usage.researched_companies == 10
+    assert usage.max_companies_to_research == 10
+    assert usage.stop_reason == "RESEARCH_LIMIT_REACHED"
     assert "Actual credits" in output
     assert "N/A (provider did not report usage)" in output
     assert "Estimated credits (not actual)" in output
-    assert "N/A" in research_report.render_report(usage)
+    report = research_report.render_report(usage)
+    assert "Research limit" in report and "10" in report
+    assert "Companies researched" in report and "10" in report
+    assert "RESEARCH_LIMIT_REACHED" in report
 
 
 def test_log_view_uses_latest_run_only(

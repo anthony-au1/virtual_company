@@ -40,6 +40,7 @@ from virtual_company.tools.web_fetch import (
 )
 from virtual_company.workflows.research.graph import (
     ResearchWorkflow,
+    _research_run_stop_reason,
     route_candidate_pool,
 )
 from virtual_company.workflows.research.models import (
@@ -428,7 +429,7 @@ def test_fair_result_merge_deduplicates_overlapping_urls() -> None:
 
 
 @pytest.mark.asyncio
-async def test_source_selection_reserves_available_sources_for_required_criteria() -> None:
+async def test_source_selection_reserves_available_sources_for_unknown_criteria() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
@@ -1044,6 +1045,124 @@ async def test_activation_refills_only_the_qualification_shortfall() -> None:
     assert route_candidate_pool(state) == "complete"  # type: ignore[arg-type]
 
 
+async def _run_activation_scenario(
+    model: Campaign,
+    candidate_names: list[str],
+    statuses: dict[str, CompanyQualificationStatus],
+) -> dict[str, object]:
+    nodes = make_nodes(
+        ExtractionFake({}),
+        ResearchFake([found(name, []) for name in candidate_names]),
+        model,
+    )
+    state: dict[str, object] = {
+        "campaign_id": model.id,
+        "campaign": CampaignCriteria.model_validate(model),
+        "discovered_companies": [found(name, []) for name in candidate_names],
+        "companies_found": 0,
+        "research_companies": [],
+        "discovered_companies_by_id": {},
+        "investigations": {},
+        "company_qualifications": {},
+    }
+    for _ in range(len(candidate_names) + 1):
+        previous_ids = {item.id for item in state["research_companies"]}  # type: ignore[union-attr]
+        state.update(await nodes.persist_companies(state))  # type: ignore[arg-type]
+        for company in state["research_companies"]:  # type: ignore[union-attr]
+            if company.id not in previous_ids:
+                state["company_qualifications"][company.id] = CompanyQualification(  # type: ignore[index]
+                    company.id, statuses[company.name], []
+                )
+        if route_candidate_pool(state) == "complete":  # type: ignore[arg-type]
+            break
+    else:
+        raise AssertionError("Candidate activation did not reach a stop condition")
+    return state
+
+
+@pytest.mark.asyncio
+async def test_candidate_activation_stops_after_target_with_no_extra_company() -> None:
+    model = campaign()
+    model.target_count = 2
+    model.max_companies_to_research = 10
+    state = await _run_activation_scenario(
+        model,
+        ["A", "B", "C", "D"],
+        {
+            "A": CompanyQualificationStatus.QUALIFIED,
+            "B": CompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
+            "C": CompanyQualificationStatus.QUALIFIED,
+            "D": CompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
+        },
+    )
+
+    assert [company.name for company in state["research_companies"]] == [
+        "A",
+        "B",
+        "C",
+    ]
+    assert sum(
+        result.status is CompanyQualificationStatus.QUALIFIED
+        for result in state["company_qualifications"].values()
+    ) == 2
+
+
+@pytest.mark.asyncio
+async def test_candidate_activation_stops_at_campaign_research_limit() -> None:
+    model = campaign()
+    model.target_count = 5
+    model.max_companies_to_research = 3
+    names = ["A", "B", "C", "D"]
+    state = await _run_activation_scenario(
+        model,
+        names,
+        {
+            "A": CompanyQualificationStatus.QUALIFIED,
+            "B": CompanyQualificationStatus.NOT_QUALIFIED,
+            "C": CompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
+            "D": CompanyQualificationStatus.QUALIFIED,
+        },
+    )
+
+    assert [company.name for company in state["research_companies"]] == names[:3]
+    assert len(state["company_qualifications"]) == 3
+    assert sum(
+        result.status is CompanyQualificationStatus.QUALIFIED
+        for result in state["company_qualifications"].values()
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_all_researched_results_remain_when_target_is_difficult() -> None:
+    model = campaign()
+    model.target_count = 5
+    model.max_companies_to_research = 10
+    names = [f"Candidate {index}" for index in range(10)]
+    state = await _run_activation_scenario(
+        model,
+        names,
+        {
+            name: (
+                CompanyQualificationStatus.QUALIFIED
+                if index == 0
+                else CompanyQualificationStatus.NOT_QUALIFIED
+            )
+            for index, name in enumerate(names)
+        },
+    )
+
+    assert len(state["research_companies"]) == 10
+    assert len(state["company_qualifications"]) == 10
+    assert sum(
+        result.status is CompanyQualificationStatus.QUALIFIED
+        for result in state["company_qualifications"].values()
+    ) == 1
+    assert sum(
+        result.status is CompanyQualificationStatus.NOT_QUALIFIED
+        for result in state["company_qualifications"].values()
+    ) == 9
+
+
 def test_candidate_pool_route_completes_when_exhausted_below_target() -> None:
     model = campaign()
     model.target_count = 5
@@ -1086,6 +1205,28 @@ def test_candidate_pool_route_stops_at_campaign_research_limit() -> None:
     }
 
     assert route_candidate_pool(state) == "complete"  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("qualified", "researched", "expected"),
+    [
+        (2, 3, "TARGET_REACHED"),
+        (1, 3, "RESEARCH_LIMIT_REACHED"),
+        (1, 2, "CANDIDATE_POOL_EXHAUSTED"),
+    ],
+)
+def test_research_run_stop_reason_distinguishes_campaign_stops(
+    qualified: int, researched: int, expected: str
+) -> None:
+    assert (
+        _research_run_stop_reason(
+            qualified_count=qualified,
+            companies_researched=researched,
+            target_count=2,
+            max_companies_to_research=3,
+        )
+        == expected
+    )
 
 
 @pytest.mark.asyncio
@@ -1560,7 +1701,7 @@ async def test_followup_filters_duplicates_and_resolved_criteria() -> None:
 
 
 @pytest.mark.asyncio
-async def test_required_criteria_receive_query_coverage_when_queries_exist() -> None:
+async def test_unresolved_criteria_receive_query_coverage_when_queries_exist() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
@@ -1996,7 +2137,7 @@ async def test_airwallex_followup_only_extracts_unknown_and_preserves_matches() 
 
 
 @pytest.mark.asyncio
-async def test_resolved_company_size_mismatch_is_not_re_evaluated() -> None:
+async def test_mismatch_does_not_block_unknown_followup_or_get_re_evaluated() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
@@ -2031,6 +2172,8 @@ async def test_resolved_company_size_mismatch_is_not_re_evaluated() -> None:
     assert state["criterion_qualifications"][company.id][1].status is (
         QualificationStatus.MISMATCH
     )
+    assert state["active_company_ids"] == [company.id]
+    assert state["investigations"][company.id].stop_reason is None
     service.evidence.append(
         _qualification_evidence(company, run_id, "technology", "Kafka", "Uses Kafka")
     )
@@ -2040,12 +2183,15 @@ async def test_resolved_company_size_mismatch_is_not_re_evaluated() -> None:
     assert [item["criterion_id"] for item in _criteria_from_semantic_prompt(provider.prompts[-1])] == [
         "criterion_0"
     ]
-    assert len(provider.prompts) == 1
+    assert len(provider.prompts) == 2
     assert state["criterion_qualifications"][company.id][1].status is (
         QualificationStatus.MISMATCH
     )
     assert state["criterion_qualifications"][company.id][0].status is (
-        QualificationStatus.UNKNOWN
+        QualificationStatus.MATCH
+    )
+    assert state["investigations"][company.id].stop_reason is (
+        InvestigationStopReason.CRITERIA_RESOLVED
     )
 
 
@@ -2165,7 +2311,7 @@ async def test_coverage_stops_companies_independently() -> None:
         }
     )  # type: ignore[arg-type]
     states = output["investigations"]
-    assert states[complete.id].stop_reason is InvestigationStopReason.COVERAGE_COMPLETE
+    assert states[complete.id].stop_reason is InvestigationStopReason.CRITERIA_RESOLVED
     assert states[stalled.id].stop_reason is None
     assert states[progressing.id].stop_reason is None
     assert states[exhausted.id].stop_reason is InvestigationStopReason.NO_PROGRESS
@@ -2534,7 +2680,7 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
 
 
 @pytest.mark.asyncio
-async def test_discovery_size_mismatch_stops_before_company_search() -> None:
+async def test_discovery_size_mismatch_continues_unknown_criterion_research() -> None:
     class DiscoveryEvidenceFake(ExtractionFake):
         async def generate_structured(self, **kwargs: object) -> object:
             if kwargs["response_model"] is ExtractedEvidenceItems:
@@ -2568,8 +2714,8 @@ async def test_discovery_size_mismatch_stops_before_company_search() -> None:
         ),
     )
     await workflow.run(model.id)
-    assert len(search.calls) == 1  # discovery only
-    assert GeneratedCompanySearchQueries not in research.models
+    assert len(search.calls) == 2  # discovery plus bounded company investigation
+    assert GeneratedCompanySearchQueries in research.models
     result = next(iter(service.qualifications.values()))
     assert result.status.value == "NOT_QUALIFIED"
     assert any(
@@ -2577,10 +2723,11 @@ async def test_discovery_size_mismatch_stops_before_company_search() -> None:
         and item.status is QualificationStatus.MISMATCH
         for item in result.criteria
     )
+    assert any(item.status is QualificationStatus.UNKNOWN for item in result.criteria)
 
 
 @pytest.mark.asyncio
-async def test_discovery_required_matches_avoid_company_search() -> None:
+async def test_discovery_evidence_resolving_all_criteria_avoids_company_search() -> None:
     class DiscoveryEvidenceFake(ExtractionFake):
         async def generate_structured(self, **kwargs: object) -> object:
             if kwargs["response_model"] is ExtractedEvidenceItems:
@@ -2642,7 +2789,7 @@ async def test_discovery_required_matches_avoid_company_search() -> None:
 
 
 @pytest.mark.asyncio
-async def test_required_unknown_is_targeted_before_preferred() -> None:
+async def test_all_unknown_criteria_are_targeted_for_followup() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
@@ -2759,7 +2906,7 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
 
 
 @pytest.mark.asyncio
-async def test_source_selection_prioritizes_company_specific_required_subjects() -> (
+async def test_source_selection_prioritizes_company_specific_unknown_subjects() -> (
     None
 ):
     model = campaign()
@@ -2809,7 +2956,7 @@ async def test_source_selection_prioritizes_company_specific_required_subjects()
 
 
 @pytest.mark.asyncio
-async def test_preferred_unknown_uses_remaining_rounds_then_qualifies() -> None:
+async def test_unknown_criteria_use_remaining_rounds_then_resolve() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
@@ -2857,7 +3004,7 @@ async def test_preferred_unknown_uses_remaining_rounds_then_qualifies() -> None:
 
 
 @pytest.mark.asyncio
-async def test_size_mismatch_stops_company_research() -> None:
+async def test_size_mismatch_is_retained_after_all_criteria_resolve() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
@@ -2898,7 +3045,7 @@ async def test_size_mismatch_stops_company_research() -> None:
     state.update(await nodes.check_evidence_coverage(state))
     assert (
         state["investigations"][company.id].stop_reason
-        is InvestigationStopReason.CRITERION_MISMATCH
+        is InvestigationStopReason.CRITERIA_RESOLVED
     )
     result = (await nodes.qualify_companies(state))["company_qualifications"][
         company.id
@@ -3090,7 +3237,7 @@ async def test_multi_company_workflow_researches_all_unknown_criteria() -> None:
 
 
 @pytest.mark.asyncio
-async def test_approximate_required_size_stays_unknown() -> None:
+async def test_approximate_company_size_stays_unknown() -> None:
     from unittest.mock import AsyncMock
 
     model = campaign()
