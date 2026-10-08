@@ -5,10 +5,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from virtual_company.domain.criteria import (
-    CompanySizeBound,
-    CompanySizeCriteria,
-)
+from virtual_company.domain.criteria import CompanySizeCriteria
 from virtual_company.domain.qualification import CompanyQualificationStatus as Overall
 from virtual_company.domain.qualification import QualificationStatus as Status
 from virtual_company.research.models import (
@@ -30,12 +27,8 @@ def campaign(
         industry="fintech",
         technologies=["Kafka"],
         company_size=CompanySizeCriteria(
-            min=CompanySizeBound(value=minimum)
-            if minimum is not None
-            else None,
-            max=CompanySizeBound(value=maximum)
-            if maximum is not None
-            else None,
+            min=minimum,
+            max=maximum,
         )
         if minimum is not None or maximum is not None
         else None,

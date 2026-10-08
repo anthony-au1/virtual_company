@@ -50,8 +50,8 @@ export type ResearchResults = {
       industry: string | null;
       technologies: string[];
       company_size: {
-        min: { value: number } | null;
-        max: { value: number } | null;
+        min: number | null;
+        max: number | null;
       } | null;
     };
   };

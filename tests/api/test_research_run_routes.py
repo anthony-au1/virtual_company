@@ -75,7 +75,7 @@ def research_results() -> SimpleNamespace:
                 target_market="Australia",
                 industry="fin tech",
                 technologies=["java", "kafka"],
-                company_size={"min": {"value": 500}},
+                company_size={"min": 500},
             ),
         ),
         summary=SimpleNamespace(

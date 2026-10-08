@@ -105,18 +105,10 @@ export function CampaignFormPage() {
     setServerError(null);
     const companySize = {
       ...(values.min_employees !== undefined
-        ? {
-            min: {
-              value: values.min_employees,
-            },
-          }
+        ? { min: values.min_employees }
         : {}),
       ...(values.max_employees !== undefined
-        ? {
-            max: {
-              value: values.max_employees,
-            },
-          }
+        ? { max: values.max_employees }
         : {}),
     };
     const payload: CreateCampaignPayload = {
@@ -130,7 +122,10 @@ export function CampaignFormPage() {
         : {}),
       ...(values.industry.trim() ? { industry: values.industry.trim() } : {}),
       technologies: values.technologies,
-      company_size: companySize.min || companySize.max ? companySize : null,
+      company_size:
+        companySize.min !== undefined || companySize.max !== undefined
+          ? companySize
+          : null,
     };
     mutation.mutate(payload);
   });

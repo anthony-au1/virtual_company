@@ -2,7 +2,8 @@
 
 Campaign criteria are all evaluated equally. `target_market`, `industry`, and
 `technologies` are optional criteria. The optional `company_size` object has
-independent `min` and `max` bounds, each carrying a nonnegative employee count.
+independent optional integer `min` and `max` bounds, each a nonnegative employee
+count, for example `{"min": 500, "max": 5000}`.
 `target_count` is the desired number of fully matching companies, and
 `max_companies_to_research` caps the companies investigated for one campaign.
 

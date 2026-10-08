@@ -2,10 +2,6 @@ import { apiFetch } from "@/lib/api/client";
 
 export type CampaignStatus =
   "DRAFT" | "RUNNING" | "PAUSED" | "COMPLETED" | "FAILED";
-export type CompanySizeBound = {
-  value: number;
-};
-
 export type Campaign = {
   id: string;
   name: string;
@@ -14,8 +10,8 @@ export type Campaign = {
   industry: string | null;
   technologies: string[];
   company_size: {
-    min: CompanySizeBound | null;
-    max: CompanySizeBound | null;
+    min: number | null;
+    max: number | null;
   } | null;
   target_count: number;
   max_companies_to_research: number;
@@ -31,8 +27,8 @@ export type CreateCampaignPayload = {
   industry?: string;
   technologies: string[];
   company_size: {
-    min?: CompanySizeBound;
-    max?: CompanySizeBound;
+    min?: number;
+    max?: number;
   } | null;
   target_count: number;
   max_companies_to_research: number;

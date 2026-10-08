@@ -111,8 +111,8 @@ def test_create_campaign_accepts_flat_criteria() -> None:
     model.industry = "fin tech"
     model.technologies = ["java", "kafka"]
     model.company_size = {
-        "min": {"value": 100},
-        "max": {"value": 500},
+        "min": 100,
+        "max": 500,
     }
     service = CampaignServiceStub(model)
     app.dependency_overrides[get_campaign_service] = lambda: service
@@ -131,8 +131,30 @@ def test_create_campaign_accepts_flat_criteria() -> None:
     assert response.status_code == 201
     assert response.json()["technologies"] == model.technologies
     assert response.json()["company_size"] == model.company_size
+    assert response.json()["company_size"] == {"min": 100, "max": 500}
+    assert "value" not in response.text
     assert service.create_data is not None
-    assert service.create_data.company_size.min.value == 100
+    assert service.create_data.company_size.min == 100
+
+
+def test_campaign_response_flattens_legacy_persisted_company_size() -> None:
+    model = campaign()
+    model.company_size = {"min": {"value": 500}}
+    app.dependency_overrides[get_campaign_service] = lambda: CampaignServiceStub(model)
+
+    response = TestClient(app).get(f"/api/v1/campaigns/{model.id}")
+
+    assert response.status_code == 200
+    assert response.json()["company_size"] == {"min": 500, "max": None}
+
+
+def test_campaign_openapi_exposes_company_size_bounds_as_integers() -> None:
+    schemas = app.openapi()["components"]["schemas"]
+    company_size = schemas["CompanySizeCriteria"]
+
+    for bound_name in ("min", "max"):
+        assert company_size["properties"][bound_name]["anyOf"][0]["type"] == "integer"
+    assert "CompanySizeBound" not in schemas
 
 
 def test_patch_null_clears_nullable_field_and_keeps_omitted_fields_unchanged() -> None:

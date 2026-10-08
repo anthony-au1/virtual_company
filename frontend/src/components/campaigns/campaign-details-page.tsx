@@ -319,21 +319,21 @@ function EmptyCriteria() {
 
 function sizeRows(campaign: Campaign) {
   const rows = [];
-  if (campaign.company_size?.min) {
+  if (campaign.company_size?.min != null) {
     rows.push(
       <CriteriaRow
         key="size-min"
         label="Company size"
-        value={`≥ ${campaign.company_size.min.value} employees`}
+        value={`≥ ${campaign.company_size.min} employees`}
       />,
     );
   }
-  if (campaign.company_size?.max) {
+  if (campaign.company_size?.max != null) {
     rows.push(
       <CriteriaRow
         key="size-max"
         label="Company size"
-        value={`≤ ${campaign.company_size.max.value} employees`}
+        value={`≤ ${campaign.company_size.max} employees`}
       />,
     );
   }
@@ -345,7 +345,7 @@ function hasCriteria(campaign: Campaign) {
     campaign.target_market ||
     campaign.industry ||
     campaign.technologies.length ||
-    campaign.company_size?.min ||
-    campaign.company_size?.max,
+    campaign.company_size?.min != null ||
+    campaign.company_size?.max != null,
   );
 }

@@ -41,28 +41,43 @@ async def test_create_flushes_and_refreshes_without_committing() -> None:
 @pytest.mark.asyncio
 async def test_campaign_criteria_survive_repository_and_workflow_loading() -> None:
     session = session_mock()
-    payload = CampaignCreateRequest.model_validate({
-        "name": "Australian Fintech Java Research",
-        "target_count": 3,
-        "status": "DRAFT",
-        "target_market": "Australia",
-        "industry": "fin tech",
-        "technologies": ["java", "kafka"],
-        "company_size": {
-            "min": {"value": 100},
-            "max": {"value": 500},
-        },
-    })
+    payload = CampaignCreateRequest.model_validate(
+        {
+            "name": "Australian Fintech Java Research",
+            "target_count": 3,
+            "status": "DRAFT",
+            "target_market": "Australia",
+            "industry": "fin tech",
+            "technologies": ["java", "kafka"],
+            "company_size": {
+                "min": 100,
+                "max": 500,
+            },
+        }
+    )
     campaign = await CampaignRepository(session).create(payload)
     campaign.id = uuid4()
     assert campaign.technologies == ["java", "kafka"]
     assert campaign.company_size == {
-        "min": {"value": 100},
-        "max": {"value": 500},
+        "min": 100,
+        "max": 500,
     }
     loaded = CampaignCriteria.model_validate(campaign)
     assert loaded.technologies == ["java", "kafka"]
-    assert loaded.company_size.max.value == 500
+    assert loaded.company_size.max == 500
+
+    legacy_campaign = Campaign(
+        id=uuid4(),
+        name="Legacy size bounds",
+        target_count=1,
+        max_companies_to_research=1,
+        status="DRAFT",
+        technologies=[],
+        company_size={"min": {"value": 250}},
+    )
+    legacy_loaded = CampaignCriteria.model_validate(legacy_campaign)
+    assert legacy_loaded.company_size is not None
+    assert legacy_loaded.company_size.min == 250
 
 
 @pytest.mark.asyncio

@@ -1444,8 +1444,8 @@ async def test_evidence_extraction_preserves_explicit_size_and_geography_precisi
 ):
     model = campaign()
     model.company_size = {
-        "min": {"value": 100},
-        "max": {"value": 500},
+        "min": 100,
+        "max": 500,
     }
     company = ResearchCompany(
         id=uuid4(), name="Acme", website=None, domain="acme.example"
@@ -2068,7 +2068,7 @@ def _criteria_from_semantic_prompt(prompt: str) -> list[dict[str, object]]:
 async def test_airwallex_followup_only_extracts_unknown_and_preserves_matches() -> None:
     model = campaign()
     model.technologies = ["Java", "Spring", "Kafka"]
-    model.company_size = {"min": {"value": 100}}
+    model.company_size = {"min": 100}
     company = ResearchCompany(id=uuid4(), name="Airwallex Pty Ltd")
     run_id = uuid4()
     service = ResearchServiceFake()
@@ -2142,7 +2142,7 @@ async def test_mismatch_does_not_block_unknown_followup_or_get_re_evaluated() ->
     model.target_market = None
     model.industry = None
     model.technologies = ["Kafka"]
-    model.company_size = {"min": {"value": 100}}
+    model.company_size = {"min": 100}
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     service = ResearchServiceFake()
@@ -2610,7 +2610,7 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
     model.target_market = None
     model.industry = None
     model.technologies = []
-    model.company_size = {"min": {"value": 500}}
+    model.company_size = {"min": 500}
     company_id = uuid4()
     run_id = uuid4()
     item = SimpleNamespace(
@@ -2696,7 +2696,7 @@ async def test_discovery_size_mismatch_continues_unknown_criterion_research() ->
             return await super().generate_structured(**kwargs)
 
     model = campaign()
-    model.company_size = {"min": {"value": 100}}
+    model.company_size = {"min": 100}
     url = "https://candidate.example/about"
     search = SearchFake([SearchResult(title="Candidate 0", url=url)])
     research = ResearchFake([found("Candidate 0", [url])])
@@ -2760,7 +2760,7 @@ async def test_discovery_evidence_resolving_all_criteria_avoids_company_search()
 
     model = campaign()
     model.technologies = ["Java", ]
-    model.company_size = {"min": {"value": 100}}
+    model.company_size = {"min": 100}
     url = "https://candidate.example/about"
     search = SearchFake([SearchResult(title="Candidate 0", url=url)])
     research = ResearchFake([found("Candidate 0", [url])])
@@ -3009,7 +3009,7 @@ async def test_size_mismatch_is_retained_after_all_criteria_resolve() -> None:
     model.target_market = None
     model.industry = None
     model.technologies = ["Java", ]
-    model.company_size = {"max": {"value": 500}}
+    model.company_size = {"max": 500}
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
@@ -3196,7 +3196,7 @@ async def test_multi_company_workflow_researches_all_unknown_criteria() -> None:
 
     model = campaign()
     model.technologies = ["Java", "Spring", "Kafka"]
-    model.company_size = {"min": {"value": 500}}
+    model.company_size = {"min": 500}
     search = CostSearchFake([])
     research = CostResearchFake([])
     service = ResearchServiceFake()
@@ -3244,7 +3244,7 @@ async def test_approximate_company_size_stays_unknown() -> None:
     model.target_market = None
     model.industry = None
     model.technologies = []
-    model.company_size = {"min": {"value": 500}}
+    model.company_size = {"min": 500}
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     item = SimpleNamespace(

@@ -19,8 +19,8 @@ def make_campaign(*, technologies: list[str] | None = None) -> CampaignCriteria:
         industry="fin tech",
         technologies=technologies or ["java", "spring", "spring boot", "kafka"],
         company_size={
-            "min": {"value": 100},
-            "max": {"value": 500},
+            "min": 100,
+            "max": 500,
         },
         target_count=3,
         max_companies_to_research=15,

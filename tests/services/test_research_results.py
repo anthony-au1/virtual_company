@@ -44,7 +44,7 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         target_market="Australia",
         industry="fin tech",
         technologies=["java", "spring", "spring boot", "kafka"],
-        company_size={"min": {"value": 500}},
+        company_size={"min": 500},
         target_count=5,
         max_companies_to_research=10,
         status="COMPLETED",

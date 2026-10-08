@@ -64,8 +64,8 @@ function campaign(id: string, name: string): Campaign {
     industry: "Fin tech",
     technologies: ["Java", "Kafka"],
     company_size: {
-      min: { value: 500 },
-      max: { value: 5000 },
+      min: 500,
+      max: 5000,
     },
     target_count: 5,
     max_companies_to_research: 10,
@@ -253,7 +253,7 @@ describe("CampaignFormPage", () => {
         target_market: "Australia",
         industry: "Fin tech",
         technologies: ["Java", "Kafka"],
-        company_size: { min: { value: 500 } },
+        company_size: { min: 500 },
       }),
     );
     await waitFor(() =>

@@ -6,20 +6,20 @@ Represents a software entity discovered during analysis.
 
 Table: campaign
 
-| Column                      | PostgreSQL type | Nullable | Description                                    |
-|-----------------------------|-----------------|---------:|------------------------------------------------|
-| `id`                        | `UUID`          |       NO | unique ID campaign                             |
-| `name`                      | `VARCHAR(255)`  |       NO | name                                           |
-| `description`               | `TEXT`          |      YES | detailed description                           |
-| `target_market`             | `VARCHAR(255)`  |      YES | geographical market                            |
-| `industry`                  | `VARCHAR(255)`  |      YES | targeted industry                              |
-| `technologies`              | `JSONB`         |       NO | campaign technology criteria                   |
-| `company_size`              | `JSONB`         |      YES | independent min/max employee bounds            |
-| `max_companies_to_research` | `INTEGER`       |       NO | campaign research cap; at least `target_count` |
-| `target_count`              | `INTEGER`       |       NO | desired eventual qualified-target count        |
-| `status`                    | `VARCHAR(30)`   |       NO | campaign status                                |
-| `created_at`                | `TIMESTAMPTZ`   |       NO | created date                                   |
-| `updated_at`                | `TIMESTAMPTZ`   |       NO | last change date                               |
+| Column                      | PostgreSQL type | Nullable | Description                                     |
+|-----------------------------|-----------------|---------:|-------------------------------------------------|
+| `id`                        | `UUID`          |       NO | unique ID campaign                              |
+| `name`                      | `VARCHAR(255)`  |       NO | name                                            |
+| `description`               | `TEXT`          |      YES | detailed description                            |
+| `target_market`             | `VARCHAR(255)`  |      YES | geographical market                             |
+| `industry`                  | `VARCHAR(255)`  |      YES | targeted industry                               |
+| `technologies`              | `JSONB`         |       NO | campaign technology criteria                    |
+| `company_size`              | `JSONB`         |      YES | optional direct integer min/max employee bounds |
+| `max_companies_to_research` | `INTEGER`       |       NO | campaign research cap; at least `target_count`  |
+| `target_count`              | `INTEGER`       |       NO | desired eventual qualified-target count         |
+| `status`                    | `VARCHAR(30)`   |       NO | campaign status                                 |
+| `created_at`                | `TIMESTAMPTZ`   |       NO | created date                                    |
+| `updated_at`                | `TIMESTAMPTZ`   |       NO | last change date                                |
 
 status:
 

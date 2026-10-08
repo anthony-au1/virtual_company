@@ -295,16 +295,16 @@ function CampaignCriteria({ results }: { results: ResearchResults }) {
         </CriterionGroup>
         {criteria.company_size ? (
           <CriterionGroup title="Company size">
-            {criteria.company_size.min ? (
+            {criteria.company_size.min != null ? (
               <ConfiguredCriterion
                 label="Employees"
-                subject={`≥ ${criteria.company_size.min.value}`}
+                subject={`≥ ${criteria.company_size.min}`}
               />
             ) : null}
-            {criteria.company_size.max ? (
+            {criteria.company_size.max != null ? (
               <ConfiguredCriterion
                 label="Employees"
-                subject={`≤ ${criteria.company_size.max.value}`}
+                subject={`≤ ${criteria.company_size.max}`}
               />
             ) : null}
           </CriterionGroup>

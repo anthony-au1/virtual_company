@@ -31,24 +31,29 @@ def technology_subjects(value: str | None) -> set[str]:
     return {key, *TECHNOLOGY_IMPLICATIONS.get(key, ())}
 
 
-class CompanySizeBound(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    value: int = Field(ge=0, strict=True)
-
-
 class CompanySizeCriteria(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    min: CompanySizeBound | None = None
-    max: CompanySizeBound | None = None
+    min: int | None = Field(default=None, ge=0, strict=True)
+    max: int | None = Field(default=None, ge=0, strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_bounds(cls, value: object) -> object:
+        """Read previously persisted one-field bounds while emitting flat values."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        for bound_name in ("min", "max"):
+            bound = normalized.get(bound_name)
+            if isinstance(bound, dict) and set(bound) == {"value"}:
+                normalized[bound_name] = bound["value"]
+        return normalized
 
     @model_validator(mode="after")
     def validate_bounds(self) -> CompanySizeCriteria:
-        if self.min and self.max and self.min.value > self.max.value:
-            raise ValueError(
-                "company_size.min.value cannot exceed company_size.max.value"
-            )
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError("company_size.min cannot exceed company_size.max")
         return self
 
 
@@ -83,9 +88,9 @@ def campaign_criteria(campaign: CampaignForQualification) -> list[CampaignCriter
                 criteria.append(
                     CampaignCriterion(
                         "company_size",
-                        f"employees {operator} {bound.value}",
+                        f"employees {operator} {bound}",
                         bound_name,
-                        bound.value,
+                        bound,
                     )
                 )
     return criteria

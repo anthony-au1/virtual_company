@@ -9,10 +9,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from virtual_company.domain.criteria import (
-    CompanySizeBound,
-    CompanySizeCriteria,
-)
+from virtual_company.domain.criteria import CompanySizeCriteria
 from virtual_company.domain.qualification import QualificationStatus
 from virtual_company.research.models import (
     CategoricalEvidenceFact,
@@ -234,10 +231,11 @@ async def test_technology_evidence_cannot_support_employee_count() -> None:
     )
     assert result.facts == QualificationFacts()
     size_campaign = campaign()
-    size_campaign.company_size = CompanySizeCriteria(
-        min=CompanySizeBound(value=1000)
+    size_campaign.company_size = CompanySizeCriteria(min=1000)
+    assert (
+        qualify_company(size_campaign, result.facts)[-1].status
+        is QualificationStatus.UNKNOWN
     )
-    assert qualify_company(size_campaign, result.facts)[-1].status is QualificationStatus.UNKNOWN
 
 
 @pytest.mark.asyncio

@@ -93,7 +93,7 @@ function results(
         industry: "Fin tech",
         technologies: ["Java", "Spring", "Kafka"],
         company_size: {
-          min: { value: 500 },
+          min: 500,
           max: null,
         },
       },
