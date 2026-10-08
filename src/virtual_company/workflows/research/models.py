@@ -10,8 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from virtual_company.domain.criteria import (
     CompanySizeCriteria,
-    CriterionRequirement,
-    TechnologyCriteria,
 )
 from virtual_company.research.models import (
     DiscoveredCompany,
@@ -32,9 +30,10 @@ class CampaignCriteria(BaseModel):
     description: str | None
     target_market: str | None
     industry: str | None
-    technologies: TechnologyCriteria
+    technologies: list[str]
     company_size: CompanySizeCriteria | None
     target_count: int
+    max_companies_to_research: int
 
 
 class GeneratedSearchQueries(BaseModel):
@@ -114,7 +113,6 @@ class CoverageStatus(StrEnum):
 class CriterionCoverage(BaseModel):
     criterion: EvidenceCriterion
     subject: str | None = None
-    requirement: CriterionRequirement
     status: CoverageStatus
     evidence_ids: list[UUID] = Field(default_factory=list)
 
@@ -127,7 +125,7 @@ class CoverageSummary(BaseModel):
 
 class InvestigationStopReason(StrEnum):
     COVERAGE_COMPLETE = "coverage_complete"
-    REQUIRED_MISMATCH = "required_mismatch"
+    CRITERION_MISMATCH = "criterion_mismatch"
     MAX_ROUNDS = "max_rounds"
     NO_PROGRESS = "no_progress"
 
@@ -145,7 +143,6 @@ class CompanyInvestigationState(BaseModel):
     new_evidence_count: int = 0
     stopped: bool = False
     stop_reason: InvestigationStopReason | None = None
-    priority: CriterionRequirement = CriterionRequirement.REQUIRED
 
     @property
     def summary(self) -> CoverageSummary:

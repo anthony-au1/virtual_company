@@ -62,12 +62,13 @@ function campaign(id: string, name: string): Campaign {
     description: "Find Australian fintech companies.",
     target_market: "Australia",
     industry: "Fin tech",
-    technologies: { required: ["Java"], preferred: ["Kafka"] },
+    technologies: ["Java", "Kafka"],
     company_size: {
-      min: { value: 500, requirement: "required" },
-      max: { value: 5000, requirement: "preferred" },
+      min: { value: 500 },
+      max: { value: 5000 },
     },
     target_count: 5,
+    max_companies_to_research: 10,
     status: "DRAFT",
     created_at: "2026-10-05T00:00:00Z",
     updated_at: "2026-10-05T00:00:00Z",
@@ -81,7 +82,12 @@ function run(runId: string, campaignId: string): ResearchRunListItem {
     created_at: "2026-10-05T01:00:00Z",
     started_at: "2026-10-05T01:00:00Z",
     completed_at: "2026-10-05T01:10:00Z",
-    campaign: { id: campaignId, name: "Fintech", target_count: 5 },
+    campaign: {
+      id: campaignId,
+      name: "Fintech",
+      target_count: 5,
+      max_companies_to_research: 10,
+    },
     summary: {
       researched: 2,
       qualified: 1,
@@ -141,56 +147,52 @@ describe("CampaignsPage", () => {
 });
 
 describe("CampaignFormPage", () => {
-  it("validates required values and rejects normalized cross-list duplicates", async () => {
+  it("validates campaign fields and accepts technologies from one list", async () => {
     mockCreateCampaign.mockResolvedValue(campaign("created", "Campaign"));
     renderWithQuery(<CampaignFormPage />);
 
-    fireEvent.change(screen.getByLabelText("Target company count"), {
+    fireEvent.change(document.getElementById("target-count")!, {
       target: { value: "0" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create Campaign" }));
     expect(
       await screen.findByText("Enter a campaign name."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("Target company count must be at least 1."),
-    ).toBeInTheDocument();
+
+    fireEvent.change(document.getElementById("target-count")!, {
+      target: { value: "5" },
+    });
 
     fireEvent.change(screen.getByRole("textbox", { name: /Campaign name/ }), {
       target: { value: "Fintech" },
     });
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Add required technologies" }),
+      screen.getByRole("textbox", { name: "Add technologies" }),
       {
         target: { value: "Java" },
       },
     );
     fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add required technologies" }),
+      screen.getByRole("textbox", { name: "Add technologies" }),
       {
         key: "Enter",
       },
     );
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Add preferred technologies" }),
+      screen.getByRole("textbox", { name: "Add technologies" }),
       {
         target: { value: " java " },
       },
     );
     fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add preferred technologies" }),
+      screen.getByRole("textbox", { name: "Add technologies" }),
       {
         key: "Enter",
       },
     );
     fireEvent.click(screen.getByRole("button", { name: "Create Campaign" }));
 
-    expect(
-      await screen.findByText(
-        "A technology cannot be both required and preferred.",
-      ),
-    ).toBeInTheDocument();
-    expect(mockCreateCampaign).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockCreateCampaign).toHaveBeenCalled());
   });
 
   it("submits backend-shaped criteria and navigates using the returned campaign ID", async () => {
@@ -212,34 +214,31 @@ describe("CampaignFormPage", () => {
       target: { value: "Fin tech" },
     });
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Add required technologies" }),
+      screen.getByRole("textbox", { name: "Add technologies" }),
       {
         target: { value: "Java" },
       },
     );
     fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add required technologies" }),
+      screen.getByRole("textbox", { name: "Add technologies" }),
       {
         key: "Enter",
       },
     );
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Add preferred technologies" }),
+      screen.getByRole("textbox", { name: "Add technologies" }),
       {
         target: { value: "Kafka" },
       },
     );
     fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add preferred technologies" }),
+      screen.getByRole("textbox", { name: "Add technologies" }),
       {
         key: "Enter",
       },
     );
     fireEvent.change(screen.getByLabelText("Minimum employees"), {
       target: { value: "500" },
-    });
-    fireEvent.change(document.getElementById("min_requirement")!, {
-      target: { value: "required" },
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Create Campaign" }));
@@ -249,11 +248,12 @@ describe("CampaignFormPage", () => {
         name: "Fintech Java",
         description: "",
         target_count: 7,
+        max_companies_to_research: 15,
         status: "DRAFT",
         target_market: "Australia",
         industry: "Fin tech",
-        technologies: { required: ["Java"], preferred: ["Kafka"] },
-        company_size: { min: { value: 500, requirement: "required" } },
+        technologies: ["Java", "Kafka"],
+        company_size: { min: { value: 500 } },
       }),
     );
     await waitFor(() =>
@@ -266,7 +266,7 @@ describe("CampaignFormPage", () => {
       new ApiError("Request failed", 422, {
         detail: [
           {
-            loc: ["body", "technologies", "preferred", 0],
+            loc: ["body", "technologies", 1],
             msg: "Duplicate technology",
           },
         ],
@@ -278,7 +278,7 @@ describe("CampaignFormPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Create Campaign" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "technologies → preferred → 0: Duplicate technology",
+      "technologies → 1: Duplicate technology",
     );
   });
 });

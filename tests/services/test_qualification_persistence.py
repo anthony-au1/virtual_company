@@ -6,7 +6,6 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.domain.criteria import CriterionRequirement
 from virtual_company.domain.qualification import (
     CompanyQualification,
     CompanyQualificationStatus,
@@ -29,7 +28,6 @@ async def test_serializes_existing_results_without_committing(
         CriterionQualification(
             "technology",
             "java",
-            CriterionRequirement.REQUIRED,
             QualificationStatus.MATCH,
             [evidence_id],
             "Explicit support",
@@ -37,7 +35,6 @@ async def test_serializes_existing_results_without_committing(
         CriterionQualification(
             "company_size",
             "employees >= 100",
-            CriterionRequirement.PREFERRED,
             QualificationStatus.UNKNOWN,
             [],
             "Missing size",
@@ -59,7 +56,6 @@ async def test_serializes_existing_results_without_committing(
             {
                 "criterion": "technology",
                 "subject": "java",
-                "requirement": "required",
                 "status": "MATCH",
                 "evidence_ids": [str(evidence_id)],
                 "reason": "Explicit support",
@@ -67,7 +63,6 @@ async def test_serializes_existing_results_without_committing(
             {
                 "criterion": "company_size",
                 "subject": "employees >= 100",
-                "requirement": "preferred",
                 "status": "UNKNOWN",
                 "evidence_ids": [],
                 "reason": "Missing size",

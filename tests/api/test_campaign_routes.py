@@ -16,7 +16,6 @@ from virtual_company.tools import WebSearchNotConfiguredError
 from virtual_company.workflows.research.models import ResearchWorkflowResult
 from virtual_company.workflows.research.nodes import (
     CampaignNotFoundError,
-    ResearchTargetValidationError,
 )
 
 
@@ -75,8 +74,9 @@ def campaign() -> Campaign:
         id=uuid4(),
         name="APAC SaaS",
         target_count=25,
+        max_companies_to_research=25,
         status="DRAFT",
-        technologies={"required": [], "preferred": []},
+        technologies=[],
         created_at=now,
         updated_at=now,
     )
@@ -94,7 +94,9 @@ def test_create_campaign_returns_created_response() -> None:
 
     assert response.status_code == 201
     assert response.json()["id"] == str(model.id)
+    assert response.json()["max_companies_to_research"] == 25
     assert isinstance(service.create_data, CampaignCreate)
+    assert service.create_data.max_companies_to_research == 25
     assert (
         service.create_data.model_dump()
         == CampaignCreate(
@@ -103,14 +105,14 @@ def test_create_campaign_returns_created_response() -> None:
     )
 
 
-def test_create_campaign_accepts_required_and_preferred_criteria() -> None:
+def test_create_campaign_accepts_flat_criteria() -> None:
     model = campaign()
     model.target_market = "Australia"
     model.industry = "fin tech"
-    model.technologies = {"required": ["java"], "preferred": ["kafka"]}
+    model.technologies = ["java", "kafka"]
     model.company_size = {
-        "min": {"value": 100, "requirement": "required"},
-        "max": {"value": 500, "requirement": "preferred"},
+        "min": {"value": 100},
+        "max": {"value": 500},
     }
     service = CampaignServiceStub(model)
     app.dependency_overrides[get_campaign_service] = lambda: service
@@ -130,7 +132,7 @@ def test_create_campaign_accepts_required_and_preferred_criteria() -> None:
     assert response.json()["technologies"] == model.technologies
     assert response.json()["company_size"] == model.company_size
     assert service.create_data is not None
-    assert service.create_data.company_size.min.requirement.value == "required"
+    assert service.create_data.company_size.min.value == 100
 
 
 def test_patch_null_clears_nullable_field_and_keeps_omitted_fields_unchanged() -> None:
@@ -192,12 +194,6 @@ def test_research_campaign_returns_workflow_result() -> None:
     ("error", "status_code"),
     [
         (CampaignNotFoundError("Campaign not found"), 404),
-        (
-            ResearchTargetValidationError(
-                "Campaign target_count 20 exceeds configured research candidate pool maximum 15"
-            ),
-            422,
-        ),
         (WebSearchNotConfiguredError("Web search is not configured"), 503),
     ],
 )

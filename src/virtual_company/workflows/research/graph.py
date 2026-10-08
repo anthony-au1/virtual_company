@@ -48,9 +48,6 @@ class ResearchWorkflow:
             web_search_max_results=resolved_settings.web_search_max_results,
             web_search_max_total_results=resolved_settings.web_search_max_total_results,
             web_search_concurrency=resolved_settings.web_search_concurrency,
-            research_max_candidate_pool_size=(
-                resolved_settings.research_max_candidate_pool_size
-            ),
             company_research_query_count=resolved_settings.company_research_query_count,
             company_research_max_results_per_query=(
                 resolved_settings.company_research_max_results_per_query
@@ -336,6 +333,8 @@ def route_candidate_pool(state: ResearchWorkflowState) -> str:
         raise ValueError("Campaign was not loaded")
     qualified_count = ResearchNodes._qualified_count(state)
     if qualified_count >= campaign.target_count:
+        return "complete"
+    if len(state.get("research_companies", [])) >= campaign.max_companies_to_research:
         return "complete"
     return "refill" if ResearchNodes._pending_ranked_companies(state) else "complete"
 

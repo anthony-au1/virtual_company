@@ -43,14 +43,10 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         description="",
         target_market="Australia",
         industry="fin tech",
-        technologies={
-            "required": ["java", "spring"],
-            "preferred": ["spring boot", "kafka"],
-        },
-        company_size={
-            "min": {"value": 500, "requirement": "preferred"}
-        },
+        technologies=["java", "spring", "spring boot", "kafka"],
+        company_size={"min": {"value": 500}},
         target_count=5,
+        max_companies_to_research=10,
         status="COMPLETED",
         created_at=now,
         updated_at=now,
@@ -103,7 +99,6 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
                 {
                     "criterion": "technology",
                     "subject": "java",
-                    "requirement": "required",
                     "status": "MATCH",
                     "reason": "Supported",
                     "evidence_ids": [str(java_evidence.id), str(unrelated.id)],
@@ -111,7 +106,6 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
                 {
                     "criterion": "technology",
                     "subject": "spring",
-                    "requirement": "required",
                     "status": "UNKNOWN",
                     "reason": "Not established",
                     "evidence_ids": [],
@@ -119,7 +113,6 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
                 {
                     "criterion": "technology",
                     "subject": "kafka",
-                    "requirement": "preferred",
                     "status": "MISMATCH",
                     "reason": "Contradicted",
                     "evidence_ids": [],
@@ -153,10 +146,10 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
     assert result.campaign.name == campaign.name
     assert result.campaign.description == ""
     assert result.campaign.target_count == 5
-    assert result.campaign.criteria.target_market.value == "Australia"
-    assert result.campaign.criteria.target_market.requirement.value == "required"
-    assert result.campaign.criteria.industry.value == "fin tech"
-    assert result.campaign.criteria.technologies.model_dump() == campaign.technologies
+    assert result.campaign.max_companies_to_research == 10
+    assert result.campaign.criteria.target_market == "Australia"
+    assert result.campaign.criteria.industry == "fin tech"
+    assert result.campaign.criteria.technologies == campaign.technologies
     assert result.campaign.criteria.company_size.model_dump() == {
         **campaign.company_size,
         "max": None,
@@ -165,9 +158,9 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
     assert result.summary.qualified == 1
     assert result.summary.not_qualified == 0
     assert result.summary.insufficient_evidence == 1
-    assert result.companies[0].summary.required.matched == 1
-    assert result.companies[0].summary.required.unknown == 1
-    assert result.companies[0].summary.preferred.mismatched == 1
+    assert result.companies[0].summary.matched == 1
+    assert result.companies[0].summary.unknown == 1
+    assert result.companies[0].summary.mismatched == 1
     assert [item.id for item in result.companies[0].criteria[0].evidence] == [
         java_evidence.id
     ]

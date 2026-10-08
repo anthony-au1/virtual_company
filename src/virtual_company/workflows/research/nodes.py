@@ -7,11 +7,7 @@ from collections.abc import Callable, Sequence
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from virtual_company.domain.criteria import (
-    CriterionRequirement,
-    campaign_criteria,
-    normalize_subject,
-)
+from virtual_company.domain.criteria import campaign_criteria, normalize_subject
 from virtual_company.domain.qualification import (
     CompanyQualification,
     CompanyQualificationStatus,
@@ -101,10 +97,6 @@ class CampaignNotFoundError(LookupError):
     """Raised when a requested campaign does not exist."""
 
 
-class ResearchTargetValidationError(ValueError):
-    """Raised when deployment limits cannot satisfy a campaign research target."""
-
-
 class ResearchNodes:
     """Dependencies and node implementations for one research workflow."""
 
@@ -121,7 +113,6 @@ class ResearchNodes:
         web_search_max_results: int = 10,
         web_search_max_total_results: int = 30,
         web_search_concurrency: int = 3,
-        research_max_candidate_pool_size: int = 15,
         company_research_query_count: int = 5,
         company_research_max_results_per_query: int = 5,
         company_research_max_results_per_company: int = 15,
@@ -147,7 +138,6 @@ class ResearchNodes:
         self._web_search_max_results = web_search_max_results
         self._web_search_max_total_results = web_search_max_total_results
         self._web_search_concurrency = web_search_concurrency
-        self._research_max_candidate_pool_size = research_max_candidate_pool_size
         self._company_research_query_count = company_research_query_count
         self._company_research_max_results_per_query = (
             company_research_max_results_per_query
@@ -179,17 +169,6 @@ class ResearchNodes:
         if campaign is None:
             raise CampaignNotFoundError("Campaign not found")
         criteria = CampaignCriteria.model_validate(campaign)
-        if criteria.target_count > self._research_max_candidate_pool_size:
-            get_observability().event(
-                "research_target_rejected",
-                target_count=criteria.target_count,
-                max_candidate_pool_size=self._research_max_candidate_pool_size,
-            )
-            raise ResearchTargetValidationError(
-                f"Campaign target_count {criteria.target_count} exceeds configured "
-                "research candidate pool maximum "
-                f"{self._research_max_candidate_pool_size}"
-            )
         return {"campaign": criteria}
 
     async def create_research_run(
@@ -373,8 +352,7 @@ class ResearchNodes:
         """Rank and validate one bounded candidate pool once."""
         campaign = self._campaign(state)
         candidate_limit = min(
-            len(state["aggregated_company_candidates"]),
-            self._research_max_candidate_pool_size,
+            len(state["aggregated_company_candidates"]), campaign.max_companies_to_research
         )
         ranking_candidates = [
             candidate.model_copy(
@@ -410,8 +388,6 @@ class ResearchNodes:
             "ranked_pool_count": len(companies),
             "candidate_pool_limit": candidate_limit,
             "calculated_candidate_limit": candidate_limit,
-            "configured_candidate_pool_max": self._research_max_candidate_pool_size,
-            "configured_max_candidate_pool_size": self._research_max_candidate_pool_size,
             "target_count": campaign.target_count,
             "ranked_candidate_names": [company.name for company in companies],
         }
@@ -430,7 +406,12 @@ class ResearchNodes:
         qualified_count = self._qualified_count(state)
         needed = max(campaign.target_count - qualified_count, 0)
         pending = self._pending_ranked_companies(state)
-        batch = pending[:needed]
+        remaining_capacity = max(
+            campaign.max_companies_to_research
+            - len(state.get("research_companies", [])),
+            0,
+        )
+        batch = pending[: min(needed, remaining_capacity)]
         persisted = await self._research.persist_companies(
             campaign_id=state["campaign_id"],
             companies=batch,
@@ -563,15 +544,7 @@ class ResearchNodes:
                     user_prompt=company_query_user_prompt(campaign, company, targets),
                     response_model=GeneratedCompanySearchQueries,
                 )
-                query_limit = (
-                    min(
-                        self._company_research_query_count,
-                        self._company_research_followup_search_queries_per_company,
-                    )
-                    if state["investigations"][company.id].priority
-                    is CriterionRequirement.PREFERRED
-                    else self._company_research_query_count
-                )
+                query_limit = self._company_research_query_count
                 queries = self._select_investigation_queries(
                     response.queries,
                     investigation.attempted_queries,
@@ -613,11 +586,7 @@ class ResearchNodes:
             "company_research_queries": company_queries,
             "investigations": investigations,
             "company_search_started": True,
-            "adaptive_mode": bool(active_companies)
-            and all(
-                investigations[company.id].priority is CriterionRequirement.PREFERRED
-                for company in active_companies
-            ),
+            "adaptive_mode": False,
         }
 
     async def generate_followup_queries(
@@ -853,11 +822,7 @@ class ResearchNodes:
                 company.id, CompanyInvestigationState(company_id=company.id)
             )
             for target in self._prioritize_targets_by_history(
-                [
-                    item
-                    for item in targets
-                    if item.requirement is CriterionRequirement.REQUIRED
-                ],
+                targets,
                 history.attempted_queries,
             ):
                 candidate = next(
@@ -1374,8 +1339,7 @@ class ResearchNodes:
         )
         investigations = dict(state["investigations"])
         criterion_qualifications = dict(state.get("criterion_qualifications", {}))
-        required_company_ids: list[UUID] = []
-        preferred_company_ids: list[UUID] = []
+        active_company_ids: list[UUID] = []
         observability = get_observability()
         for company in state["research_companies"]:
             previous = investigations[company.id]
@@ -1394,36 +1358,14 @@ class ResearchNodes:
                 criterion_qualifications.get(company.id),
             )
             criterion_qualifications[company.id] = criteria
-            required = [
-                item
-                for item in criteria
-                if item.requirement is CriterionRequirement.REQUIRED
+            unresolved = [
+                item for item in criteria if item.status is QualificationStatus.UNKNOWN
             ]
-            preferred = [
-                item
-                for item in criteria
-                if item.requirement is CriterionRequirement.PREFERRED
-            ]
-            unresolved_required = [
-                item for item in required if item.status is QualificationStatus.UNKNOWN
-            ]
-            unresolved_preferred = [
-                item for item in preferred if item.status is QualificationStatus.UNKNOWN
-            ]
-            priority = (
-                CriterionRequirement.REQUIRED
-                if unresolved_required
-                else CriterionRequirement.PREFERRED
-            )
-            unresolved_keys = self._target_keys(
-                unresolved_required or unresolved_preferred
-            )
+            unresolved_keys = self._target_keys(unresolved)
             stop_reason: InvestigationStopReason | None = None
-            if any(item.status is QualificationStatus.MISMATCH for item in required):
-                stop_reason = InvestigationStopReason.REQUIRED_MISMATCH
-            elif not unresolved_required and all(
-                item.status is CoverageStatus.FOUND for item in coverage
-            ):
+            if any(item.status is QualificationStatus.MISMATCH for item in criteria):
+                stop_reason = InvestigationStopReason.CRITERION_MISMATCH
+            elif not unresolved:
                 stop_reason = InvestigationStopReason.COVERAGE_COMPLETE
             elif (
                 previous.round > 0
@@ -1437,17 +1379,13 @@ class ResearchNodes:
             investigation = previous.model_copy(
                 update={
                     "coverage": coverage,
-                    "priority": priority,
                     "stopped": stop_reason is not None,
                     "stop_reason": stop_reason,
                 }
             )
             investigations[company.id] = investigation
             if stop_reason is None:
-                if priority is CriterionRequirement.REQUIRED:
-                    required_company_ids.append(company.id)
-                else:
-                    preferred_company_ids.append(company.id)
+                active_company_ids.append(company.id)
             found_items = [
                 item for item in coverage if item.status is CoverageStatus.FOUND
             ]
@@ -1466,24 +1404,14 @@ class ResearchNodes:
                     found=[item.model_dump(mode="json") for item in found_items],
                     missing=[item.model_dump(mode="json") for item in missing_items],
                     new_evidence_items=previous.new_evidence_count,
-                    investigation_priority=priority.value,
-                    required_total=len(required),
-                    required_match=sum(
-                        item.status is QualificationStatus.MATCH for item in required
+                    criteria_total=len(criteria),
+                    criteria_match=sum(
+                        item.status is QualificationStatus.MATCH for item in criteria
                     ),
-                    required_mismatch=sum(
-                        item.status is QualificationStatus.MISMATCH for item in required
+                    criteria_mismatch=sum(
+                        item.status is QualificationStatus.MISMATCH for item in criteria
                     ),
-                    required_unknown=len(unresolved_required),
-                    preferred_total=len(preferred),
-                    preferred_match=sum(
-                        item.status is QualificationStatus.MATCH for item in preferred
-                    ),
-                    preferred_mismatch=sum(
-                        item.status is QualificationStatus.MISMATCH
-                        for item in preferred
-                    ),
-                    preferred_unknown=len(unresolved_preferred),
+                    criteria_unknown=len(unresolved),
                     stop_reason=stop_reason.value if stop_reason else None,
                 )
             observability.record(
@@ -1497,7 +1425,6 @@ class ResearchNodes:
                 len(missing_items),
                 workflow="company_research",
             )
-        active_company_ids = required_company_ids or preferred_company_ids
         return {
             "investigations": investigations,
             "active_company_ids": active_company_ids,
@@ -1552,9 +1479,8 @@ class ResearchNodes:
             score += 5
 
         for item in targets or []:
-            weight = 12 if item.requirement is CriterionRequirement.REQUIRED else 4
             if item.subject and item.subject.casefold() in searchable:
-                score += 50 + weight
+                score += 54
 
             if item.criterion == EvidenceCriterion.COMPANY_SIZE.value:
                 if any(
@@ -1567,7 +1493,7 @@ class ResearchNodes:
                         "headcount",
                     )
                 ):
-                    score += weight
+                    score += 4
 
                 if any(
                     token in path
@@ -1578,9 +1504,7 @@ class ResearchNodes:
                         "/who-we-are",
                     )
                 ):
-                    score += (
-                        5 if item.requirement is CriterionRequirement.REQUIRED else 2
-                    )
+                    score += 2
 
         if result.snippet:
             score += 3
@@ -1684,15 +1608,6 @@ class ResearchNodes:
                     for item in result.criteria
                 ),
             }
-            for requirement in CriterionRequirement:
-                group = [
-                    item for item in result.criteria if item.requirement is requirement
-                ]
-                metadata[f"{requirement.value}_total"] = len(group)
-                for status in QualificationStatus:
-                    metadata[f"{requirement.value}_{status.value.casefold()}"] = sum(
-                        item.status is status for item in group
-                    )
             with observability.span("company_qualification", **metadata):
                 observability.event("company_qualified", **metadata)
             results[company.id] = result
@@ -1896,30 +1811,17 @@ class ResearchNodes:
         state: ResearchWorkflowState, company_id: UUID
     ) -> list[CriterionQualification]:
         criteria = state.get("criterion_qualifications", {}).get(company_id, [])
-        required = [
-            item
-            for item in criteria
-            if item.requirement is CriterionRequirement.REQUIRED
-            and item.status is QualificationStatus.UNKNOWN
-        ]
-        if required:
-            return required
         return [
             item
             for item in criteria
-            if item.requirement is CriterionRequirement.PREFERRED
-            and item.status is QualificationStatus.UNKNOWN
+            if item.status is QualificationStatus.UNKNOWN
         ]
 
     @staticmethod
     def _target_keys(criteria: list[CriterionQualification]) -> set[str]:
         return {
             "|".join(
-                (
-                    item.requirement.value,
-                    item.criterion,
-                    normalize_subject(item.criterion, item.subject),
-                )
+                (item.criterion, normalize_subject(item.criterion, item.subject))
             )
             for item in criteria
         }
@@ -2013,15 +1915,7 @@ class ResearchNodes:
 
         selected: list[str] = []
         selected_keys: set[str] = set()
-        required = cls._prioritize_targets_by_history(
-            [
-                item
-                for item in targets
-                if item.requirement is CriterionRequirement.REQUIRED
-            ],
-            attempted_queries,
-        )
-        for target in required:
+        for target in cls._prioritize_targets_by_history(list(targets), attempted_queries):
             candidate = next(
                 (
                     query
@@ -2192,7 +2086,7 @@ class ResearchNodes:
 
     @staticmethod
     def _campaign_technologies(campaign: CampaignCriteria) -> list[str]:
-        return campaign.technologies.required + campaign.technologies.preferred
+        return campaign.technologies
 
     @staticmethod
     def _compact(value: str) -> str:

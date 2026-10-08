@@ -13,7 +13,6 @@ import pytest
 
 from virtual_company.config import Settings
 from virtual_company.db.models import Campaign
-from virtual_company.domain.criteria import CriterionRequirement
 from virtual_company.domain.qualification import (
     CompanyQualification,
     CompanyQualificationStatus,
@@ -62,7 +61,6 @@ from virtual_company.workflows.research.models import (
 from virtual_company.workflows.research.nodes import (
     CampaignNotFoundError,
     ResearchNodes,
-    ResearchTargetValidationError,
 )
 from virtual_company.workflows.research.prompts import (
     EXTRACT_COMPANY_CANDIDATES_PROMPT,
@@ -334,9 +332,10 @@ def campaign() -> Campaign:
         description=None,
         target_market="Australia",
         industry="Fintech",
-        technologies={"required": ["Java"], "preferred": ["Spring Boot", "Kafka"]},
+        technologies=["Java", "Spring Boot", "Kafka"],
         company_size=None,
         target_count=3,
+        max_companies_to_research=15,
         status="DRAFT",
     )
 
@@ -351,8 +350,6 @@ def make_nodes(
     extraction: ExtractionFake,
     research: ResearchFake,
     model: Campaign,
-    *,
-    max_candidate_pool_size: int = 15,
 ) -> ResearchNodes:
     return ResearchNodes(
         campaigns=CampaignServiceFake(model),
@@ -362,7 +359,6 @@ def make_nodes(
         web_search=SearchFake([]),
         web_fetch=FetchFake({}),
         web_search_concurrency=2,
-        research_max_candidate_pool_size=max_candidate_pool_size,
     )
 
 
@@ -436,7 +432,7 @@ async def test_source_selection_reserves_available_sources_for_required_criteria
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["Java", "Spring Boot"], "preferred": []}
+    model.technologies = ["Java", "Spring Boot", ]
     company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
     nodes._company_research_followup_max_fetches_per_company = 2
@@ -466,7 +462,7 @@ async def test_source_selection_reserves_available_sources_for_required_criteria
             "criterion_qualifications": {
                 company.id: [
                     CriterionQualification(
-                        "technology", subject, CriterionRequirement.REQUIRED,
+                        "technology", subject,
                         QualificationStatus.UNKNOWN, [], "Missing"
                     )
                     for subject in ("Java", "Spring Boot")
@@ -771,6 +767,7 @@ async def test_ranked_pool_limit_is_separate_from_initial_activation(
 
     model = campaign()
     model.target_count = 5
+    model.max_companies_to_research = 10
     observability = ObservabilityFake()
     monkeypatch.setattr(
         research_nodes_module, "get_observability", lambda: observability
@@ -793,7 +790,7 @@ async def test_ranked_pool_limit_is_separate_from_initial_activation(
         ]
     )
     nodes = make_nodes(
-        ExtractionFake({}), research, model, max_candidate_pool_size=10
+        ExtractionFake({}), research, model
     )
 
     ranking = await nodes.rank_company_candidates(
@@ -844,6 +841,7 @@ async def test_short_ranking_response_is_distinguishable_in_observability(
 
     model = campaign()
     model.target_count = 5
+    model.max_companies_to_research = 10
     aggregate = [
         AggregatedCompanyCandidate(
             name=f"Candidate {index}",
@@ -867,7 +865,7 @@ async def test_short_ranking_response_is_distinguishable_in_observability(
     )
 
     output = await make_nodes(
-        ExtractionFake({}), research, model, max_candidate_pool_size=10
+        ExtractionFake({}), research, model
     ).rank_company_candidates(
         {
             "campaign": CampaignCriteria.model_validate(model),
@@ -952,7 +950,6 @@ async def test_workflow_completes_after_investigating_a_small_ranked_pool() -> N
         web_fetch=FetchFake({}),
         settings=Settings(
             company_research_max_investigation_rounds=0,
-            research_max_candidate_pool_size=15,
         ),
     )
 
@@ -1072,6 +1069,25 @@ def test_candidate_pool_route_completes_when_exhausted_below_target() -> None:
     assert route_candidate_pool(state) == "complete"  # type: ignore[arg-type]
 
 
+def test_candidate_pool_route_stops_at_campaign_research_limit() -> None:
+    model = campaign()
+    model.target_count = 5
+    model.max_companies_to_research = 5
+    ids = [uuid4() for _ in range(5)]
+    state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "research_companies": [ResearchCompany(id=id_, name=f"Company {index}") for index, id_ in enumerate(ids)],
+        "company_qualifications": {
+            ids[0]: CompanyQualification(
+                ids[0], CompanyQualificationStatus.QUALIFIED, []
+            )
+        },
+        "discovered_companies": [found("Still ranked", [])],
+    }
+
+    assert route_candidate_pool(state) == "complete"  # type: ignore[arg-type]
+
+
 @pytest.mark.asyncio
 async def test_unknown_campaign_does_not_create_run() -> None:
     service = ResearchServiceFake()
@@ -1085,49 +1101,6 @@ async def test_unknown_campaign_does_not_create_run() -> None:
             web_fetch=FetchFake({}),
         ).run(uuid4())
     assert service.runs == {}
-
-
-@pytest.mark.asyncio
-async def test_target_above_candidate_pool_is_rejected_before_run() -> None:
-    model = campaign()
-    model.target_count = 16
-    service = ResearchServiceFake()
-    research = ResearchFake([])
-    search = SearchFake([])
-
-    with pytest.raises(
-        ResearchTargetValidationError,
-        match="target_count 16 exceeds configured research candidate pool maximum 15",
-    ):
-        await ResearchWorkflow(
-            campaigns=CampaignServiceFake(model),
-            research=service,
-            research_llm=research,
-            extraction_llm=ExtractionFake({}),
-            web_search=search,
-            web_fetch=FetchFake({}),
-            settings=Settings(research_max_candidate_pool_size=15),
-        ).run(model.id)
-
-    assert service.runs == {}
-    assert research.models == []
-    assert search.calls == []
-
-
-@pytest.mark.asyncio
-async def test_target_equal_to_candidate_pool_is_allowed() -> None:
-    model = campaign()
-    model.target_count = 15
-    nodes = make_nodes(
-        ExtractionFake({}),
-        ResearchFake([]),
-        model,
-        max_candidate_pool_size=15,
-    )
-
-    output = await nodes.load_campaign({"campaign_id": model.id})  # type: ignore[arg-type]
-
-    assert output["campaign"].target_count == 15
 
 
 @pytest.mark.asyncio
@@ -1285,7 +1258,7 @@ async def test_evidence_extraction_validates_provenance_whitespace_and_duplicate
     assert evidence[0].source_title == page.title
     assert evidence[0].subject == "Java"
     assert (
-        '"technologies":{"required":["Java"],"preferred":["Spring Boot","Kafka"]}'
+        '"technologies":["Java","Spring Boot","Kafka"]'
         in fake.prompts[0]
     )
 
@@ -1330,8 +1303,8 @@ async def test_evidence_extraction_preserves_explicit_size_and_geography_precisi
 ):
     model = campaign()
     model.company_size = {
-        "min": {"value": 100, "requirement": "required"},
-        "max": {"value": 500, "requirement": "preferred"},
+        "min": {"value": 100},
+        "max": {"value": 500},
     }
     company = ResearchCompany(
         id=uuid4(), name="Acme", website=None, domain="acme.example"
@@ -1475,14 +1448,12 @@ async def test_followup_queries_contain_only_missing_criteria() -> None:
         CriterionCoverage(
             criterion=EvidenceCriterion.TARGET_MARKET,
             subject="Australia",
-            requirement="required",
             status=CoverageStatus.FOUND,
             evidence_ids=[uuid4()],
         ),
         CriterionCoverage(
             criterion=EvidenceCriterion.TECHNOLOGY,
             subject="Kafka",
-            requirement="preferred",
             status=CoverageStatus.MISSING,
         ),
     ]
@@ -1496,7 +1467,6 @@ async def test_followup_queries_contain_only_missing_criteria() -> None:
                     CriterionQualification(
                         "technology",
                         "Kafka",
-                        CriterionRequirement.PREFERRED,
                         QualificationStatus.UNKNOWN,
                         [],
                         "Missing",
@@ -1527,7 +1497,7 @@ async def test_followup_filters_duplicates_and_resolved_criteria() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["Java", "Spring Boot"], "preferred": []}
+    model.technologies = ["Java", "Spring Boot", ]
     company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
     prior_query = "Acme Java engineering"
     research = ResearchFake(
@@ -1550,7 +1520,6 @@ async def test_followup_filters_duplicates_and_resolved_criteria() -> None:
                     CriterionQualification(
                         "technology",
                         "Java",
-                        CriterionRequirement.REQUIRED,
                         QualificationStatus.MATCH,
                         [uuid4()],
                         "Matched",
@@ -1558,7 +1527,6 @@ async def test_followup_filters_duplicates_and_resolved_criteria() -> None:
                     CriterionQualification(
                         "technology",
                         "Spring Boot",
-                        CriterionRequirement.REQUIRED,
                         QualificationStatus.UNKNOWN,
                         [],
                         "Missing",
@@ -1596,7 +1564,7 @@ async def test_required_criteria_receive_query_coverage_when_queries_exist() -> 
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["Java", "Spring Boot"], "preferred": []}
+    model.technologies = ["Java", "Spring Boot", ]
     company = ResearchCompany(id=uuid4(), name="Acme")
     research = ResearchFake(
         [],
@@ -1609,7 +1577,7 @@ async def test_required_criteria_receive_query_coverage_when_queries_exist() -> 
     nodes = make_nodes(ExtractionFake({}), research, model)
     qualifications = [
         CriterionQualification(
-            "technology", subject, CriterionRequirement.REQUIRED,
+            "technology", subject,
             QualificationStatus.UNKNOWN, [], "Missing"
         )
         for subject in ("Java", "Spring Boot")
@@ -1862,7 +1830,7 @@ async def test_coverage_retries_failed_fact_extraction_but_caches_semantic_unkno
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["Java"], "preferred": []}
+    model.technologies = ["Java", ]
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     item = SimpleNamespace(
@@ -1958,8 +1926,8 @@ def _criteria_from_semantic_prompt(prompt: str) -> list[dict[str, object]]:
 @pytest.mark.asyncio
 async def test_airwallex_followup_only_extracts_unknown_and_preserves_matches() -> None:
     model = campaign()
-    model.technologies = {"required": ["Java", "Spring"], "preferred": ["Kafka"]}
-    model.company_size = {"min": {"value": 100, "requirement": "preferred"}}
+    model.technologies = ["Java", "Spring", "Kafka"]
+    model.company_size = {"min": {"value": 100}}
     company = ResearchCompany(id=uuid4(), name="Airwallex Pty Ltd")
     run_id = uuid4()
     service = ResearchServiceFake()
@@ -2023,7 +1991,7 @@ async def test_airwallex_followup_only_extracts_unknown_and_preserves_matches() 
 
     qualified = await nodes.qualify_companies(state)  # type: ignore[arg-type]
 
-    assert qualified["company_qualifications"][company.id].status.value == "QUALIFIED"
+    assert qualified["company_qualifications"][company.id].status.value == "INSUFFICIENT_EVIDENCE"
     assert len(provider.prompts) == 2
 
 
@@ -2032,8 +2000,8 @@ async def test_resolved_company_size_mismatch_is_not_re_evaluated() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": [], "preferred": ["Kafka"]}
-    model.company_size = {"min": {"value": 100, "requirement": "preferred"}}
+    model.technologies = ["Kafka"]
+    model.company_size = {"min": {"value": 100}}
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     service = ResearchServiceFake()
@@ -2072,12 +2040,12 @@ async def test_resolved_company_size_mismatch_is_not_re_evaluated() -> None:
     assert [item["criterion_id"] for item in _criteria_from_semantic_prompt(provider.prompts[-1])] == [
         "criterion_0"
     ]
-    assert "40 employees" not in provider.prompts[-1]
+    assert len(provider.prompts) == 1
     assert state["criterion_qualifications"][company.id][1].status is (
         QualificationStatus.MISMATCH
     )
     assert state["criterion_qualifications"][company.id][0].status is (
-        QualificationStatus.MATCH
+        QualificationStatus.UNKNOWN
     )
 
 
@@ -2086,10 +2054,7 @@ async def test_semantic_targets_shrink_as_criteria_resolve_across_rounds() -> No
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {
-        "required": ["Java", "Spring"],
-        "preferred": ["Kafka"],
-    }
+    model.technologies = ["Java", "Spring", "Kafka"]
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     service = ResearchServiceFake()
@@ -2145,7 +2110,7 @@ async def test_coverage_stops_companies_independently() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["Kafka"], "preferred": []}
+    model.technologies = ["Kafka", ]
     complete = ResearchCompany(id=uuid4(), name="Complete")
     stalled = ResearchCompany(id=uuid4(), name="Stalled")
     progressing = ResearchCompany(id=uuid4(), name="Progressing")
@@ -2182,7 +2147,7 @@ async def test_coverage_stops_companies_independently() -> None:
                 stalled.id: CompanyInvestigationState(
                     company_id=stalled.id,
                     round=1,
-                    unresolved_before={"required|technology|kafka"},
+                    unresolved_before={"technology|kafka"},
                     new_evidence_count=3,
                 ),
                 progressing.id: CompanyInvestigationState(
@@ -2193,7 +2158,7 @@ async def test_coverage_stops_companies_independently() -> None:
                 exhausted.id: CompanyInvestigationState(
                     company_id=exhausted.id,
                     round=2,
-                    unresolved_before={"required|technology|kafka"},
+                    unresolved_before={"technology|kafka"},
                     alternative_strategy_attempted=True,
                 ),
             },
@@ -2212,7 +2177,7 @@ async def test_coverage_stops_at_maximum_adaptive_rounds() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["Kafka"], "preferred": []}
+    model.technologies = ["Kafka", ]
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     service = ResearchServiceFake()
@@ -2291,7 +2256,7 @@ async def test_qualification_reads_current_run_evidence_without_external_calls()
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["spring", "spring boot"], "preferred": []}
+    model.technologies = ["spring", "spring boot", ]
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
     company_id = uuid4()
     run_id = uuid4()
@@ -2498,8 +2463,8 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": [], "preferred": []}
-    model.company_size = {"min": {"value": 500, "requirement": "required"}}
+    model.technologies = []
+    model.company_size = {"min": {"value": 500}}
     company_id = uuid4()
     run_id = uuid4()
     item = SimpleNamespace(
@@ -2585,7 +2550,7 @@ async def test_discovery_size_mismatch_stops_before_company_search() -> None:
             return await super().generate_structured(**kwargs)
 
     model = campaign()
-    model.company_size = {"min": {"value": 100, "requirement": "required"}}
+    model.company_size = {"min": {"value": 100}}
     url = "https://candidate.example/about"
     search = SearchFake([SearchResult(title="Candidate 0", url=url)])
     research = ResearchFake([found("Candidate 0", [url])])
@@ -2647,8 +2612,8 @@ async def test_discovery_required_matches_avoid_company_search() -> None:
             return await super().generate_structured(**kwargs)
 
     model = campaign()
-    model.technologies = {"required": ["Java"], "preferred": []}
-    model.company_size = {"min": {"value": 100, "requirement": "required"}}
+    model.technologies = ["Java", ]
+    model.company_size = {"min": {"value": 100}}
     url = "https://candidate.example/about"
     search = SearchFake([SearchResult(title="Candidate 0", url=url)])
     research = ResearchFake([found("Candidate 0", [url])])
@@ -2681,7 +2646,7 @@ async def test_required_unknown_is_targeted_before_preferred() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["Java"], "preferred": ["Kafka"]}
+    model.technologies = ["Java", "Kafka"]
     company = ResearchCompany(id=uuid4(), name="Acme")
     research = ResearchFake([])
     nodes = make_nodes(ExtractionFake({}), research, model)
@@ -2695,24 +2660,20 @@ async def test_required_unknown_is_targeted_before_preferred() -> None:
         "active_company_ids": [company.id],
     }
     state.update(await nodes.check_evidence_coverage(state))
-    assert state["investigations"][company.id].priority is CriterionRequirement.REQUIRED
     output = await nodes.generate_company_queries(state)
     targets = research.prompts[-1].split("Evidence targets:", 1)[1]
     assert "Java" in targets
-    assert "Kafka" not in targets
+    assert "Kafka" in targets
     assert output["investigations"][company.id].round == 1
     assert output["adaptive_mode"] is False
 
 
 @pytest.mark.asyncio
-async def test_required_unknown_companies_are_scheduled_before_preferred_only() -> None:
+async def test_all_unknown_criteria_are_scheduled_equally() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {
-        "required": ["Java", "Spring"],
-        "preferred": ["Kafka"],
-    }
+    model.technologies = ["Java", "Spring", "Kafka"]
     complete = ResearchCompany(id=uuid4(), name="Complete")
     unresolved = ResearchCompany(id=uuid4(), name="Unresolved")
     run_id = uuid4()
@@ -2739,10 +2700,7 @@ async def test_required_unknown_companies_are_scheduled_before_preferred_only() 
         },
     }
     output = await nodes.check_evidence_coverage(state)  # type: ignore[arg-type]
-    assert output["active_company_ids"] == [unresolved.id]
-    assert (
-        output["investigations"][complete.id].priority is CriterionRequirement.PREFERRED
-    )
+    assert output["active_company_ids"] == [complete.id, unresolved.id]
     assert output["investigations"][complete.id].stopped is False
 
 
@@ -2753,7 +2711,7 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["Spring"], "preferred": []}
+    model.technologies = ["Spring", ]
     company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
     generic = SearchResult(
         title="Careers", url="https://acme.example/careers", snippet="Open roles"
@@ -2776,7 +2734,6 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
                     CriterionQualification(
                         "technology",
                         "Spring",
-                        CriterionRequirement.REQUIRED,
                         QualificationStatus.UNKNOWN,
                         [uuid4()],
                         "Covered but inconclusive",
@@ -2790,7 +2747,6 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
                         CriterionCoverage(
                             criterion=EvidenceCriterion.TECHNOLOGY,
                             subject="Spring",
-                            requirement="required",
                             status=CoverageStatus.FOUND,
                             evidence_ids=[uuid4()],
                         )
@@ -2809,7 +2765,7 @@ async def test_source_selection_prioritizes_company_specific_required_subjects()
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["Java", "Spring"], "preferred": ["Kafka"]}
+    model.technologies = ["Java", "Spring", "Kafka"]
     company = ResearchCompany(id=uuid4(), name="Iress")
     generic = SearchResult(
         title="Iress careers", url="https://www.iress.com/careers", snippet="Join us"
@@ -2828,7 +2784,6 @@ async def test_source_selection_prioritizes_company_specific_required_subjects()
         CriterionQualification(
             "technology",
             subject,
-            CriterionRequirement.REQUIRED,
             QualificationStatus.UNKNOWN,
             [],
             "No evidence",
@@ -2858,7 +2813,7 @@ async def test_preferred_unknown_uses_remaining_rounds_then_qualifies() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["Java"], "preferred": ["Kafka"]}
+    model.technologies = ["Java", "Kafka"]
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     research = ResearchFake([])
@@ -2885,13 +2840,10 @@ async def test_preferred_unknown_uses_remaining_rounds_then_qualifies() -> None:
         "active_company_ids": [company.id],
     }
     state.update(await nodes.check_evidence_coverage(state))
-    assert (
-        state["investigations"][company.id].priority is CriterionRequirement.PREFERRED
-    )
     state.update(await nodes.generate_company_queries(state))
     assert "Kafka" in research.prompts[-1].split("Evidence targets:", 1)[1]
     assert state["investigations"][company.id].round == 1
-    assert state["adaptive_mode"] is True
+    assert state["adaptive_mode"] is False
     state.update(await nodes.check_evidence_coverage(state))
     assert (
         state["investigations"][company.id].stop_reason
@@ -2900,17 +2852,17 @@ async def test_preferred_unknown_uses_remaining_rounds_then_qualifies() -> None:
     result = (await nodes.qualify_companies(state))["company_qualifications"][
         company.id
     ]
-    assert result.status.value == "QUALIFIED"
+    assert result.status.value == "INSUFFICIENT_EVIDENCE"
     assert result.criteria[-1].status is QualificationStatus.UNKNOWN
 
 
 @pytest.mark.asyncio
-async def test_preferred_size_mismatch_does_not_stop_as_required_mismatch() -> None:
+async def test_size_mismatch_stops_company_research() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": ["Java"], "preferred": []}
-    model.company_size = {"max": {"value": 500, "requirement": "preferred"}}
+    model.technologies = ["Java", ]
+    model.company_size = {"max": {"value": 500}}
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
@@ -2946,17 +2898,17 @@ async def test_preferred_size_mismatch_does_not_stop_as_required_mismatch() -> N
     state.update(await nodes.check_evidence_coverage(state))
     assert (
         state["investigations"][company.id].stop_reason
-        is InvestigationStopReason.COVERAGE_COMPLETE
+        is InvestigationStopReason.CRITERION_MISMATCH
     )
     result = (await nodes.qualify_companies(state))["company_qualifications"][
         company.id
     ]
-    assert result.status.value == "QUALIFIED"
+    assert result.status.value == "NOT_QUALIFIED"
     assert result.criteria[-1].status is QualificationStatus.MISMATCH
 
 
 @pytest.mark.asyncio
-async def test_multi_company_workflow_bounds_searches_required_first() -> None:
+async def test_multi_company_workflow_researches_all_unknown_criteria() -> None:
     discovery_complete = "https://complete.example/discovery"
     discovery_required = "https://required.example/discovery"
     required_page = "https://required.example/engineering"
@@ -3096,11 +3048,8 @@ async def test_multi_company_workflow_bounds_searches_required_first() -> None:
             raise AssertionError(f"Unexpected extraction model: {model_type}")
 
     model = campaign()
-    model.technologies = {
-        "required": ["Java", "Spring"],
-        "preferred": ["Kafka"],
-    }
-    model.company_size = {"min": {"value": 500, "requirement": "required"}}
+    model.technologies = ["Java", "Spring", "Kafka"]
+    model.company_size = {"min": {"value": 500}}
     search = CostSearchFake([])
     research = CostResearchFake([])
     service = ResearchServiceFake()
@@ -3133,8 +3082,8 @@ async def test_multi_company_workflow_bounds_searches_required_first() -> None:
     await workflow.run(model.id)
     assert [query for query, _ in search.calls] == [
         "Australian fintech companies",
-        "RequiredCo Java Spring evidence",
         "CompleteCo Kafka evidence",
+        "RequiredCo Java Spring evidence",
     ]
     statuses = {result.status.value for result in service.qualifications.values()}
     assert statuses == {"QUALIFIED", "NOT_QUALIFIED"}
@@ -3147,8 +3096,8 @@ async def test_approximate_required_size_stays_unknown() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = {"required": [], "preferred": []}
-    model.company_size = {"min": {"value": 500, "requirement": "required"}}
+    model.technologies = []
+    model.company_size = {"min": {"value": 500}}
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     item = SimpleNamespace(

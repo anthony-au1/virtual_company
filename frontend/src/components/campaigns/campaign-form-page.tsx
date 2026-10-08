@@ -27,22 +27,20 @@ const campaignFormSchema = z
       .number({ error: "Enter a target company count." })
       .int("Enter a whole number.")
       .min(1, "Target company count must be at least 1."),
+    max_companies_to_research: z.number().int().min(1),
     target_market: z.string().max(255),
     industry: z.string().max(255),
-    requiredTechnologies: z.array(z.string().trim().min(1)),
-    preferredTechnologies: z.array(z.string().trim().min(1)),
+    technologies: z.array(z.string().trim().min(1)),
     min_employees: z
       .number()
       .int("Enter a whole number.")
       .min(0, "Employee count cannot be negative.")
       .optional(),
-    min_requirement: z.enum(["required", "preferred"]),
     max_employees: z
       .number()
       .int("Enter a whole number.")
       .min(0, "Employee count cannot be negative.")
       .optional(),
-    max_requirement: z.enum(["required", "preferred"]),
   })
   .superRefine((values, context) => {
     if (
@@ -57,37 +55,28 @@ const campaignFormSchema = z
       });
     }
 
-    const required = new Set(
-      values.requiredTechnologies.map(normalizeTechnology),
-    );
-    if (
-      values.preferredTechnologies.some((value) =>
-        required.has(normalizeTechnology(value)),
-      )
-    ) {
+    if (values.max_companies_to_research < values.target_count) {
       context.addIssue({
         code: "custom",
-        path: ["preferredTechnologies"],
-        message: "A technology cannot be both required and preferred.",
+        path: ["max_companies_to_research"],
+        message: "Research limit must be at least the target company count.",
       });
     }
   });
 
 type CampaignFormValues = z.infer<typeof campaignFormSchema>;
-type TechnologyField = "requiredTechnologies" | "preferredTechnologies";
+type TechnologyField = "technologies";
 
 const defaultValues: CampaignFormValues = {
   name: "",
   description: "",
   target_count: 5,
+  max_companies_to_research: 15,
   target_market: "",
   industry: "",
-  requiredTechnologies: [],
-  preferredTechnologies: [],
+  technologies: [],
   min_employees: undefined,
-  min_requirement: "preferred",
   max_employees: undefined,
-  max_requirement: "preferred",
 };
 
 export function CampaignFormPage() {
@@ -98,13 +87,9 @@ export function CampaignFormPage() {
     resolver: zodResolver(campaignFormSchema),
     defaultValues,
   });
-  const requiredTechnologies = useWatch({
+  const technologies = useWatch({
     control: form.control,
-    name: "requiredTechnologies",
-  });
-  const preferredTechnologies = useWatch({
-    control: form.control,
-    name: "preferredTechnologies",
+    name: "technologies",
   });
   const mutation = useMutation({
     mutationFn: createCampaign,
@@ -123,7 +108,6 @@ export function CampaignFormPage() {
         ? {
             min: {
               value: values.min_employees,
-              requirement: values.min_requirement,
             },
           }
         : {}),
@@ -131,7 +115,6 @@ export function CampaignFormPage() {
         ? {
             max: {
               value: values.max_employees,
-              requirement: values.max_requirement,
             },
           }
         : {}),
@@ -140,15 +123,13 @@ export function CampaignFormPage() {
       name: values.name,
       description: values.description,
       target_count: values.target_count,
+      max_companies_to_research: values.max_companies_to_research,
       status: "DRAFT",
       ...(values.target_market.trim()
         ? { target_market: values.target_market.trim() }
         : {}),
       ...(values.industry.trim() ? { industry: values.industry.trim() } : {}),
-      technologies: {
-        required: values.requiredTechnologies,
-        preferred: values.preferredTechnologies,
-      },
+      technologies: values.technologies,
       company_size: companySize.min || companySize.max ? companySize : null,
     };
     mutation.mutate(payload);
@@ -213,6 +194,18 @@ export function CampaignFormPage() {
                 })}
               />
             </Field>
+            <Field id="research-limit" label="Maximum companies to research">
+              <input
+                className={inputClass}
+                id="research-limit"
+                min="1"
+                step="1"
+                type="number"
+                {...form.register("max_companies_to_research", {
+                  setValueAs: parseOptionalNumber,
+                })}
+              />
+            </Field>
             <Field
               className="sm:col-span-2"
               id="description"
@@ -231,7 +224,7 @@ export function CampaignFormPage() {
           <CardHeader>
             <CardTitle>Market</CardTitle>
             <p className="text-muted-foreground text-xs">
-              Configured market and industry criteria are evaluated as required.
+              All configured campaign criteria are evaluated equally.
             </p>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -272,26 +265,13 @@ export function CampaignFormPage() {
           </CardHeader>
           <CardContent className="space-y-5">
             <TechnologyInput
-              error={form.formState.errors.requiredTechnologies?.message}
-              label="Required technologies"
-              onAdd={(value) =>
-                addTechnology(form, "requiredTechnologies", value)
-              }
+              error={form.formState.errors.technologies?.message}
+              label="Technologies"
+              onAdd={(value) => addTechnology(form, "technologies", value)}
               onRemove={(index) =>
-                removeTechnology(form, "requiredTechnologies", index)
+                removeTechnology(form, "technologies", index)
               }
-              values={requiredTechnologies}
-            />
-            <TechnologyInput
-              error={form.formState.errors.preferredTechnologies?.message}
-              label="Preferred technologies"
-              onAdd={(value) =>
-                addTechnology(form, "preferredTechnologies", value)
-              }
-              onRemove={(index) =>
-                removeTechnology(form, "preferredTechnologies", index)
-              }
-              values={preferredTechnologies}
+              values={technologies}
             />
           </CardContent>
         </Card>
@@ -308,14 +288,12 @@ export function CampaignFormPage() {
               error={form.formState.errors.min_employees?.message}
               label="Minimum employees"
               numberName="min_employees"
-              requirementName="min_requirement"
               register={form.register}
             />
             <SizeBoundFields
               error={form.formState.errors.max_employees?.message}
               label="Maximum employees"
               numberName="max_employees"
-              requirementName="max_requirement"
               register={form.register}
             />
           </CardContent>
@@ -459,13 +437,11 @@ function TechnologyInput({
 function SizeBoundFields({
   label,
   numberName,
-  requirementName,
   register,
   error,
 }: {
   label: string;
   numberName: "min_employees" | "max_employees";
-  requirementName: "min_requirement" | "max_requirement";
   register: ReturnType<typeof useForm<CampaignFormValues>>["register"];
   error?: string;
 }) {
@@ -483,17 +459,6 @@ function SizeBoundFields({
         {...register(numberName, { setValueAs: parseOptionalNumber })}
       />
       {error ? <p className="text-destructive text-xs">{error}</p> : null}
-      <label className="block text-xs font-medium" htmlFor={requirementName}>
-        Requirement
-      </label>
-      <select
-        className={inputClass}
-        id={requirementName}
-        {...register(requirementName)}
-      >
-        <option value="required">Required</option>
-        <option value="preferred">Preferred</option>
-      </select>
     </div>
   );
 }
@@ -519,10 +484,6 @@ function removeTechnology(
     form.getValues(field).filter((_, itemIndex) => itemIndex !== index),
     { shouldDirty: true, shouldValidate: true },
   );
-}
-
-function normalizeTechnology(value: string) {
-  return value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
 }
 
 function parseOptionalNumber(value: string) {

@@ -139,8 +139,12 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
             <h2 className="text-sm font-semibold">Basic information</h2>
             <dl className="mt-3 grid gap-4 sm:grid-cols-2">
               <Detail
-                label="Target companies"
-                value={`${campaign.target_count} qualified companies`}
+                label="Target qualified companies"
+                value={`${campaign.target_count}`}
+              />
+              <Detail
+                label="Maximum companies researched"
+                value={`${campaign.max_companies_to_research}`}
               />
               <Detail label="Created" value={formatDate(campaign.created_at)} />
               <Detail
@@ -154,33 +158,22 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
           <section className="rounded-lg border p-4 sm:p-5">
             <h2 className="text-sm font-semibold">Campaign criteria</h2>
             <div className="mt-4 grid gap-5 sm:grid-cols-2">
-              <CriteriaList title="Required criteria">
+              <CriteriaList title="Campaign criteria">
                 {campaign.target_market ? (
                   <CriteriaRow label="Market" value={campaign.target_market} />
                 ) : null}
                 {campaign.industry ? (
                   <CriteriaRow label="Industry" value={campaign.industry} />
                 ) : null}
-                {campaign.technologies.required.map((technology) => (
+                {campaign.technologies.map((technology) => (
                   <CriteriaRow
-                    key={`required-${technology}`}
+                    key={technology}
                     label="Technology"
                     value={technology}
                   />
                 ))}
-                {sizeRows(campaign, "required")}
-                {!hasRequiredCriteria(campaign) ? <EmptyCriteria /> : null}
-              </CriteriaList>
-              <CriteriaList title="Preferred criteria">
-                {campaign.technologies.preferred.map((technology) => (
-                  <CriteriaRow
-                    key={`preferred-${technology}`}
-                    label="Technology"
-                    value={technology}
-                  />
-                ))}
-                {sizeRows(campaign, "preferred")}
-                {!hasPreferredCriteria(campaign) ? <EmptyCriteria /> : null}
+                {sizeRows(campaign)}
+                {!hasCriteria(campaign) ? <EmptyCriteria /> : null}
               </CriteriaList>
             </div>
           </section>
@@ -324,9 +317,9 @@ function EmptyCriteria() {
   return <li className="text-muted-foreground text-xs">None configured</li>;
 }
 
-function sizeRows(campaign: Campaign, requirement: "required" | "preferred") {
+function sizeRows(campaign: Campaign) {
   const rows = [];
-  if (campaign.company_size?.min?.requirement === requirement) {
+  if (campaign.company_size?.min) {
     rows.push(
       <CriteriaRow
         key="size-min"
@@ -335,7 +328,7 @@ function sizeRows(campaign: Campaign, requirement: "required" | "preferred") {
       />,
     );
   }
-  if (campaign.company_size?.max?.requirement === requirement) {
+  if (campaign.company_size?.max) {
     rows.push(
       <CriteriaRow
         key="size-max"
@@ -347,20 +340,12 @@ function sizeRows(campaign: Campaign, requirement: "required" | "preferred") {
   return rows;
 }
 
-function hasRequiredCriteria(campaign: Campaign) {
+function hasCriteria(campaign: Campaign) {
   return Boolean(
     campaign.target_market ||
     campaign.industry ||
-    campaign.technologies.required.length ||
-    campaign.company_size?.min?.requirement === "required" ||
-    campaign.company_size?.max?.requirement === "required",
-  );
-}
-
-function hasPreferredCriteria(campaign: Campaign) {
-  return Boolean(
-    campaign.technologies.preferred.length ||
-    campaign.company_size?.min?.requirement === "preferred" ||
-    campaign.company_size?.max?.requirement === "preferred",
+    campaign.technologies.length ||
+    campaign.company_size?.min ||
+    campaign.company_size?.max,
   );
 }

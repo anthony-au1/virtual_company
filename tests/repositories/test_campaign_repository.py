@@ -47,22 +47,22 @@ async def test_campaign_criteria_survive_repository_and_workflow_loading() -> No
         "status": "DRAFT",
         "target_market": "Australia",
         "industry": "fin tech",
-        "technologies": {"required": ["java"], "preferred": ["kafka"]},
+        "technologies": ["java", "kafka"],
         "company_size": {
-            "min": {"value": 100, "requirement": "required"},
-            "max": {"value": 500, "requirement": "preferred"},
+            "min": {"value": 100},
+            "max": {"value": 500},
         },
     })
     campaign = await CampaignRepository(session).create(payload)
     campaign.id = uuid4()
-    assert campaign.technologies == {"required": ["java"], "preferred": ["kafka"]}
+    assert campaign.technologies == ["java", "kafka"]
     assert campaign.company_size == {
-        "min": {"value": 100, "requirement": "required"},
-        "max": {"value": 500, "requirement": "preferred"},
+        "min": {"value": 100},
+        "max": {"value": 500},
     }
     loaded = CampaignCriteria.model_validate(campaign)
-    assert loaded.technologies.required == ["java"]
-    assert loaded.company_size.max.requirement.value == "preferred"
+    assert loaded.technologies == ["java", "kafka"]
+    assert loaded.company_size.max.value == 500
 
 
 @pytest.mark.asyncio

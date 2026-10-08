@@ -3,16 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-
-class CriterionRequirement(str, Enum):
-    REQUIRED = "required"
-    PREFERRED = "preferred"
-
 
 TECHNOLOGY_IMPLICATIONS = {"spring boot": frozenset({"spring"})}
 _TECHNOLOGY_ALIASES = {
@@ -38,38 +31,10 @@ def technology_subjects(value: str | None) -> set[str]:
     return {key, *TECHNOLOGY_IMPLICATIONS.get(key, ())}
 
 
-class TechnologyCriteria(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    required: list[str] = Field(default_factory=list)
-    preferred: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_labels(self) -> TechnologyCriteria:
-        seen: dict[str, str] = {}
-        for requirement in ("required", "preferred"):
-            unique: list[str] = []
-            for label in getattr(self, requirement):
-                key = normalize_subject("technology", label)
-                if not key:
-                    raise ValueError("Technology labels cannot be blank")
-                if key in seen and seen[key] != requirement:
-                    raise ValueError(
-                        f"Technology {label!r} duplicates a {seen[key]} technology"
-                    )
-                if key in seen:
-                    continue
-                seen[key] = requirement
-                unique.append(label)
-            setattr(self, requirement, unique)
-        return self
-
-
 class CompanySizeBound(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     value: int = Field(ge=0, strict=True)
-    requirement: CriterionRequirement
 
 
 class CompanySizeCriteria(BaseModel):
@@ -90,7 +55,7 @@ class CompanySizeCriteria(BaseModel):
 class CampaignForQualification(Protocol):
     target_market: str | None
     industry: str | None
-    technologies: TechnologyCriteria
+    technologies: list[str]
     company_size: CompanySizeCriteria | None
 
 
@@ -98,7 +63,6 @@ class CampaignForQualification(Protocol):
 class CampaignCriterion:
     criterion: str
     subject: str | None
-    requirement: CriterionRequirement
     size_bound: Literal["min", "max"] | None = None
     size_value: int | None = None
 
@@ -106,20 +70,12 @@ class CampaignCriterion:
 def campaign_criteria(campaign: CampaignForQualification) -> list[CampaignCriterion]:
     criteria: list[CampaignCriterion] = []
     if campaign.target_market:
-        criteria.append(
-            CampaignCriterion(
-                "target_market", campaign.target_market, CriterionRequirement.REQUIRED
-            )
-        )
+        criteria.append(CampaignCriterion("target_market", campaign.target_market))
     if campaign.industry:
-        criteria.append(
-            CampaignCriterion(
-                "industry", campaign.industry, CriterionRequirement.REQUIRED
-            )
-        )
-    for requirement in (CriterionRequirement.REQUIRED, CriterionRequirement.PREFERRED):
-        for label in getattr(campaign.technologies, requirement.value):
-            criteria.append(CampaignCriterion("technology", label, requirement))
+        criteria.append(CampaignCriterion("industry", campaign.industry))
+    criteria.extend(
+        CampaignCriterion("technology", label) for label in campaign.technologies
+    )
     if campaign.company_size:
         for bound_name, operator in (("min", ">="), ("max", "<=")):
             bound = getattr(campaign.company_size, bound_name)
@@ -128,7 +84,6 @@ def campaign_criteria(campaign: CampaignForQualification) -> list[CampaignCriter
                     CampaignCriterion(
                         "company_size",
                         f"employees {operator} {bound.value}",
-                        bound.requirement,
                         bound_name,
                         bound.value,
                     )

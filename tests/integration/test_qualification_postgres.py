@@ -49,7 +49,7 @@ async def test_committed_snapshots_are_idempotent_and_run_scoped() -> None:
                     name="Snapshot test",
                     target_count=2,
                     status="RUNNING",
-                    technologies={"required": [], "preferred": []},
+                    technologies=[],
                 )
             )
             session.add_all(

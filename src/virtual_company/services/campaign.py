@@ -12,6 +12,10 @@ from virtual_company.repositories.company import CompanyRepository
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
 
 
+class CampaignLimitValidationError(ValueError):
+    """Raised when a campaign research limit is below its qualification target."""
+
+
 class CampaignService:
     """Coordinate campaign persistence operations."""
 
@@ -32,6 +36,23 @@ class CampaignService:
 
     async def update(self, campaign_id: UUID, data: CampaignUpdate) -> Campaign | None:
         async with self._session.begin():
+            current = await self._campaigns.get_by_id(campaign_id)
+            if current is None:
+                return None
+            target_count = (
+                data.target_count
+                if data.target_count is not None
+                else current.target_count
+            )
+            max_companies = (
+                data.max_companies_to_research
+                if data.max_companies_to_research is not None
+                else current.max_companies_to_research
+            )
+            if max_companies < target_count:
+                raise CampaignLimitValidationError(
+                    "max_companies_to_research cannot be less than target_count"
+                )
             return await self._campaigns.update(campaign_id, data)
 
     async def list_companies(self, campaign_id: UUID) -> list[Company] | None:

@@ -12,8 +12,6 @@ from pydantic import BaseModel, ValidationError
 from virtual_company.domain.criteria import (
     CompanySizeBound,
     CompanySizeCriteria,
-    CriterionRequirement,
-    TechnologyCriteria,
 )
 from virtual_company.domain.qualification import QualificationStatus
 from virtual_company.research.models import (
@@ -75,7 +73,7 @@ def campaign(technologies: list[str] | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         target_market="Australia",
         industry="fintech",
-        technologies=TechnologyCriteria(required=technologies or ["Kafka"]),
+        technologies=technologies or ["Kafka"],
         company_size=None,
     )
 
@@ -237,7 +235,7 @@ async def test_technology_evidence_cannot_support_employee_count() -> None:
     assert result.facts == QualificationFacts()
     size_campaign = campaign()
     size_campaign.company_size = CompanySizeCriteria(
-        min=CompanySizeBound(value=1000, requirement=CriterionRequirement.REQUIRED)
+        min=CompanySizeBound(value=1000)
     )
     assert qualify_company(size_campaign, result.facts)[-1].status is QualificationStatus.UNKNOWN
 

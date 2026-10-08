@@ -1,9 +1,10 @@
 # Campaign criteria
 
-`target_market` and `industry` are required criteria whenever configured. The
-`technologies` object has independent `required` and `preferred` lists. The optional
-`company_size` object has independent `min` and `max` bounds, each carrying a
-nonnegative employee count and a `required` or `preferred` requirement.
+Campaign criteria are all evaluated equally. `target_market`, `industry`, and
+`technologies` are optional criteria. The optional `company_size` object has
+independent `min` and `max` bounds, each carrying a nonnegative employee count.
+`target_count` is the desired number of fully matching companies, and
+`max_companies_to_research` caps the companies investigated for one campaign.
 
 Each configured criterion produces `MATCH`, `MISMATCH`, or `UNKNOWN` from validated
 Evidence. A structured-output extraction model first converts the persisted Evidence
@@ -17,10 +18,9 @@ Employee-count facts retain their relation, optional year, and scope before dete
 bound evaluation. Coverage only indicates whether relevant Evidence exists and remains
 separate from semantic fact extraction and qualification.
 
-Any required mismatch makes a company `NOT_QUALIFIED`. Otherwise, any required
-unknown yields `INSUFFICIENT_EVIDENCE`. A company is `QUALIFIED` when every required
-criterion matches. Preferred results remain in the qualification snapshot but never
-change eligibility.
+Any criterion mismatch makes a company `NOT_QUALIFIED`. With no mismatch, any unknown
+yields `INSUFFICIENT_EVIDENCE`. A company is `QUALIFIED` when every configured
+criterion matches.
 
 # Human lead review
 

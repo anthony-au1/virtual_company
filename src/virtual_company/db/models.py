@@ -8,6 +8,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -29,6 +30,12 @@ class Campaign(Base):
     """A company-research campaign."""
 
     __tablename__ = "campaign"
+    __table_args__ = (
+        CheckConstraint(
+            "max_companies_to_research >= target_count",
+            name="ck_campaign_max_companies_to_research_ge_target_count",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
@@ -37,9 +44,12 @@ class Campaign(Base):
     description: Mapped[str | None] = mapped_column(Text)
     target_market: Mapped[str | None] = mapped_column(String(255))
     industry: Mapped[str | None] = mapped_column(String(255))
-    technologies: Mapped[dict[str, list[str]]] = mapped_column(JSONB, nullable=False)
+    technologies: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     company_size: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     target_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_companies_to_research: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=15, server_default="15"
+    )
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

@@ -6,19 +6,20 @@ Represents a software entity discovered during analysis.
 
 Table: campaign
 
-| Column          | PostgreSQL type | Nullable | Description                                 |
-|-----------------|-----------------|---------:|---------------------------------------------|
-| `id`            | `UUID`          |       NO | unique ID campaign                          |
-| `name`          | `VARCHAR(255)`  |       NO | name                                        |
-| `description`   | `TEXT`          |      YES | detailed description                        |
-| `target_market` | `VARCHAR(255)`  |      YES | geographical market                         |
-| `industry`      | `VARCHAR(255)`  |      YES | targeted industry                           |
-| `technologies`  | `JSONB`         |       NO | required and preferred technology lists     |
-| `company_size`  | `JSONB`         |      YES | independent min/max bounds and requirements |
-| `target_count`  | `INTEGER`       |       NO | desired eventual qualified-target count     |
-| `status`        | `VARCHAR(30)`   |       NO | campaign status                             |
-| `created_at`    | `TIMESTAMPTZ`   |       NO | created date                                |
-| `updated_at`    | `TIMESTAMPTZ`   |       NO | last change date                            |
+| Column                      | PostgreSQL type | Nullable | Description                                    |
+|-----------------------------|-----------------|---------:|------------------------------------------------|
+| `id`                        | `UUID`          |       NO | unique ID campaign                             |
+| `name`                      | `VARCHAR(255)`  |       NO | name                                           |
+| `description`               | `TEXT`          |      YES | detailed description                           |
+| `target_market`             | `VARCHAR(255)`  |      YES | geographical market                            |
+| `industry`                  | `VARCHAR(255)`  |      YES | targeted industry                              |
+| `technologies`              | `JSONB`         |       NO | campaign technology criteria                   |
+| `company_size`              | `JSONB`         |      YES | independent min/max employee bounds            |
+| `max_companies_to_research` | `INTEGER`       |       NO | campaign research cap; at least `target_count` |
+| `target_count`              | `INTEGER`       |       NO | desired eventual qualified-target count        |
+| `status`                    | `VARCHAR(30)`   |       NO | campaign status                                |
+| `created_at`                | `TIMESTAMPTZ`   |       NO | created date                                   |
+| `updated_at`                | `TIMESTAMPTZ`   |       NO | last change date                               |
 
 status:
 
@@ -133,7 +134,7 @@ Table: `company_qualifications`
 
 Unique constraint: `uq_company_qualifications_run_company` on
 `(research_run_id, company_id)`, also supporting lookups by run.
-Each criterion includes criterion, subject, requirement, status, evidence_ids (UUID strings),
+Each criterion includes criterion, subject, status, evidence_ids (UUID strings),
 and reason. No Evidence content is copied. Retries replace status and JSON while
 preserving ID and created_at. Snapshots commit with research-run completion; no
 intermediate rounds or legacy-run backfill are stored.

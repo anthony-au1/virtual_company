@@ -4,7 +4,6 @@ export type QualificationStatus =
   "QUALIFIED" | "NOT_QUALIFIED" | "INSUFFICIENT_EVIDENCE";
 export type ReviewStatus = "UNREVIEWED" | "ACCEPTED" | "REJECTED";
 export type CriterionStatus = "MATCH" | "MISMATCH" | "UNKNOWN";
-export type CriterionRequirement = "required" | "preferred";
 
 export type ResearchRunListItem = {
   run_id: string;
@@ -12,7 +11,12 @@ export type ResearchRunListItem = {
   created_at: string;
   started_at: string;
   completed_at: string | null;
-  campaign: { id: string; name: string; target_count: number };
+  campaign: {
+    id: string;
+    name: string;
+    target_count: number;
+    max_companies_to_research: number;
+  };
   summary: {
     researched: number;
     qualified: number;
@@ -22,11 +26,6 @@ export type ResearchRunListItem = {
     rejected: number;
     unreviewed: number;
   };
-};
-
-export type CampaignCriterion = {
-  value: string | null;
-  requirement: CriterionRequirement;
 };
 
 export type ResearchResults = {
@@ -45,13 +44,14 @@ export type ResearchResults = {
     name: string;
     description: string | null;
     target_count: number;
+    max_companies_to_research: number;
     criteria: {
-      target_market: CampaignCriterion;
-      industry: CampaignCriterion;
-      technologies: { required: string[]; preferred: string[] };
+      target_market: string | null;
+      industry: string | null;
+      technologies: string[];
       company_size: {
-        min: { value: number; requirement: CriterionRequirement } | null;
-        max: { value: number; requirement: CriterionRequirement } | null;
+        min: { value: number } | null;
+        max: { value: number } | null;
       } | null;
     };
   };
@@ -71,8 +71,9 @@ export type ResearchCompany = {
   qualification_status: QualificationStatus;
   review_status: ReviewStatus;
   summary: {
-    required: { matched: number; mismatched: number; unknown: number };
-    preferred: { matched: number; mismatched: number; unknown: number };
+    matched: number;
+    mismatched: number;
+    unknown: number;
   };
   criteria: CriterionResult[];
 };
@@ -80,7 +81,6 @@ export type ResearchCompany = {
 export type CriterionResult = {
   criterion: string;
   subject: string | null;
-  requirement: CriterionRequirement;
   status: CriterionStatus;
   reason: string;
   evidence: Array<{

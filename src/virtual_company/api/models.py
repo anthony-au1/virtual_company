@@ -11,8 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from virtual_company.domain.criteria import (
     CompanySizeCriteria,
-    CriterionRequirement,
-    TechnologyCriteria,
 )
 from virtual_company.domain.qualification import (
     CompanyQualificationStatus,
@@ -35,7 +33,7 @@ class CampaignCreateRequest(CampaignCreate):
     description: str | None = None
     target_market: str | None = Field(default=None, max_length=255)
     industry: str | None = Field(default=None, max_length=255)
-    technologies: TechnologyCriteria = Field(default_factory=TechnologyCriteria)
+    technologies: list[str] = Field(default_factory=list)
     company_size: CompanySizeCriteria | None = None
 
 
@@ -50,8 +48,9 @@ class CampaignUpdateRequest(CampaignUpdate):
     description: str | None = None
     target_market: str | None = Field(default=None, max_length=255)
     industry: str | None = Field(default=None, max_length=255)
-    technologies: TechnologyCriteria | None = None
+    technologies: list[str] | None = None
     company_size: CompanySizeCriteria | None = None
+    max_companies_to_research: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def reject_null_required_fields(self) -> CampaignUpdateRequest:
@@ -77,9 +76,10 @@ class CampaignResponse(BaseModel):
     description: str | None
     target_market: str | None
     industry: str | None
-    technologies: TechnologyCriteria
+    technologies: list[str]
     company_size: CompanySizeCriteria | None
     target_count: int
+    max_companies_to_research: int
     status: str
     created_at: datetime
     updated_at: datetime
@@ -131,19 +131,12 @@ class EvidenceResponse(BaseModel):
     created_at: datetime
 
 
-class RequiredCriterionResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    value: str | None
-    requirement: CriterionRequirement
-
-
 class CampaignCriteriaResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    target_market: RequiredCriterionResponse
-    industry: RequiredCriterionResponse
-    technologies: TechnologyCriteria
+    target_market: str | None
+    industry: str | None
+    technologies: list[str]
     company_size: CompanySizeCriteria | None
 
 
@@ -154,6 +147,7 @@ class ResearchResultCampaignResponse(BaseModel):
     name: str
     description: str | None
     target_count: int
+    max_companies_to_research: int
     criteria: CampaignCriteriaResponse
 
 
@@ -176,13 +170,6 @@ class QualificationCountsResponse(BaseModel):
     matched: int
     mismatched: int
     unknown: int
-
-
-class CompanyCriterionSummaryResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    required: QualificationCountsResponse
-    preferred: QualificationCountsResponse
 
 
 class ResearchSummaryResponse(BaseModel):
@@ -210,7 +197,6 @@ class CriterionResultResponse(BaseModel):
 
     criterion: str
     subject: str | None
-    requirement: CriterionRequirement
     status: QualificationStatus
     reason: str
     evidence: list[CriterionEvidenceResponse]
@@ -224,7 +210,7 @@ class CompanyResearchResultResponse(BaseModel):
     website: str | None
     qualification_status: CompanyQualificationStatus
     review_status: ReviewStatus
-    summary: CompanyCriterionSummaryResponse
+    summary: QualificationCountsResponse
     criteria: list[CriterionResultResponse]
 
 
@@ -241,6 +227,7 @@ class ResearchRunListCampaignResponse(BaseModel):
     id: UUID
     name: str
     target_count: int
+    max_companies_to_research: int
 
 
 class ResearchRunListSummaryResponse(BaseModel):

@@ -67,7 +67,6 @@ def assess_evidence_coverage(
             CriterionCoverage(
                 criterion=EvidenceCriterion(criterion),
                 subject=subject,
-                requirement=expected_criterion.requirement,
                 status=CoverageStatus.FOUND if evidence_ids else CoverageStatus.MISSING,
                 evidence_ids=evidence_ids,
             )

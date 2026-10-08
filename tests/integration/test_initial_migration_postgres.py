@@ -54,6 +54,7 @@ async def test_initial_migration_creates_complete_schema() -> None:
                 }
                 assert campaign_columns["technologies"]["nullable"] is False
                 assert "company_size" in campaign_columns
+                assert campaign_columns["max_companies_to_research"]["nullable"] is False
                 assert "company_size_min" not in campaign_columns
                 assert "company_size_max" not in campaign_columns
                 qualification_columns = {

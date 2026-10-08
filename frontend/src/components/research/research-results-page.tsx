@@ -20,7 +20,6 @@ import {
 } from "@/components/research/research-runs-page";
 import {
   getResearchRunResults,
-  type CriterionRequirement,
   type CriterionResult,
   type ResearchCompany,
   type ResearchResults,
@@ -150,8 +149,12 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
             {results.research_run.error}
           </p>
         ) : null}
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
           <Metric label="Target" value={results.campaign.target_count} />
+          <Metric
+            label="Research cap"
+            value={results.campaign.max_companies_to_research}
+          />
           <Metric label="Researched" value={results.summary.researched} />
           <Metric label="Qualified" value={results.summary.qualified} />
           <Metric label="Not qualified" value={results.summary.not_qualified} />
@@ -266,41 +269,25 @@ function CampaignCriteria({ results }: { results: ResearchResults }) {
       </h2>
       <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <CriterionGroup title="Market & industry">
-          {criteria.target_market.value ? (
+          {criteria.target_market ? (
             <ConfiguredCriterion
               label="Target market"
-              subject={criteria.target_market.value}
-              requirement={criteria.target_market.requirement}
+              subject={criteria.target_market}
             />
           ) : null}
-          {criteria.industry.value ? (
-            <ConfiguredCriterion
-              label="Industry"
-              subject={criteria.industry.value}
-              requirement={criteria.industry.requirement}
-            />
+          {criteria.industry ? (
+            <ConfiguredCriterion label="Industry" subject={criteria.industry} />
           ) : null}
         </CriterionGroup>
         <CriterionGroup title="Technologies">
-          {criteria.technologies.required.map((technology) => (
+          {criteria.technologies.map((technology) => (
             <ConfiguredCriterion
-              key={`required-${technology}`}
+              key={technology}
               label="Technology"
               subject={technology}
-              requirement="required"
             />
           ))}
-          {criteria.technologies.preferred.map((technology) => (
-            <ConfiguredCriterion
-              key={`preferred-${technology}`}
-              label="Technology"
-              subject={technology}
-              requirement="preferred"
-            />
-          ))}
-          {criteria.technologies.required.length +
-            criteria.technologies.preferred.length ===
-          0 ? (
+          {criteria.technologies.length === 0 ? (
             <p className="text-muted-foreground text-xs">
               No technology criteria
             </p>
@@ -312,14 +299,12 @@ function CampaignCriteria({ results }: { results: ResearchResults }) {
               <ConfiguredCriterion
                 label="Employees"
                 subject={`≥ ${criteria.company_size.min.value}`}
-                requirement={criteria.company_size.min.requirement}
               />
             ) : null}
             {criteria.company_size.max ? (
               <ConfiguredCriterion
                 label="Employees"
                 subject={`≤ ${criteria.company_size.max.value}`}
-                requirement={criteria.company_size.max.requirement}
               />
             ) : null}
           </CriterionGroup>
@@ -346,11 +331,9 @@ function CriterionGroup({
 function ConfiguredCriterion({
   label,
   subject,
-  requirement,
 }: {
   label: string;
   subject: string;
-  requirement: CriterionRequirement;
 }) {
   return (
     <div className="flex items-center justify-between gap-2 text-sm">
@@ -358,7 +341,6 @@ function ConfiguredCriterion({
         <span className="text-muted-foreground">{label}</span>{" "}
         <span className="font-medium">{subject}</span>
       </span>
-      <RequirementBadge requirement={requirement} />
     </div>
   );
 }
@@ -418,11 +400,7 @@ function CompanyCard({
             <ReviewBadge status={company.review_status} />
           </div>
           <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs">
-            <SummaryCounts label="Required" counts={company.summary.required} />
-            <SummaryCounts
-              label="Preferred"
-              counts={company.summary.preferred}
-            />
+            <SummaryCounts label="Criteria" counts={company.summary} />
           </div>
         </div>
         <div className="flex flex-wrap gap-2 md:justify-end">
@@ -525,7 +503,6 @@ function CriterionDisclosure({ criterion }: { criterion: CriterionResult }) {
         />
         <span className="font-medium">{criterionLabel(criterion)}</span>
         <Badge variant="outline">{criterion.status}</Badge>
-        <RequirementBadge requirement={criterion.requirement} />
         <span className="text-muted-foreground ml-auto text-xs">Details</span>
       </summary>
       <div className="mt-3 border-t pt-3">
@@ -590,14 +567,6 @@ function ReviewBadge({ status }: { status: ReviewStatus }) {
       Human review: {status}
     </Badge>
   );
-}
-
-function RequirementBadge({
-  requirement,
-}: {
-  requirement: CriterionRequirement;
-}) {
-  return <Badge variant="outline">{requirement.toUpperCase()}</Badge>;
 }
 
 function criterionLabel(criterion: CriterionResult) {

@@ -28,6 +28,12 @@ def upgrade() -> None:
         sa.Column("technologies", postgresql.JSONB(), nullable=False),
         sa.Column("company_size", postgresql.JSONB()),
         sa.Column("target_count", sa.Integer(), nullable=False),
+        sa.Column(
+            "max_companies_to_research",
+            sa.Integer(),
+            server_default="15",
+            nullable=False,
+        ),
         sa.Column("status", sa.String(30), nullable=False),
         sa.Column(
             "created_at",
@@ -41,6 +47,11 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+    )
+    op.create_check_constraint(
+        "ck_campaign_max_companies_to_research_ge_target_count",
+        "campaign",
+        "max_companies_to_research >= target_count",
     )
     op.create_table(
         "company",

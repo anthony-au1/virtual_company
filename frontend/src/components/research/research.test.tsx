@@ -49,7 +49,12 @@ function run(id: string, name: string): ResearchRunListItem {
     created_at: "2026-10-01T00:00:00Z",
     started_at: "2026-10-01T00:00:00Z",
     completed_at: null,
-    campaign: { id: `campaign-${id}`, name, target_count: 5 },
+    campaign: {
+      id: `campaign-${id}`,
+      name,
+      target_count: 5,
+      max_companies_to_research: 10,
+    },
     summary: {
       researched: 1,
       qualified: 1,
@@ -82,12 +87,13 @@ function results(
       name: "Australian Fintech Java Research",
       description: null,
       target_count: 5,
+      max_companies_to_research: 10,
       criteria: {
-        target_market: { value: "Australia", requirement: "required" },
-        industry: { value: "Fin tech", requirement: "required" },
-        technologies: { required: ["Java", "Spring"], preferred: ["Kafka"] },
+        target_market: "Australia",
+        industry: "Fin tech",
+        technologies: ["Java", "Spring", "Kafka"],
         company_size: {
-          min: { value: 500, requirement: "preferred" },
+          min: { value: 500 },
           max: null,
         },
       },
@@ -106,14 +112,14 @@ function results(
         qualification_status: "QUALIFIED",
         review_status: reviewStatus,
         summary: {
-          required: { matched: 2, mismatched: 0, unknown: 0 },
-          preferred: { matched: 0, mismatched: 0, unknown: 2 },
+          matched: 2,
+          mismatched: 0,
+          unknown: 2,
         },
         criteria: [
           {
             criterion: "target_market",
             subject: "Australia",
-            requirement: "required",
             status: "MATCH",
             reason: "Company operates in Australia.",
             evidence: [
@@ -130,7 +136,6 @@ function results(
           {
             criterion: "technology",
             subject: "Spring",
-            requirement: "required",
             status: "UNKNOWN",
             reason: "No reliable evidence found.",
             evidence: [],
@@ -138,7 +143,6 @@ function results(
           {
             criterion: "industry",
             subject: "Fin tech",
-            requirement: "required",
             status: "MISMATCH",
             reason: "Sources indicate a different industry.",
             evidence: [],
@@ -219,7 +223,7 @@ describe("ResearchResultsPage", () => {
     expect(screen.getByText("AI: QUALIFIED")).toBeInTheDocument();
     expect(screen.getByText("Human review: UNREVIEWED")).toBeInTheDocument();
     expect(
-      screen.getByText(/2 matched · 0 mismatched · 0 unknown/),
+      screen.getByText(/2 matched · 0 mismatched · 2 unknown/),
     ).toBeInTheDocument();
     expect(screen.getByText("MATCH")).toBeInTheDocument();
     expect(screen.getByText("MISMATCH")).toBeInTheDocument();

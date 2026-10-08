@@ -10,7 +10,6 @@ from uuid import UUID
 from virtual_company.domain.criteria import (
     CampaignCriterion,
     CampaignForQualification,
-    CriterionRequirement,
     campaign_criteria,
 )
 from virtual_company.domain.qualification import (
@@ -167,7 +166,7 @@ def _qualify_size(
                 )
             reason += note
     return CriterionQualification(
-        "company_size", criterion.subject, criterion.requirement, status, ids, reason
+        "company_size", criterion.subject, status, ids, reason
     )
 
 
@@ -188,7 +187,6 @@ def _qualify_category(
     return CriterionQualification(
         criterion.criterion,
         criterion.subject,
-        criterion.requirement,
         status,
         ids,
         reason,
@@ -224,11 +222,7 @@ def qualify_company(
 def aggregate_qualification(
     company_id: UUID, criteria: list[CriterionQualification]
 ) -> CompanyQualification:
-    statuses = {
-        item.status
-        for item in criteria
-        if item.requirement is CriterionRequirement.REQUIRED
-    }
+    statuses = {item.status for item in criteria}
     if QualificationStatus.MISMATCH in statuses:
         status = CompanyQualificationStatus.NOT_QUALIFIED
     elif QualificationStatus.UNKNOWN in statuses:

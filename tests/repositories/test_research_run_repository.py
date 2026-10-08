@@ -28,7 +28,7 @@ async def test_list_with_summary_uses_one_grouped_query() -> None:
         name="Australian Fintech",
         target_count=5,
         status="COMPLETED",
-        technologies={"required": [], "preferred": []},
+        technologies=[],
     )
     result_proxy = MagicMock()
     result_proxy.all.return_value = [(run, campaign, 1, 1, 0, 0, 1, 0, 0)]

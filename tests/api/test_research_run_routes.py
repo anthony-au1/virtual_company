@@ -70,13 +70,12 @@ def research_results() -> SimpleNamespace:
             name="Fintech",
             description="Research Australian fintech",
             target_count=1,
+            max_companies_to_research=10,
             criteria=SimpleNamespace(
-                target_market=SimpleNamespace(
-                    value="Australia", requirement="required"
-                ),
-                industry=SimpleNamespace(value="fin tech", requirement="required"),
-                technologies={"required": ["java"], "preferred": ["kafka"]},
-                company_size={"min": {"value": 500, "requirement": "preferred"}},
+                target_market="Australia",
+                industry="fin tech",
+                technologies=["java", "kafka"],
+                company_size={"min": {"value": 500}},
             ),
         ),
         summary=SimpleNamespace(
@@ -92,12 +91,11 @@ def research_results() -> SimpleNamespace:
                 website="https://example.com",
                 qualification_status="QUALIFIED",
                 review_status="UNREVIEWED",
-                summary=SimpleNamespace(required=counts, preferred=counts),
+                summary=counts,
                 criteria=[
                     SimpleNamespace(
                         criterion="technology",
                         subject="java",
-                        requirement="required",
                         status="MATCH",
                         reason="Supported",
                         evidence=[
@@ -129,10 +127,8 @@ def test_get_results_returns_complete_product_projection() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["campaign"]["criteria"]["target_market"] == {
-        "value": "Australia",
-        "requirement": "required",
-    }
+    assert body["campaign"]["criteria"]["target_market"] == "Australia"
+    assert body["campaign"]["max_companies_to_research"] == 10
     assert body["summary"] == {
         "researched": 1,
         "qualified": 1,
@@ -155,6 +151,7 @@ def test_list_research_runs_returns_compact_run_summaries() -> None:
         campaign_id=campaign_id,
         campaign_name="Australian Fintech Java Research",
         target_count=5,
+        max_companies_to_research=10,
         summary=SimpleNamespace(
             researched=10,
             qualified=4,
@@ -179,6 +176,7 @@ def test_list_research_runs_returns_compact_run_summaries() -> None:
         "id": str(campaign_id),
         "name": "Australian Fintech Java Research",
         "target_count": 5,
+        "max_companies_to_research": 10,
     }
     assert body[0]["summary"] == {
         "researched": 10,

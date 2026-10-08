@@ -8,11 +8,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.domain.criteria import (
-    CompanySizeCriteria,
-    CriterionRequirement,
-    TechnologyCriteria,
-)
+from virtual_company.domain.criteria import CompanySizeCriteria
 from virtual_company.domain.qualification import (
     CompanyQualificationStatus,
     QualificationStatus,
@@ -46,16 +42,10 @@ class ResearchRunView:
 
 
 @dataclass(frozen=True)
-class RequiredCriterionView:
-    value: str | None
-    requirement: CriterionRequirement = CriterionRequirement.REQUIRED
-
-
-@dataclass(frozen=True)
 class CampaignCriteriaView:
-    target_market: RequiredCriterionView
-    industry: RequiredCriterionView
-    technologies: TechnologyCriteria
+    target_market: str | None
+    industry: str | None
+    technologies: list[str]
     company_size: CompanySizeCriteria | None
 
 
@@ -65,6 +55,7 @@ class CampaignResultView:
     name: str
     description: str | None
     target_count: int
+    max_companies_to_research: int
     criteria: CampaignCriteriaView
 
 
@@ -73,12 +64,6 @@ class StatusCountsView:
     matched: int = 0
     mismatched: int = 0
     unknown: int = 0
-
-
-@dataclass(frozen=True)
-class CompanyCriterionSummaryView:
-    required: StatusCountsView
-    preferred: StatusCountsView
 
 
 @dataclass(frozen=True)
@@ -103,7 +88,6 @@ class CriterionEvidenceView:
 class CriterionResultView:
     criterion: str
     subject: str | None
-    requirement: CriterionRequirement
     status: QualificationStatus
     reason: str
     evidence: list[CriterionEvidenceView]
@@ -116,7 +100,7 @@ class CompanyResultView:
     website: str | None
     qualification_status: CompanyQualificationStatus
     review_status: ReviewStatus
-    summary: CompanyCriterionSummaryView
+    summary: StatusCountsView
     criteria: list[CriterionResultView]
 
 
@@ -155,6 +139,7 @@ class ResearchRunListItemView:
     campaign_id: UUID
     campaign_name: str
     target_count: int
+    max_companies_to_research: int
     summary: ResearchRunListSummaryView
 
 
@@ -179,6 +164,7 @@ class ResearchResultsService:
                 campaign_id=campaign.id,
                 campaign_name=campaign.name,
                 target_count=campaign.target_count,
+                max_companies_to_research=campaign.max_companies_to_research,
                 summary=ResearchRunListSummaryView(**counts),
             )
             for run, campaign, counts in await self._runs.list_with_summary()
@@ -201,14 +187,10 @@ class ResearchResultsService:
             qualification_status = CompanyQualificationStatus(snapshot.status)
             qualification_counts[qualification_status] += 1
             criteria: list[CriterionResultView] = []
-            summary_counts = {
-                requirement: {status: 0 for status in QualificationStatus}
-                for requirement in CriterionRequirement
-            }
+            summary_counts = {status: 0 for status in QualificationStatus}
             for stored in snapshot.criteria_results.get("criteria", []):
-                requirement = CriterionRequirement(stored["requirement"])
                 criterion_status = QualificationStatus(stored["status"])
-                summary_counts[requirement][criterion_status] += 1
+                summary_counts[criterion_status] += 1
                 evidence = []
                 for stored_id in stored.get("evidence_ids", []):
                     item = evidence_by_company_and_id.get(
@@ -229,7 +211,6 @@ class ResearchResultsService:
                     CriterionResultView(
                         criterion=stored["criterion"],
                         subject=stored.get("subject"),
-                        requirement=requirement,
                         status=criterion_status,
                         reason=stored["reason"],
                         evidence=evidence,
@@ -242,14 +223,7 @@ class ResearchResultsService:
                     website=company.website,
                     qualification_status=qualification_status,
                     review_status=ReviewStatus(snapshot.review_status),
-                    summary=CompanyCriterionSummaryView(
-                        required=self._status_counts(
-                            summary_counts[CriterionRequirement.REQUIRED]
-                        ),
-                        preferred=self._status_counts(
-                            summary_counts[CriterionRequirement.PREFERRED]
-                        ),
-                    ),
+                    summary=self._status_counts(summary_counts),
                     criteria=criteria,
                 )
             )
@@ -271,12 +245,11 @@ class ResearchResultsService:
                 name=campaign.name,
                 description=campaign.description,
                 target_count=campaign.target_count,
+                max_companies_to_research=campaign.max_companies_to_research,
                 criteria=CampaignCriteriaView(
-                    target_market=RequiredCriterionView(campaign.target_market),
-                    industry=RequiredCriterionView(campaign.industry),
-                    technologies=TechnologyCriteria.model_validate(
-                        campaign.technologies
-                    ),
+                    target_market=campaign.target_market,
+                    industry=campaign.industry,
+                    technologies=list(campaign.technologies or []),
                     company_size=(
                         CompanySizeCriteria.model_validate(campaign.company_size)
                         if campaign.company_size is not None

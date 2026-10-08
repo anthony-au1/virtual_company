@@ -146,14 +146,13 @@ def company_query_system_prompt() -> str:
     """Return instructions for source-discovery queries about one known company."""
     return (
         "Generate concise web-search queries for ONLY the supplied evidence targets. "
-        "The application has already selected REQUIRED or PREFERRED priority. Include the "
-        "supplied company name in every query so results stay attributable. Combine related "
+        "Include the supplied company name in every query so results stay attributable. Combine related "
         "targets when one source can establish several. You are generating research queries, "
         "not asserting facts: queries may investigate and disprove hypotheses. When a company "
         "domain is supplied, include some official-domain site: queries and some relevant "
-        "third-party queries. Cover every unresolved REQUIRED criterion with at least one "
-        "query that names its subject when the query limit allows; spread queries across "
-        "required criteria before giving one criterion several searches. Favor engineering, "
+        "third-party queries. Cover every unresolved criterion with at least one query that "
+        "names its subject when the query limit allows; spread queries across criteria before "
+        "giving one criterion several searches. Favor engineering, "
         "careers, job advertisements, technical blogs, conference material, architecture "
         "articles, migrations, and credible news where relevant."
     )
@@ -177,8 +176,7 @@ def followup_company_query_system_prompt() -> str:
     return (
         "Generate a small set of concise web-search queries designed to find source-grounded "
         "evidence for ONLY the listed unresolved campaign criteria for this company. "
-        "The application determines their requirement level and priority. Include the "
-        "company name in every query. Cover every unresolved REQUIRED criterion with at least "
+        "Include the company name in every query. Cover every unresolved criterion with at least "
         "one query naming its subject when the query limit allows, before assigning multiple "
         "queries to one criterion. Do not repeat prior queries. Choose a meaningfully different "
         "search strategy and, when the prior channel did not resolve the criteria, prefer a "
@@ -215,7 +213,6 @@ def _targets_json(targets: list[CriterionQualification]) -> str:
             {
                 "criterion": item.criterion,
                 "subject": item.subject,
-                "requirement": item.requirement.value,
                 "status": item.status.value,
             }
             for item in targets

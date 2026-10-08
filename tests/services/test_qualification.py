@@ -8,8 +8,6 @@ import pytest
 from virtual_company.domain.criteria import (
     CompanySizeBound,
     CompanySizeCriteria,
-    CriterionRequirement,
-    TechnologyCriteria,
 )
 from virtual_company.domain.qualification import CompanyQualificationStatus as Overall
 from virtual_company.domain.qualification import QualificationStatus as Status
@@ -30,16 +28,12 @@ def campaign(
     return SimpleNamespace(
         target_market="Australia",
         industry="fintech",
-        technologies=TechnologyCriteria(required=["Kafka"], preferred=[]),
+        technologies=["Kafka"],
         company_size=CompanySizeCriteria(
-            min=CompanySizeBound(
-                value=minimum, requirement=CriterionRequirement.REQUIRED
-            )
+            min=CompanySizeBound(value=minimum)
             if minimum is not None
             else None,
-            max=CompanySizeBound(
-                value=maximum, requirement=CriterionRequirement.REQUIRED
-            )
+            max=CompanySizeBound(value=maximum)
             if maximum is not None
             else None,
         )

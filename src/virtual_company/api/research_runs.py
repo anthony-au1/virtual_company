@@ -58,6 +58,7 @@ async def list_research_runs(
                 id=item.campaign_id,
                 name=item.campaign_name,
                 target_count=item.target_count,
+                max_companies_to_research=item.max_companies_to_research,
             ),
             summary=ResearchRunListSummaryResponse.model_validate(item.summary),
         )

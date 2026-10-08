@@ -2,11 +2,8 @@ import { apiFetch } from "@/lib/api/client";
 
 export type CampaignStatus =
   "DRAFT" | "RUNNING" | "PAUSED" | "COMPLETED" | "FAILED";
-export type CriterionRequirement = "required" | "preferred";
-
 export type CompanySizeBound = {
   value: number;
-  requirement: CriterionRequirement;
 };
 
 export type Campaign = {
@@ -15,12 +12,13 @@ export type Campaign = {
   description: string | null;
   target_market: string | null;
   industry: string | null;
-  technologies: { required: string[]; preferred: string[] };
+  technologies: string[];
   company_size: {
     min: CompanySizeBound | null;
     max: CompanySizeBound | null;
   } | null;
   target_count: number;
+  max_companies_to_research: number;
   status: CampaignStatus;
   created_at: string;
   updated_at: string;
@@ -31,12 +29,13 @@ export type CreateCampaignPayload = {
   description: string;
   target_market?: string;
   industry?: string;
-  technologies: { required: string[]; preferred: string[] };
+  technologies: string[];
   company_size: {
     min?: CompanySizeBound;
     max?: CompanySizeBound;
   } | null;
   target_count: number;
+  max_companies_to_research: number;
   status: "DRAFT";
 };
 
