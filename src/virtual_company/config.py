@@ -44,12 +44,14 @@ class Settings(BaseSettings):
     company_research_query_count: int = Field(default=5, ge=1, le=6)
     company_research_max_results_per_query: int = Field(default=5, ge=1, le=10)
     company_research_max_results_per_company: int = Field(default=15, ge=1)
-    company_research_max_fetches_per_company: int = Field(default=5, ge=1, le=20)
+    company_research_successful_fetch_target_per_company: int = Field(
+        default=5, ge=1, le=20
+    )
     company_research_max_investigation_rounds: int = Field(default=2, ge=0, le=10)
     company_research_followup_search_queries_per_company: int = Field(
         default=3, ge=1, le=6
     )
-    company_research_followup_max_fetches_per_company: int = Field(
+    company_research_followup_successful_fetch_target_per_company: int = Field(
         default=3, ge=1, le=20
     )
     web_fetch_timeout_seconds: float = Field(default=15, gt=0, le=60)

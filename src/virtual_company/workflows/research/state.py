@@ -42,6 +42,8 @@ class ResearchWorkflowState(TypedDict):
     company_research_queries: dict[UUID, list[str]]
     company_search_results: dict[UUID, list[SearchResult]]
     selected_company_sources: dict[UUID, list[SearchResult]]
+    company_source_candidates: dict[UUID, list[SearchResult]]
+    company_fetch_batch_stats: dict[UUID, dict[str, object]]
     company_web_pages: dict[UUID, list[WebPage]]
     attributable_company_web_pages: dict[UUID, list[WebPage]]
     validated_evidence: list[ValidatedEvidence]

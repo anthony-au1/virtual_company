@@ -116,10 +116,10 @@ class ResearchNodes:
         company_research_query_count: int = 5,
         company_research_max_results_per_query: int = 5,
         company_research_max_results_per_company: int = 15,
-        company_research_max_fetches_per_company: int = 5,
+        company_research_successful_fetch_target_per_company: int = 5,
         company_research_max_investigation_rounds: int = 2,
         company_research_followup_search_queries_per_company: int = 3,
-        company_research_followup_max_fetches_per_company: int = 3,
+        company_research_followup_successful_fetch_target_per_company: int = 3,
         web_fetch_concurrency: int = 5,
         evidence_extraction_concurrency: int = 3,
         evidence_max_excerpt_chars: int = 1_000,
@@ -145,8 +145,8 @@ class ResearchNodes:
         self._company_research_max_results_per_company = (
             company_research_max_results_per_company
         )
-        self._company_research_max_fetches_per_company = (
-            company_research_max_fetches_per_company
+        self._company_research_successful_fetch_target_per_company = (
+            company_research_successful_fetch_target_per_company
         )
         self._company_research_max_investigation_rounds = (
             company_research_max_investigation_rounds
@@ -154,8 +154,8 @@ class ResearchNodes:
         self._company_research_followup_search_queries_per_company = (
             company_research_followup_search_queries_per_company
         )
-        self._company_research_followup_max_fetches_per_company = (
-            company_research_followup_max_fetches_per_company
+        self._company_research_followup_successful_fetch_target_per_company = (
+            company_research_followup_successful_fetch_target_per_company
         )
         self._web_fetch_concurrency = web_fetch_concurrency
         self._evidence_extraction_concurrency = evidence_extraction_concurrency
@@ -453,6 +453,8 @@ class ResearchNodes:
             "company_research_queries": {},
             "company_search_results": {},
             "selected_company_sources": {},
+            "company_source_candidates": {},
+            "company_fetch_batch_stats": {},
             "company_web_pages": {},
             "attributable_company_web_pages": {},
             "validated_evidence": [],
@@ -775,14 +777,22 @@ class ResearchNodes:
     ) -> dict[str, dict[UUID, list[SearchResult]]]:
         """Deterministically select a small, useful source set per company."""
         selected: dict[UUID, list[SearchResult]] = {}
+        candidates: dict[UUID, list[SearchResult]] = {}
         observability = get_observability()
         investigations = dict(state.get("investigations", {}))
         active_companies = self._active_companies(state)
         adaptive_mode = state.get("adaptive_mode", False)
-        fetch_limit = (
-            self._company_research_followup_max_fetches_per_company
+        fetch_target = (
+            self._company_research_followup_successful_fetch_target_per_company
             if adaptive_mode
-            else self._company_research_max_fetches_per_company
+            else self._company_research_successful_fetch_target_per_company
+        )
+        fetch_phase = (
+            "followup"
+            if adaptive_mode
+            else "initial_investigation"
+            if state.get("company_search_started", False)
+            else "discovery_reuse"
         )
         for company in active_companies:
             investigation = investigations.get(
@@ -834,18 +844,24 @@ class ResearchNodes:
                     ),
                     None,
                 )
-                if candidate is None or len(sources) >= fetch_limit:
+                if candidate is None or len(sources) >= fetch_target:
                     continue
                 sources.append(candidate)
                 selected_keys.add(normalize_fetch_url(candidate.url))
             for _, result in ordered:
-                if len(sources) >= fetch_limit:
-                    break
                 key = normalize_fetch_url(result.url)
                 if key not in selected_keys:
-                    sources.append(result)
+                    if len(sources) < fetch_target:
+                        sources.append(result)
                     selected_keys.add(key)
+            preferred_keys = {normalize_fetch_url(source.url) for source in sources}
+            candidate_pool = sources + [
+                result
+                for _, result in ordered
+                if normalize_fetch_url(result.url) not in preferred_keys
+            ]
             selected[company.id] = sources
+            candidates[company.id] = candidate_pool
             with observability.context(
                 company_id=str(company.id), company_domain=company.domain
             ):
@@ -853,11 +869,8 @@ class ResearchNodes:
                     "company_sources_selected",
                     available_source_count=len(unique_results),
                     selected_source_count=len(sources),
-                    source_phase=(
-                        "investigation"
-                        if state.get("company_search_started", False)
-                        else "discovery"
-                    ),
+                    fetch_target=fetch_target,
+                    fetch_phase=fetch_phase,
                 )
                 observability.record(
                     "company_research_sources_selected_total",
@@ -867,19 +880,20 @@ class ResearchNodes:
         context = {
             "company_count": len(active_companies),
             "selected_source_count": sum(len(sources) for sources in selected.values()),
-            "max_fetches_per_company": fetch_limit,
+            "successful_fetch_target_per_company": fetch_target,
         }
         with observability.span("select_company_sources", **context):
             observability.event("company_sources_selection_completed", **context)
         return {
             "selected_company_sources": selected,
+            "company_source_candidates": candidates,
             "investigations": investigations,
         }
 
     async def fetch_company_sources(
         self, state: ResearchWorkflowState
     ) -> dict[str, object]:
-        """Fetch selected sources with a bounded worker pool and partial failures."""
+        """Fetch ranked candidates until each company reaches its success target."""
         observability = get_observability()
         active_companies = self._active_companies(state)
         investigations = dict(state.get("investigations", {}))
@@ -887,26 +901,68 @@ class ResearchNodes:
             investigations.setdefault(
                 company.id, CompanyInvestigationState(company_id=company.id)
             )
-        work = [
-            (company.id, index, result)
-            for company in active_companies
-            for index, result in enumerate(
-                state["selected_company_sources"].get(company.id, [])
+        preferred_sources = state.get("selected_company_sources", {})
+        candidate_sources = state.get("company_source_candidates", {})
+        sources_by_company = {
+            company.id: candidate_sources.get(
+                company.id, preferred_sources.get(company.id, [])
             )
-        ]
+            for company in active_companies
+        }
+        preferred_counts = {
+            company.id: len(preferred_sources.get(company.id, []))
+            for company in active_companies
+        }
+        fetch_target = (
+            self._company_research_followup_successful_fetch_target_per_company
+            if state.get("adaptive_mode", False)
+            else self._company_research_successful_fetch_target_per_company
+        )
+        fetch_phase = (
+            "followup"
+            if state.get("adaptive_mode", False)
+            else "initial_investigation"
+            if state.get("company_search_started", False)
+            else "discovery_reuse"
+        )
         successes: dict[tuple[UUID, int], WebPage] = {}
         failures: dict[tuple[UUID, int], WebFetchError] = {}
-        queue: asyncio.Queue[tuple[UUID, int, SearchResult]] = asyncio.Queue()
-        for item in work:
-            queue.put_nowait(item)
+        attempted_indices: dict[UUID, set[int]] = {
+            company.id: set() for company in active_companies
+        }
+        next_candidate = {company.id: 0 for company in active_companies}
 
-        async def worker() -> None:
-            while True:
-                try:
-                    company_id, index, source = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    return
-                try:
+        while True:
+            wave: list[tuple[UUID, int, SearchResult]] = []
+            for company in active_companies:
+                company_id = company.id
+                successful_count = sum(key[0] == company_id for key in successes)
+                remaining_target = fetch_target - successful_count
+                start_index = next_candidate[company_id]
+                end_index = min(
+                    start_index + max(remaining_target, 0),
+                    len(sources_by_company[company_id]),
+                )
+                wave.extend(
+                    (company_id, index, sources_by_company[company_id][index])
+                    for index in range(start_index, end_index)
+                )
+                next_candidate[company_id] = end_index
+            if not wave:
+                break
+
+            queue: asyncio.Queue[tuple[UUID, int, SearchResult]] = asyncio.Queue()
+            for item in wave:
+                queue.put_nowait(item)
+
+            async def worker(
+                work_queue: asyncio.Queue[tuple[UUID, int, SearchResult]],
+            ) -> None:
+                while True:
+                    try:
+                        company_id, index, source = work_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        return
                     normalized_url = self._source_state_key(source.url)
                     attempt_number = (
                         investigations[company_id].transient_fetch_failures.get(
@@ -914,47 +970,49 @@ class ResearchNodes:
                         )
                         + 1
                     )
-                    with observability.context(
-                        company_id=str(company_id),
-                        source_url=source.url,
-                        fetch_attempt=attempt_number,
-                        fetch_retry=attempt_number > 1,
-                    ):
-                        page = await self._web_fetch.fetch(source.url)
-                    successes[(company_id, index)] = page.model_copy(
-                        update={"title": page.title or source.title}
-                    )
-                except WebFetchError as error:
-                    retryable = self._fetch_error_is_retryable(error)
-                    retry_remaining = retryable and attempt_number < 2
-                    observability.event(
-                        "company_source_fetch_failed",
-                        company_id=str(company_id),
-                        url=source.url,
-                        failure_category=error.category,
-                        http_status=getattr(error, "status_code", None),
-                        attempt_number=attempt_number,
-                        retryable=retryable,
-                        retry_remaining=retry_remaining,
-                        exhausted=not retry_remaining,
-                    )
-                    failures[(company_id, index)] = error
-                finally:
-                    queue.task_done()
+                    attempted_indices[company_id].add(index)
+                    try:
+                        with observability.context(
+                            company_id=str(company_id),
+                            source_url=source.url,
+                            fetch_attempt=attempt_number,
+                            fetch_retry=attempt_number > 1,
+                        ):
+                            page = await self._web_fetch.fetch(source.url)
+                        successes[(company_id, index)] = page.model_copy(
+                            update={"title": page.title or source.title}
+                        )
+                    except WebFetchError as error:
+                        retryable = self._fetch_error_is_retryable(error)
+                        retry_remaining = retryable and attempt_number < 2
+                        observability.event(
+                            "company_source_fetch_failed",
+                            company_id=str(company_id),
+                            url=source.url,
+                            failure_category=error.category,
+                            http_status=getattr(error, "status_code", None),
+                            attempt_number=attempt_number,
+                            retryable=retryable,
+                            retry_remaining=retry_remaining,
+                            exhausted=not retry_remaining,
+                        )
+                        failures[(company_id, index)] = error
+                    finally:
+                        work_queue.task_done()
 
-        workers = [
-            asyncio.create_task(worker())
-            for _ in range(min(self._web_fetch_concurrency, len(work)))
-        ]
-        if workers:
-            await asyncio.gather(*workers)
+            workers = [
+                asyncio.create_task(worker(queue))
+                for _ in range(min(self._web_fetch_concurrency, len(wave)))
+            ]
+            if workers:
+                await asyncio.gather(*workers)
+
         for company in active_companies:
             investigation = investigations[company.id]
             attempted_urls = set(investigation.attempted_urls)
             transient_failures = dict(investigation.transient_fetch_failures)
-            for index, source in enumerate(
-                state["selected_company_sources"].get(company.id, [])
-            ):
+            for index in attempted_indices[company.id]:
+                source = sources_by_company[company.id][index]
                 normalized_url = self._source_state_key(source.url)
                 key = (company.id, index)
                 if key in successes:
@@ -976,35 +1034,67 @@ class ResearchNodes:
                     "transient_fetch_failures": transient_failures,
                 }
             )
+
         pages_by_company = {
             company.id: [
                 successes[(company.id, index)]
-                for index, _ in enumerate(
-                    state["selected_company_sources"].get(company.id, [])
-                )
+                for index in range(len(sources_by_company[company.id]))
                 if (company.id, index) in successes
             ]
             for company in active_companies
         }
+        batch_stats: dict[UUID, dict[str, object]] = {}
         for company in active_companies:
-            selected_count = len(state["selected_company_sources"].get(company.id, []))
-            fetched_count = len(pages_by_company[company.id])
+            company_id = company.id
+            candidate_count = len(sources_by_company[company_id])
+            attempt_count = len(attempted_indices[company_id])
+            success_count = sum(key[0] == company_id for key in successes)
+            failure_count = sum(key[0] == company_id for key in failures)
+            target_reached = success_count >= fetch_target
+            candidates_exhausted = (
+                not target_reached and next_candidate[company_id] >= candidate_count
+            )
+            additional_attempts = sum(
+                index >= preferred_counts[company_id]
+                for index in attempted_indices[company_id]
+            )
+            stats: dict[str, object] = {
+                "candidates_available": candidate_count,
+                "fetch_target": fetch_target,
+                "fetch_attempts": attempt_count,
+                "fetch_successes": success_count,
+                "fetch_failures": failure_count,
+                "target_reached": target_reached,
+                "candidates_exhausted": candidates_exhausted,
+                "additional_candidate_attempts": additional_attempts,
+            }
+            batch_stats[company_id] = stats
+            observability.event(
+                "company_sources_fetch_batch_completed",
+                company_id=str(company_id),
+                fetch_phase=fetch_phase,
+                **stats,
+            )
             observability.event(
                 "company_sources_fetch_completed",
-                company_id=str(company.id),
-                selected_source_count=selected_count,
-                fetch_success_count=fetched_count,
-                fetch_failure_count=selected_count - fetched_count,
+                company_id=str(company_id),
+                selected_source_count=preferred_counts[company_id],
+                candidate_count=candidate_count,
+                fetch_success_count=success_count,
+                fetch_failure_count=failure_count,
             )
         context = {
-            "selected_source_count": len(work),
+            "candidate_count": sum(len(items) for items in sources_by_company.values()),
+            "fetch_target_per_company": fetch_target,
+            "fetch_attempt_count": sum(len(items) for items in attempted_indices.values()),
             "web_page_count": sum(len(pages) for pages in pages_by_company.values()),
-            "failed_source_count": len(work) - len(successes),
+            "failed_source_count": sum(len(items) for items in failures),
         }
         with observability.span("fetch_company_sources", **context):
             observability.event("company_sources_fetch_completed", **context)
         return {
             "company_web_pages": pages_by_company,
+            "company_fetch_batch_stats": batch_stats,
             "investigations": investigations,
         }
 
@@ -1146,8 +1236,14 @@ class ResearchNodes:
             ]
             fetched_pages = pages_by_company.get(company.id, [])
             raw_fetched_pages = state.get("company_web_pages", {}).get(company.id, [])
-            selected_count = len(
-                state.get("selected_company_sources", {}).get(company.id, [])
+            fetch_stats = state.get("company_fetch_batch_stats", {}).get(
+                company.id, {}
+            )
+            selected_count = int(
+                fetch_stats.get(
+                    "candidates_available",
+                    len(state.get("selected_company_sources", {}).get(company.id, [])),
+                )
             )
             with observability.context(
                 company_id=str(company.id), company_domain=company.domain
@@ -1156,7 +1252,11 @@ class ResearchNodes:
                     "company_evidence_funnel",
                     selected_source_count=selected_count,
                     fetch_success_count=len(raw_fetched_pages),
-                    fetch_failure_count=selected_count - len(raw_fetched_pages),
+                    fetch_failure_count=int(
+                        fetch_stats.get(
+                            "fetch_failures", selected_count - len(raw_fetched_pages)
+                        )
+                    ),
                     attribution_accept_count=len(fetched_pages),
                     attribution_reject_count=(
                         len(raw_fetched_pages) - len(fetched_pages)

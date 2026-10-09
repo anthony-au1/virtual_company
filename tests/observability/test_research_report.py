@@ -92,6 +92,19 @@ def test_aggregation_uses_actual_usage_and_computes_run_metrics() -> None:
             company_id="co-1",
             selected_source_count=2,
         ),
+        event(
+            "company_sources_fetch_batch_completed",
+            "run-1",
+            company_id="co-1",
+            candidates_available=8,
+            fetch_target=5,
+            fetch_attempts=2,
+            fetch_successes=1,
+            fetch_failures=1,
+            target_reached=False,
+            candidates_exhausted=False,
+            additional_candidate_attempts=0,
+        ),
         event("web_fetch_started", "run-1", fetch_attempt=1, fetch_retry=False),
         event("web_fetch_completed", "run-1"),
         event("web_fetch_started", "run-1", fetch_attempt=2, fetch_retry=True),
@@ -162,6 +175,12 @@ def test_aggregation_uses_actual_usage_and_computes_run_metrics() -> None:
     assert usage.search_credits_per_researched == 7
     assert usage.search_credits_per_qualified == 7
     assert usage.target_reached is True
+    assert usage.fetch_batches == 1
+    assert usage.fetch_target_reached_batches == 0
+    assert usage.fetch_target_reached_rate == 0
+    assert usage.fetch_candidate_exhaustions == 0
+    assert usage.fetch_additional_candidate_attempts == 0
+    assert usage.fetch_attempts_per_success == 2
     assert usage.target_count == 1
     assert usage.max_companies_to_research == 10
     assert usage.stop_reason == "TARGET_REACHED"

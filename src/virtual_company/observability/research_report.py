@@ -38,6 +38,12 @@ class ResearchUsage:
     fetch_successes: int | None
     fetch_failures: int | None
     fetch_retries: int | None
+    fetch_batches: int | None
+    fetch_target_reached_batches: int | None
+    fetch_target_reached_rate: float | None
+    fetch_candidate_exhaustions: int | None
+    fetch_additional_candidate_attempts: int | None
+    fetch_attempts_per_success: float | None
     qualification_extraction_calls: int | None
     qualification_extraction_failures: int | None
     qualification_extraction_retries: int | None
@@ -294,6 +300,20 @@ def aggregate_run(
         event.get("event") == "web_fetch_completed" for event in events
     )
     fetch_failures = sum(event.get("event") == "web_fetch_failed" for event in events)
+    fetch_batches = [
+        event
+        for event in events
+        if event.get("event") == "company_sources_fetch_batch_completed"
+    ]
+    target_reached_batches = sum(
+        event.get("target_reached") is True for event in fetch_batches
+    )
+    fetch_success_count = sum(
+        _integer(event.get("fetch_successes")) for event in fetch_batches
+    )
+    fetch_attempt_count = sum(
+        _integer(event.get("fetch_attempts")) for event in fetch_batches
+    )
     fetch_retries = sum(
         event.get("event") == "web_fetch_started" and event.get("fetch_retry") is True
         for event in events
@@ -420,6 +440,31 @@ def aggregate_run(
         fetch_successes=fetch_successes if fetch_outcome_events else None,
         fetch_failures=fetch_failures if fetch_outcome_events else None,
         fetch_retries=fetch_retries if fetch_started else None,
+        fetch_batches=len(fetch_batches) if fetch_batches else None,
+        fetch_target_reached_batches=(
+            target_reached_batches if fetch_batches else None
+        ),
+        fetch_target_reached_rate=(
+            target_reached_batches / len(fetch_batches) if fetch_batches else None
+        ),
+        fetch_candidate_exhaustions=(
+            sum(event.get("candidates_exhausted") is True for event in fetch_batches)
+            if fetch_batches
+            else None
+        ),
+        fetch_additional_candidate_attempts=(
+            sum(
+                _integer(event.get("additional_candidate_attempts"))
+                for event in fetch_batches
+            )
+            if fetch_batches
+            else None
+        ),
+        fetch_attempts_per_success=(
+            _ratio(float(fetch_attempt_count), fetch_success_count)
+            if fetch_batches
+            else None
+        ),
         qualification_extraction_calls=(
             extraction_successes + extraction_failures if extraction_events else None
         ),
@@ -529,6 +574,18 @@ def render_report(usage: ResearchUsage) -> str:
         _metric("Successful fetches", usage.fetch_successes),
         _metric("Failed fetches", usage.fetch_failures),
         _metric("Fetch retries", usage.fetch_retries),
+        _metric("Fetch batches", usage.fetch_batches),
+        _metric("Batches reaching fetch target", usage.fetch_target_reached_batches),
+        _metric(
+            "Fetch target reached rate", _percentage(usage.fetch_target_reached_rate)
+        ),
+        _metric("Candidate exhausted batches", usage.fetch_candidate_exhaustions),
+        _metric(
+            "Additional candidate attempts", usage.fetch_additional_candidate_attempts
+        ),
+        _metric(
+            "Attempts per successful fetch", _display(usage.fetch_attempts_per_success)
+        ),
         "",
         "QUALIFICATION",
         _metric("Qualified", usage.qualified_companies),
@@ -636,6 +693,10 @@ def _metric(label: str, value: object) -> str:
 
 def _display(value: float | None) -> str:
     return "N/A" if value is None else f"{value:.2f}"
+
+
+def _percentage(value: float | None) -> str:
+    return "N/A" if value is None else f"{value:.1%}"
 
 
 def _token_display(value: int | None) -> str:

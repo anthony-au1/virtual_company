@@ -151,7 +151,8 @@ Java and Spring criteria, then inspect the traces for `generate_company_queries`
 fetches a bounded set of company-correlated candidate URLs into readable transient page text;
 it does not create Evidence records. Fetches are limited by `WEB_FETCH_TIMEOUT_SECONDS`,
 `WEB_FETCH_MAX_RESPONSE_BYTES`, `WEB_FETCH_MAX_CONTENT_CHARS`,
-`WEB_FETCH_CONCURRENCY`, and `COMPANY_RESEARCH_MAX_FETCHES_PER_COMPANY`.
+`WEB_FETCH_CONCURRENCY`, `COMPANY_RESEARCH_SUCCESSFUL_FETCH_TARGET_PER_COMPANY`, and
+`COMPANY_RESEARCH_FOLLOWUP_SUCCESSFUL_FETCH_TARGET_PER_COMPANY`.
 
 ## Qualification
 

@@ -55,8 +55,8 @@ class ResearchWorkflow:
             company_research_max_results_per_company=(
                 resolved_settings.company_research_max_results_per_company
             ),
-            company_research_max_fetches_per_company=(
-                resolved_settings.company_research_max_fetches_per_company
+            company_research_successful_fetch_target_per_company=(
+                resolved_settings.company_research_successful_fetch_target_per_company
             ),
             company_research_max_investigation_rounds=(
                 resolved_settings.company_research_max_investigation_rounds
@@ -64,8 +64,8 @@ class ResearchWorkflow:
             company_research_followup_search_queries_per_company=(
                 resolved_settings.company_research_followup_search_queries_per_company
             ),
-            company_research_followup_max_fetches_per_company=(
-                resolved_settings.company_research_followup_max_fetches_per_company
+            company_research_followup_successful_fetch_target_per_company=(
+                resolved_settings.company_research_followup_successful_fetch_target_per_company
             ),
             web_fetch_concurrency=resolved_settings.web_fetch_concurrency,
             evidence_extraction_concurrency=resolved_settings.evidence_extraction_concurrency,
@@ -102,6 +102,8 @@ class ResearchWorkflow:
                         "company_research_queries": {},
                         "company_search_results": {},
                         "selected_company_sources": {},
+                        "company_source_candidates": {},
+                        "company_fetch_batch_stats": {},
                         "company_web_pages": {},
                         "attributable_company_web_pages": {},
                         "validated_evidence": [],

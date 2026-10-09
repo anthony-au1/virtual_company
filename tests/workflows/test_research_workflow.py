@@ -436,7 +436,7 @@ async def test_source_selection_reserves_available_sources_for_unknown_criteria(
     model.technologies = ["Java", "Spring Boot", ]
     company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
-    nodes._company_research_followup_max_fetches_per_company = 2
+    nodes._company_research_followup_successful_fetch_target_per_company = 2
     output = await nodes.select_company_sources(
         {
             "research_companies": [company],
@@ -1276,7 +1276,7 @@ async def test_source_selection_deduplicates_and_prefers_first_party_pages() -> 
         ),
     ]
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
-    nodes._company_research_max_fetches_per_company = 3
+    nodes._company_research_successful_fetch_target_per_company = 3
     output = await nodes.select_company_sources(
         {
             "research_companies": [company],
@@ -1360,6 +1360,262 @@ async def test_fetch_sources_retains_partial_successes() -> None:
         "https://a.example/two",
         "https://b.example",
     ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_uses_ranked_candidates_until_success_target_is_reached() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    sources = [
+        SearchResult(title=f"Result {index}", url=f"https://acme.example/{index}")
+        for index in range(10)
+    ]
+    fetch = FetchFake(
+        {
+            sources[1].url: WebFetchHttpError(403),
+            sources[3].url: WebFetchHttpError(999),
+        }
+    )
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._web_fetch = fetch
+    selection = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "company_search_results": {company.id: sources},
+        }
+    )  # type: ignore[arg-type]
+    assert len(selection["selected_company_sources"][company.id]) == 5
+    assert len(selection["company_source_candidates"][company.id]) == 10
+
+    output = await nodes.fetch_company_sources(
+        {
+            "research_companies": [company],
+            **selection,
+        }
+    )  # type: ignore[arg-type]
+
+    assert fetch.calls == [source.url for source in sources[:7]]
+    assert len(output["company_web_pages"][company.id]) == 5
+    assert output["company_fetch_batch_stats"][company.id] == {
+        "candidates_available": 10,
+        "fetch_target": 5,
+        "fetch_attempts": 7,
+        "fetch_successes": 5,
+        "fetch_failures": 2,
+        "target_reached": True,
+        "candidates_exhausted": False,
+        "additional_candidate_attempts": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_stops_at_target_when_initial_candidates_succeed() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    sources = [
+        SearchResult(title=f"Result {index}", url=f"https://acme.example/{index}")
+        for index in range(10)
+    ]
+    fetch = FetchFake({})
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._web_fetch = fetch
+    selection = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "company_search_results": {company.id: sources},
+        }
+    )  # type: ignore[arg-type]
+    output = await nodes.fetch_company_sources(
+        {"research_companies": [company], **selection}  # type: ignore[arg-type]
+    )
+
+    assert fetch.calls == [source.url for source in sources[:5]]
+    assert len(output["company_web_pages"][company.id]) == 5
+    assert output["company_fetch_batch_stats"][company.id]["target_reached"] is True
+    assert (
+        output["company_fetch_batch_stats"][company.id][
+            "additional_candidate_attempts"
+        ]
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_success_counts_even_when_evidence_extraction_finds_nothing() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    page = WebPage(url="https://acme.example/backend", content="No useful claims.")
+    fetch = FetchFake({page.url: page})
+    extraction = ExtractionFake({})
+    nodes = make_nodes(extraction, ResearchFake([]), model)
+    nodes._web_fetch = fetch
+    selection = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "company_search_results": {
+                company.id: [SearchResult(title="Acme", url=page.url)]
+            },
+        }
+    )  # type: ignore[arg-type]
+    fetched = await nodes.fetch_company_sources(
+        {"research_companies": [company], **selection}  # type: ignore[arg-type]
+    )
+    evidence = await nodes.extract_company_evidence(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_run_id": uuid4(),
+            "research_companies": [company],
+            "company_web_pages": fetched["company_web_pages"],
+        }
+    )  # type: ignore[arg-type]
+
+    assert evidence["validated_evidence"] == []
+    assert fetched["company_fetch_batch_stats"][company.id]["fetch_successes"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_keeps_global_concurrency_bounded() -> None:
+    class ConcurrentFetchFake(FetchFake):
+        def __init__(self) -> None:
+            super().__init__({})
+            self.active = 0
+            self.max_active = 0
+
+        async def fetch(self, url: str) -> WebPage:
+            self.calls.append(url)
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0)
+            self.active -= 1
+            return WebPage(url=url, content="Fetched page")
+
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    sources = [
+        SearchResult(title=f"Result {index}", url=f"https://acme.example/{index}")
+        for index in range(10)
+    ]
+    fetch = ConcurrentFetchFake()
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=ResearchServiceFake(),
+        research_llm=ResearchFake([]),
+        extraction_llm=ExtractionFake({}),
+        web_search=SearchFake([]),
+        web_fetch=fetch,
+        web_fetch_concurrency=2,
+    )
+    selection = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "company_search_results": {company.id: sources},
+        }
+    )  # type: ignore[arg-type]
+    await nodes.fetch_company_sources(
+        {"research_companies": [company], **selection}  # type: ignore[arg-type]
+    )
+
+    assert len(fetch.calls) == 5
+    assert fetch.max_active == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_candidates_failing_completes_normally() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    sources = [
+        SearchResult(title=f"Result {index}", url=f"https://acme.example/{index}")
+        for index in range(4)
+    ]
+    fetch = FetchFake({source.url: WebFetchHttpError(403) for source in sources})
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._web_fetch = fetch
+    selection = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "company_search_results": {company.id: sources},
+        }
+    )  # type: ignore[arg-type]
+    output = await nodes.fetch_company_sources(
+        {"research_companies": [company], **selection}  # type: ignore[arg-type]
+    )
+
+    assert len(fetch.calls) == 4
+    assert output["company_web_pages"][company.id] == []
+    stats = output["company_fetch_batch_stats"][company.id]
+    assert stats["fetch_attempts"] == 4
+    assert stats["fetch_successes"] == 0
+    assert stats["fetch_failures"] == 4
+    assert stats["target_reached"] is False
+    assert stats["candidates_exhausted"] is True
+
+
+@pytest.mark.asyncio
+async def test_fetch_candidate_exhaustion_is_normal_and_does_not_search_again() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    sources = [
+        SearchResult(title=f"Result {index}", url=f"https://acme.example/{index}")
+        for index in range(3)
+    ]
+    fetch = FetchFake(
+        {sources[1].url: WebFetchHttpError(403)}
+    )
+    search = SearchFake([])
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=ResearchServiceFake(),
+        research_llm=ResearchFake([]),
+        extraction_llm=ExtractionFake({}),
+        web_search=search,
+        web_fetch=fetch,
+    )
+    selection = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "company_search_results": {company.id: sources},
+        }
+    )  # type: ignore[arg-type]
+    output = await nodes.fetch_company_sources(
+        {"research_companies": [company], **selection}  # type: ignore[arg-type]
+    )
+
+    assert fetch.calls == [source.url for source in sources]
+    assert len(output["company_web_pages"][company.id]) == 2
+    assert output["company_fetch_batch_stats"][company.id]["target_reached"] is False
+    assert output["company_fetch_batch_stats"][company.id]["candidates_exhausted"] is True
+    assert search.calls == []
+
+
+@pytest.mark.asyncio
+async def test_followup_fetch_uses_success_target_of_three() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    sources = [
+        SearchResult(title=f"Result {index}", url=f"https://acme.example/{index}")
+        for index in range(5)
+    ]
+    fetch = FetchFake({})
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._web_fetch = fetch
+    nodes._company_research_followup_successful_fetch_target_per_company = 3
+    selection = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "company_search_results": {company.id: sources},
+            "adaptive_mode": True,
+        }
+    )  # type: ignore[arg-type]
+    output = await nodes.fetch_company_sources(
+        {
+            "research_companies": [company],
+            "adaptive_mode": True,
+            **selection,
+        }
+    )  # type: ignore[arg-type]
+
+    assert len(fetch.calls) == 3
+    assert output["company_fetch_batch_stats"][company.id]["fetch_target"] == 3
 
 
 @pytest.mark.asyncio
@@ -2873,7 +3129,7 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
         snippet="Spring platform roles",
     )
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
-    nodes._company_research_followup_max_fetches_per_company = 1
+    nodes._company_research_followup_successful_fetch_target_per_company = 1
     output = await nodes.select_company_sources(
         {
             "research_companies": [company],
@@ -2942,7 +3198,7 @@ async def test_source_selection_prioritizes_company_specific_unknown_subjects() 
         for subject in ("Java", "Spring")
     ]
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
-    nodes._company_research_followup_max_fetches_per_company = 1
+    nodes._company_research_followup_successful_fetch_target_per_company = 1
     output = await nodes.select_company_sources(
         {
             "research_companies": [company],
