@@ -159,7 +159,8 @@ it does not create Evidence records. Fetches are limited by `WEB_FETCH_TIMEOUT_S
 After every company investigation is terminal, `qualify_companies` evaluates validated
 Evidence from the current research run for each company. Coverage remains a separate
 presence check. Both stages share
-conservative subject normalization and the one-way Spring Boot → Spring implication.
+conservative spelling/formatting normalization. Technology criteria are independent:
+Spring Boot does not imply Spring, and Apache Kafka does not imply Kafka.
 
 Qualification uses no LLM, search, or page fetch. Criteria are MATCH, MISMATCH, or
 UNKNOWN; missing evidence never means mismatch. Only required criteria determine

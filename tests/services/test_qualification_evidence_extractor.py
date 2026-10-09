@@ -142,6 +142,70 @@ def test_normalization_only_canonicalizes_safe_formatting_variants(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("requested", "related"),
+    [
+        ("Kafka", "Apache Kafka"),
+        ("Spring", "Spring Boot"),
+        ("Java", "Java EE"),
+        ("React", "React Native"),
+        (".NET", ".NET Core"),
+    ],
+)
+async def test_related_technology_subjects_remain_independent(
+    requested: str, related: str
+) -> None:
+    assert normalize_subject("technology", requested) != normalize_subject(
+        "technology", related
+    )
+    item = evidence(f"Our platform uses {related}", subject=related)
+    output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2", state="supported", evidence_ids=[item.id]
+            )
+        ]
+    )
+    result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
+        campaign([requested]), [item]
+    )
+    assert result.facts is not None
+    assert result.facts.categorical[0].state == "unknown"
+    assert result.facts.categorical[0].evidence_ids == []
+
+
+def test_v3_prompt_requires_excerpt_entailment_and_preserves_job_evidence() -> None:
+    from virtual_company.workflows.research.prompts import (
+        EXTRACT_QUALIFICATION_FACTS_PROMPT,
+        extract_qualification_facts_system_prompt,
+    )
+
+    prompt = extract_qualification_facts_system_prompt()
+    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v3"
+    for instruction in (
+        "EXACT PROPERTY",
+        "Normalize spelling, not meaning",
+        "evidence_text",
+        "they are not proof",
+        "embedded in a different technology name",
+        "Apache Kafka alone does not establish Kafka",
+        "Spring Boot alone does not establish Spring",
+        "Java EE alone does not establish Java",
+        "Supplying an industry",
+        "appearing in topical content",
+        "Company-attributed engineering job requirements can establish a technology",
+        "prefer unknown",
+        "positively contradicts",
+        "Find java.exe",
+        "Kafka != Apache Kafka",
+        "familiar real-world synonym also fails",
+        "founded in Melbourne, Australia supports Australia",
+        "including an explicit unknown when unsupported",
+    ):
+        assert instruction in prompt
+
+
+@pytest.mark.asyncio
 async def test_explicit_and_vague_size_are_not_strengthened() -> None:
     explicit = evidence("employs approximately 1,500 people", "company_size")
     vague = evidence("a global technology company", "company_size")
