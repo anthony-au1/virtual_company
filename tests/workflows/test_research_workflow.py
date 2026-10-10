@@ -738,9 +738,59 @@ async def test_evidence_extraction_prompt_negative_exact_technology_cases(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("requested", "subject", "evidence_text"),
+    [
+        ("C++", "C#", "Acme builds its application in C#."),
+        ("C#", "C++", "Acme builds its application in C++."),
+        ("F#", "F", "Acme builds its application in F."),
+        (".NET", "NET", "Acme builds its application on NET."),
+    ],
+)
+async def test_evidence_extraction_rejects_punctuation_colliding_technologies(
+    requested: str, subject: str, evidence_text: str
+) -> None:
+    model = campaign()
+    model.technologies = [requested]
+    company = ResearchCompany(
+        id=uuid4(), name="Acme", website=None, domain="acme.example"
+    )
+    page = WebPage(url="https://acme.example/technology", content=evidence_text)
+    fake = EvidenceExtractionFake(
+        {
+            page.url: [
+                ExtractedEvidence(
+                    criterion=EvidenceCriterion.TECHNOLOGY,
+                    subject=subject,
+                    claim=f"Acme uses {subject}.",
+                    evidence_text=evidence_text,
+                )
+            ]
+        }
+    )
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._extraction_llm = fake
+
+    output = await nodes.extract_company_evidence(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_run_id": uuid4(),
+            "research_companies": [company],
+            "company_web_pages": {company.id: [page]},
+        }
+    )  # type: ignore[arg-type]
+
+    assert output["validated_evidence"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("requested", "subject", "page_text", "excerpt"),
     [
         ("Spring", "Spring", "Experience with Java and Spring.", "Java and Spring"),
+        ("C++", "C++", "Acme builds its application in C++.", "in C++"),
+        ("C#", "C#", "Acme builds its application in C#.", "in C#"),
+        ("F#", "F#", "Acme builds its application in F#.", "in F#"),
+        (".NET", ".NET", "Acme builds its application on .NET.", "on .NET"),
         ("Spring Boot", "SpringBoot", "Our services use Spring Boot.", "Spring Boot"),
         ("Spring Boot", "spring-boot", "Our services use Spring Boot.", "Spring Boot"),
         ("Spring Boot", "spring_boot", "Our services use Spring Boot.", "Spring Boot"),

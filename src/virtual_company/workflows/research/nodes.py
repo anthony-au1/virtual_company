@@ -2189,9 +2189,9 @@ class ResearchNodes:
         if item.criterion is EvidenceCriterion.COMPANY_SIZE:
             return item.subject
         technologies = self._campaign_technologies(campaign)
-        subject_key = self._compact(item.subject or "")
+        subject_key = normalize_subject("technology", item.subject)
         for technology in technologies:
-            if self._compact(technology) == subject_key:
+            if normalize_subject("technology", technology) == subject_key:
                 return technology
         return None
 
