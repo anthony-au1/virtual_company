@@ -73,6 +73,7 @@ from virtual_company.workflows.research.prompts import (
     extract_company_evidence_system_prompt,
     followup_company_query_system_prompt,
     rank_company_candidates_system_prompt,
+    rank_company_candidates_user_prompt,
 )
 
 
@@ -494,7 +495,7 @@ def test_staged_prompt_semantics() -> None:
     )
     assert (
         EXTRACT_COMPANY_CANDIDATES_PROMPT.version == "v1"
-        and RANK_COMPANY_CANDIDATES_PROMPT.version == "v4"
+        and RANK_COMPANY_CANDIDATES_PROMPT.version == "v5"
     )
     assert (
         "optimizes for recall" in extraction and "do not rank companies" in extraction
@@ -512,7 +513,171 @@ def test_staged_prompt_semantics() -> None:
         and "exactly the discovery candidate limit" in ranking
         and "prioritization, not qualification" in ranking
         and "absence of evidence is unknown" in ranking
+        and "top-level sources list" in ranking
+        and "supporting_source_ids" in ranking
+        and "source ids are references only and have no ranking meaning" in ranking
     )
+
+
+def _expand_ranking_payload(prompt: str) -> list[dict[str, object]]:
+    """Test-only expansion of source references to the previous candidate shape."""
+    marker = "Aggregated company candidates and shared sources:\n"
+    payload = json.loads(prompt.split(marker, maxsplit=1)[1])
+    sources = {
+        source["source_id"]: {
+            key: value for key, value in source.items() if key != "source_id"
+        }
+        for source in payload["sources"]
+    }
+    return [
+        {
+            **{
+                key: value
+                for key, value in candidate.items()
+                if key != "supporting_source_ids"
+            },
+            "supporting_results": [
+                sources[source_id]
+                for source_id in candidate["supporting_source_ids"]
+            ],
+        }
+        for candidate in payload["candidates"]
+    ]
+
+
+def test_ranking_payload_deduplicates_shared_sources_losslessly_and_deterministically() -> (
+    None
+):
+    model = CampaignCriteria.model_validate(campaign())
+    source_x = SearchResult(
+        title="Shared fintech profile",
+        url="https://sources.example/shared",
+        snippet="Full shared source snippet with company and market details.",
+    )
+    source_y = SearchResult(
+        title="Candidate A report",
+        url="https://sources.example/a",
+        snippet="A distinct full source snippet.",
+    )
+    source_z = SearchResult(
+        title="Candidate B report",
+        url="https://sources.example/b",
+        snippet="Another distinct full source snippet.",
+    )
+    candidates = [
+        AggregatedCompanyCandidate(
+            name="Candidate A",
+            website="https://a.example",
+            domain="a.example",
+            mention_count=4,
+            supporting_urls=[source_x.url, source_y.url],
+            supporting_results=[source_x, source_y],
+        ),
+        AggregatedCompanyCandidate(
+            name="Candidate B",
+            website="https://b.example",
+            domain="b.example",
+            mention_count=2,
+            supporting_urls=[source_x.url, source_z.url],
+            supporting_results=[source_x, source_z],
+        ),
+    ]
+
+    prompt = rank_company_candidates_user_prompt(model, candidates, 2)
+    repeated_prompt = rank_company_candidates_user_prompt(model, candidates, 2)
+    payload = json.loads(
+        prompt.split("Aggregated company candidates and shared sources:\n", 1)[1]
+    )
+
+    assert prompt == repeated_prompt
+    assert [source["source_id"] for source in payload["sources"]] == [
+        "source_1",
+        "source_2",
+        "source_3",
+    ]
+    assert sum(source["url"] == source_x.url for source in payload["sources"]) == 1
+    shared_id = payload["sources"][0]["source_id"]
+    assert payload["candidates"][0]["supporting_source_ids"] == [
+        shared_id,
+        "source_2",
+    ]
+    assert payload["candidates"][1]["supporting_source_ids"] == [
+        shared_id,
+        "source_3",
+    ]
+    assert payload["candidates"][0]["mention_count"] == 4
+    assert payload["candidates"][0]["supporting_urls"] == [source_x.url, source_y.url]
+    assert payload["sources"] == [
+        {"source_id": "source_1", **source_x.model_dump(mode="json")},
+        {"source_id": "source_2", **source_y.model_dump(mode="json")},
+        {"source_id": "source_3", **source_z.model_dump(mode="json")},
+    ]
+    assert _expand_ranking_payload(prompt) == [
+        candidate.model_dump() for candidate in candidates
+    ]
+
+
+def test_ranking_payload_preserves_repeated_source_reference_multiplicity() -> None:
+    source = SearchResult(
+        title="Repeated source", url="https://source.example", snippet="Full text"
+    )
+    candidate = AggregatedCompanyCandidate(
+        name="Acme",
+        mention_count=2,
+        supporting_urls=[source.url],
+        supporting_results=[source, source],
+    )
+
+    prompt = rank_company_candidates_user_prompt(
+        CampaignCriteria.model_validate(campaign()), [candidate], 1
+    )
+    payload = json.loads(
+        prompt.split("Aggregated company candidates and shared sources:\n", 1)[1]
+    )
+
+    assert len(payload["sources"]) == 1
+    assert payload["candidates"][0]["supporting_source_ids"] == [
+        "source_1",
+        "source_1",
+    ]
+    assert _expand_ranking_payload(prompt) == [candidate.model_dump()]
+
+
+def test_ranking_payload_keeps_same_url_records_with_different_content_distinct() -> None:
+    first = SearchResult(
+        title="Company profile",
+        url="https://source.example/company",
+        snippet="The company employs engineers in Australia.",
+    )
+    second = SearchResult(
+        title="Company profile",
+        url="https://source.example/company",
+        snippet="The company serves fintech customers globally.",
+    )
+    candidate = AggregatedCompanyCandidate(
+        name="Acme",
+        mention_count=2,
+        supporting_urls=[first.url],
+        supporting_results=[first, second],
+    )
+
+    prompt = rank_company_candidates_user_prompt(
+        CampaignCriteria.model_validate(campaign()), [candidate], 1
+    )
+    payload = json.loads(
+        prompt.split("Aggregated company candidates and shared sources:\n", 1)[1]
+    )
+
+    assert len(payload["sources"]) == 2
+    assert [source["snippet"] for source in payload["sources"]] == [
+        first.snippet,
+        second.snippet,
+    ]
+    assert payload["candidates"][0]["supporting_source_ids"] == [
+        "source_1",
+        "source_2",
+    ]
+    assert _expand_ranking_payload(prompt) == [candidate.model_dump()]
 
 
 def test_evidence_extraction_prompt_requires_exact_technology_support() -> None:

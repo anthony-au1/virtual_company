@@ -37,7 +37,7 @@ class QualificationEvidencePromptItem(Protocol):
 
 SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
 EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v1")
-RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v4")
+RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v5")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v4")
 EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v2")
 FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity(
@@ -120,7 +120,11 @@ def rank_company_candidates_system_prompt() -> str:
         "source quality, identity clarity, multiple independent mentions when available, and company-size "
         "compatibility only when supplied evidence supports it. Unknown company size and technology stack "
         "are not negatives. Use only the supplied discovery information; do not use your own unstated "
-        "knowledge to qualify or disqualify a company. Technology verification belongs to downstream "
+        "knowledge to qualify or disqualify a company. The ranking input contains a top-level "
+        "sources list with each complete source record and its source_id. Candidate records refer "
+        "to those sources through supporting_source_ids; use those references to assess their "
+        "supporting information. Source IDs are references only and have no ranking meaning. "
+        "Technology verification belongs to downstream "
         "investigation. Prefer plausible, well-supported companies earlier in the ordering. For each "
         "candidate, provide a concise "
         "discovery reason and zero to three supporting URLs chosen only from that candidate's supplied "
@@ -133,12 +137,35 @@ def rank_company_candidates_user_prompt(
     candidates: list[AggregatedCompanyCandidate],
     candidate_limit: int,
 ) -> str:
-    """Serialize compact, aggregated discovery evidence for ranking."""
-    evidence = [candidate.model_dump() for candidate in candidates]
+    """Serialize candidates with shared complete search results stored only once."""
+    sources: list[dict[str, object]] = []
+    source_ids_by_record: dict[str, str] = {}
+    serialized_candidates: list[dict[str, object]] = []
+
+    for candidate in candidates:
+        supporting_source_ids: list[str] = []
+        for result in candidate.supporting_results:
+            source = result.model_dump(mode="json")
+            identity = json.dumps(source, sort_keys=True, separators=(",", ":"))
+            source_id = source_ids_by_record.get(identity)
+            if source_id is None:
+                source_id = f"source_{len(sources) + 1}"
+                source_ids_by_record[identity] = source_id
+                sources.append({"source_id": source_id, **source})
+            supporting_source_ids.append(source_id)
+
+        serialized_candidates.append(
+            {
+                **candidate.model_dump(exclude={"supporting_results"}),
+                "supporting_source_ids": supporting_source_ids,
+            }
+        )
+
+    evidence = {"sources": sources, "candidates": serialized_candidates}
     return (
         f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"
         f"Discovery candidate limit: {candidate_limit}\n\n"
-        f"Aggregated company candidates:\n{json.dumps(evidence)}"
+        f"Aggregated company candidates and shared sources:\n{json.dumps(evidence)}"
     )
 
 
