@@ -2,10 +2,46 @@
 
 from __future__ import annotations
 
+import json
 from time import perf_counter
 
 from virtual_company.observability import Observability, get_observability
 from virtual_company.tools.web_search import SearchResponse, WebSearchTool
+
+TRACE_SNIPPET_MAX_CHARACTERS = 800
+
+
+def _trace_search_results(response: SearchResponse) -> str:
+    """Serialize bounded result details without changing application results."""
+    return json.dumps(
+        [
+            {
+                "rank": rank,
+                "title": result.title,
+                "url": result.url,
+                "snippet": (
+                    result.snippet[:TRACE_SNIPPET_MAX_CHARACTERS]
+                    if result.snippet is not None
+                    else None
+                ),
+            }
+            for rank, result in enumerate(response.results, start=1)
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _update_span_metadata(span: object, metadata: dict[str, str]) -> None:
+    """Attach result details to either Langfuse or plain OpenTelemetry spans."""
+    update = getattr(span, "update", None)
+    if callable(update):
+        update(metadata=metadata)
+        return
+    set_attribute = getattr(span, "set_attribute", None)
+    if callable(set_attribute):
+        for key, value in metadata.items():
+            set_attribute(key, value)
 
 
 class InstrumentedWebSearchTool:
@@ -24,11 +60,21 @@ class InstrumentedWebSearchTool:
         metadata = {"provider": self.provider}
         if self._search_depth is not None:
             metadata["search_depth"] = self._search_depth
+        span_metadata = {**metadata, "query": query, "max_results": limit}
         self._observability.event("web_search_started", **metadata)
         started = perf_counter()
         try:
-            with self._observability.span("web_search", **metadata):
+            with self._observability.span("web_search", **span_metadata) as span:
                 response = await self._tool.search(query, limit)
+                search_response = (
+                    response
+                    if isinstance(response, SearchResponse)
+                    else SearchResponse(results=response)  # type: ignore[arg-type]
+                )
+                _update_span_metadata(
+                    span,
+                    {"search_results_json": _trace_search_results(search_response)},
+                )
         except Exception as error:
             duration = perf_counter() - started
             self._observability.record(
@@ -58,11 +104,6 @@ class InstrumentedWebSearchTool:
             status="completed",
             **metadata,
         )
-        if isinstance(response, SearchResponse):
-            search_response = response
-        else:
-            # Accept older/custom providers while they migrate to SearchResponse.
-            search_response = SearchResponse(results=response)  # type: ignore[arg-type]
         self._observability.record(
             "web_search_results_total", len(search_response.results), **metadata
         )

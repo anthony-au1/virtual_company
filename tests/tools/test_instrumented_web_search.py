@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from contextlib import contextmanager
+
 import pytest
 
 from virtual_company.research.models import SearchResult, WebPage
@@ -15,6 +18,7 @@ class ObservabilityFake:
         self.events: list[str] = []
         self.event_contexts: list[tuple[str, dict[str, object]]] = []
         self.metrics: list[tuple[str, dict[str, object]]] = []
+        self.spans: list[tuple[str, dict[str, object], dict[str, object]]] = []
 
     def event(self, name: str, **context: object) -> None:
         self.events.append(name)
@@ -23,10 +27,19 @@ class ObservabilityFake:
     def record(self, name: str, _value: float = 1, **attributes: object) -> None:
         self.metrics.append((name, attributes))
 
-    def span(self, *_args: object, **_kwargs: object):
-        from contextlib import nullcontext
+    @contextmanager
+    def span(self, name: str, **attributes: object):
+        updated: dict[str, object] = {}
+        self.spans.append((name, attributes, updated))
+        yield SpanFake(updated)
 
-        return nullcontext()
+
+class SpanFake:
+    def __init__(self, updated: dict[str, object]) -> None:
+        self.updated = updated
+
+    def update(self, *, metadata: dict[str, object]) -> None:
+        self.updated.update(metadata)
 
 
 class ToolFake:
@@ -66,6 +79,81 @@ async def test_instrumented_search_records_low_cardinality_metrics() -> None:
         "web_search_results_total",
         {"provider": "tavily", "search_depth": "basic"},
     ) in observability.metrics
+    name, attributes, updated = observability.spans[0]
+    assert name == "web_search"
+    assert attributes["query"] == "not a metric attribute"
+    assert attributes["max_results"] == 1
+    assert json.loads(str(updated["search_results_json"])) == [
+        {
+            "rank": 1,
+            "title": "Acme",
+            "url": "https://acme.example",
+            "snippet": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_trace_preserves_provider_order_and_bounds_snippets() -> None:
+    long_snippet = "x" * 900
+    returned = SearchResponse(
+        results=[
+            SearchResult(
+                title="First",
+                url="https://example.com/first",
+                snippet=long_snippet,
+            ),
+            SearchResult(
+                title="Second",
+                url="https://example.com/second",
+                snippet="Second snippet",
+            ),
+        ]
+    )
+
+    class ResultsToolFake(ToolFake):
+        async def search(self, _query: str, _limit: int) -> SearchResponse:
+            return returned
+
+    observability = ObservabilityFake()
+    tool = InstrumentedWebSearchTool(
+        ResultsToolFake(), observability=observability  # type: ignore[arg-type]
+    )
+
+    response = await tool.search("exact Tavily query", limit=7)
+
+    assert response is returned
+    assert response.results[0].snippet == long_snippet
+    _name, attributes, updated = observability.spans[0]
+    assert attributes["query"] == "exact Tavily query"
+    assert attributes["max_results"] == 7
+    assert attributes["search_depth"] == "basic"
+    traced_results = json.loads(str(updated["search_results_json"]))
+    assert [item["rank"] for item in traced_results] == [1, 2]
+    assert [item["url"] for item in traced_results] == [
+        "https://example.com/first",
+        "https://example.com/second",
+    ]
+    assert [item["title"] for item in traced_results] == ["First", "Second"]
+    assert traced_results[0]["snippet"] == "x" * 800
+    assert traced_results[1]["snippet"] == "Second snippet"
+
+
+@pytest.mark.asyncio
+async def test_empty_search_results_are_recorded_as_empty_json_list() -> None:
+    class EmptyToolFake(ToolFake):
+        async def search(self, _query: str, _limit: int) -> SearchResponse:
+            return SearchResponse(results=[])
+
+    observability = ObservabilityFake()
+    tool = InstrumentedWebSearchTool(
+        EmptyToolFake(), observability=observability  # type: ignore[arg-type]
+    )
+
+    response = await tool.search("no matching results")
+
+    assert response.results == []
+    assert json.loads(str(observability.spans[0][2]["search_results_json"])) == []
 
 
 @pytest.mark.asyncio
