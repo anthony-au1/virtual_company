@@ -65,9 +65,12 @@ from virtual_company.workflows.research.nodes import (
 )
 from virtual_company.workflows.research.prompts import (
     EXTRACT_COMPANY_CANDIDATES_PROMPT,
+    EXTRACT_COMPANY_EVIDENCE_PROMPT,
+    EXTRACT_QUALIFICATION_FACTS_PROMPT,
     FOLLOWUP_COMPANY_QUERY_PROMPT,
     RANK_COMPANY_CANDIDATES_PROMPT,
     extract_company_candidates_system_prompt,
+    extract_company_evidence_system_prompt,
     followup_company_query_system_prompt,
     rank_company_candidates_system_prompt,
 )
@@ -510,6 +513,117 @@ def test_staged_prompt_semantics() -> None:
         and "prioritization, not qualification" in ranking
         and "absence of evidence is unknown" in ranking
     )
+
+
+def test_evidence_extraction_prompt_requires_exact_technology_support() -> None:
+    prompt = extract_company_evidence_system_prompt().lower()
+
+    assert EXTRACT_COMPANY_EVIDENCE_PROMPT.version == "v2"
+    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v3"
+    assert "exact technology requested" in prompt
+    assert "different or longer technology name is not independent support" in prompt
+    assert "normalize spelling and formatting only, not meaning" in prompt
+    assert "related technologies, parent/child technologies, products, frameworks" in prompt
+    assert "spring boot alone does not establish spring" in prompt
+    assert "apache kafka alone does not establish kafka" in prompt
+    assert "java ee alone does not establish java" in prompt
+    assert "when uncertain, emit no evidence for that technology" in prompt
+    assert "springboot/spring-boot/spring_boot for spring boot" in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("requested", "page_text"),
+    [
+        ("Spring", "Spring Boot"),
+        ("Kafka", "Apache Kafka"),
+        ("Java", "Java EE"),
+        ("React", "React Native"),
+        (".NET", ".NET Core"),
+        ("Kafka", "Kafka Streams"),
+    ],
+)
+async def test_evidence_extraction_prompt_negative_exact_technology_cases(
+    requested: str, page_text: str
+) -> None:
+    model = campaign()
+    model.technologies = [requested]
+    company = ResearchCompany(
+        id=uuid4(), name="Acme", website=None, domain="acme.example"
+    )
+    page = WebPage(url="https://acme.example/technology", content=page_text)
+    fake = EvidenceExtractionFake({page.url: []})
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+
+    nodes._extraction_llm = fake
+    output = await nodes.extract_company_evidence(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_run_id": uuid4(),
+            "research_companies": [company],
+            "company_web_pages": {company.id: [page]},
+        }
+    )  # type: ignore[arg-type]
+
+    assert output["validated_evidence"] == []
+    assert requested in fake.prompts[0]
+    assert page_text in fake.prompts[0]
+    assert "exact technology requested" in extract_company_evidence_system_prompt().lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("requested", "subject", "page_text", "excerpt"),
+    [
+        ("Spring", "Spring", "Experience with Java and Spring.", "Java and Spring"),
+        ("Spring Boot", "SpringBoot", "Our services use Spring Boot.", "Spring Boot"),
+        ("Spring Boot", "spring-boot", "Our services use Spring Boot.", "Spring Boot"),
+        ("Spring Boot", "spring_boot", "Our services use Spring Boot.", "Spring Boot"),
+        (
+            "Kafka",
+            "Kafka",
+            "The platform uses Kafka for messaging.",
+            "uses Kafka for messaging",
+        ),
+    ],
+)
+async def test_evidence_extraction_accepts_exact_technology_and_format_variants(
+    requested: str, subject: str, page_text: str, excerpt: str
+) -> None:
+    model = campaign()
+    model.technologies = [requested]
+    company = ResearchCompany(
+        id=uuid4(), name="Acme", website=None, domain="acme.example"
+    )
+    page = WebPage(url="https://acme.example/technology", content=page_text)
+    fake = EvidenceExtractionFake(
+        {
+            page.url: [
+                ExtractedEvidence(
+                    criterion=EvidenceCriterion.TECHNOLOGY,
+                    subject=subject,
+                    claim=f"Acme uses {requested}.",
+                    evidence_text=excerpt,
+                )
+            ]
+        }
+    )
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+
+    nodes._extraction_llm = fake
+    output = await nodes.extract_company_evidence(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_run_id": uuid4(),
+            "research_companies": [company],
+            "company_web_pages": {company.id: [page]},
+        }
+    )  # type: ignore[arg-type]
+
+    evidence = output["validated_evidence"]
+    assert len(evidence) == 1
+    assert evidence[0].subject == requested
+    assert evidence[0].evidence_text == excerpt
 
 
 @pytest.mark.asyncio

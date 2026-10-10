@@ -39,7 +39,7 @@ SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
 EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v1")
 RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v4")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v4")
-EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v1")
+EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v2")
 FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity(
     "generate_followup_company_queries", "v4"
 )
@@ -263,8 +263,18 @@ def extract_company_evidence_system_prompt() -> str:
         "and copy the smallest useful supporting excerpt exactly from the page. The excerpt "
         "MUST occur in the supplied page content. Do not treat a missing technology as negative "
         "evidence. Do not invent URLs, employee counts, headquarters, or unsupported technology. "
-        "For technology, use the matching campaign technology label as the subject; harmless "
-        "spacing or punctuation variants in the page may support that label. Preserve what a "
+        "For technology, Evidence must establish the EXACT technology requested by the "
+        "campaign criterion. A requested name appearing only as part of a different or "
+        "longer technology name is not independent support. Normalize spelling and "
+        "formatting only, not meaning. Do not infer related technologies, parent/child "
+        "technologies, products, frameworks, distributions, or familiar real-world "
+        "relationships. For example, Spring Boot alone does not establish Spring; Apache "
+        "Kafka alone does not establish Kafka; Java EE alone does not establish Java. Apply "
+        "this rule generally, not only to these examples. When uncertain, emit no Evidence "
+        "for that technology. Use the matching campaign technology label as the subject; "
+        "harmless spelling, spacing, or punctuation variants of that same technology may "
+        "support the label (for example, SpringBoot/spring-boot/spring_boot for Spring Boot). "
+        "Preserve what a "
         "geography, industry, or size source actually states rather than strengthening it."
     )
 
