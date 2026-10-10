@@ -41,7 +41,7 @@ RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v4")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v4")
 EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v1")
 FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity(
-    "generate_followup_company_queries", "v3"
+    "generate_followup_company_queries", "v4"
 )
 VALIDATE_COMPANY_PAGE_ATTRIBUTION_PROMPT = PromptIdentity(
     "validate_company_page_attribution", "v1"
@@ -180,9 +180,20 @@ def followup_company_query_system_prompt() -> str:
         "one query naming its subject when the query limit allows, before assigning multiple "
         "queries to one criterion. Do not repeat prior queries. Choose a meaningfully different "
         "search strategy and, when the prior channel did not resolve the criteria, prefer a "
-        "different source or channel. Combine related criteria when sensible. Prefer queries "
-        "likely to surface official careers, engineering, technical, company, or credible "
-        "business sources. Do not target already-resolved criteria except as necessary context. "
+        "different source or channel. Use complementary research strategies across the query set. "
+        "Do not target all queries at the same site, domain, or source family unless the supplied "
+        "context provides a strong reason. For technology criteria, possible strategies include "
+        "company careers or job advertisements, engineering or technical content, official company "
+        "GitHub or open-source repositories, credible third-party employment pages, and technical "
+        "talks or interviews where relevant. These are examples, not mandatory sources. A single "
+        "query may cover multiple related unresolved criteria by naming their exact subjects. "
+        "Prefer evidence attributable to this company; avoid generic technology searches likely "
+        "to return unrelated tutorials, generic repositories, or other companies. Target only "
+        "UNKNOWN criteria; MATCH and MISMATCH criteria are already resolved and must not be "
+        "targeted again except as necessary context. Preserve exact requested technology names "
+        "according to the existing normalization rules; do not introduce aliases or implications. "
+        "Spring Boot does not imply Spring, and Apache Kafka must not replace Kafka when the "
+        "criterion requests Kafka. "
         "Do not invent facts or assume a missing technology exists: each query is only a "
         "research hypothesis. Return search queries only."
     )

@@ -65,8 +65,10 @@ from virtual_company.workflows.research.nodes import (
 )
 from virtual_company.workflows.research.prompts import (
     EXTRACT_COMPANY_CANDIDATES_PROMPT,
+    FOLLOWUP_COMPANY_QUERY_PROMPT,
     RANK_COMPANY_CANDIDATES_PROMPT,
     extract_company_candidates_system_prompt,
+    followup_company_query_system_prompt,
     rank_company_candidates_system_prompt,
 )
 
@@ -1833,6 +1835,31 @@ async def test_evidence_persistence_collapses_same_statement_across_sources() ->
     )
     assert (outcome.created_count, outcome.skipped_count) == (1, 1)
     assert repository.items == [first]
+
+
+def test_followup_prompt_requires_diverse_company_attributable_strategies() -> None:
+    prompt = followup_company_query_system_prompt()
+    assert FOLLOWUP_COMPANY_QUERY_PROMPT.version == "v4"
+    for instruction in (
+        "Use complementary research strategies across the query set",
+        "Do not target all queries at the same site, domain, or source family",
+        "unless the supplied context provides a strong reason",
+        "These are examples, not mandatory sources",
+        "A single query may cover multiple related unresolved criteria",
+        "Prefer evidence attributable to this company",
+        "unrelated tutorials, generic repositories, or other companies",
+        "Include the company name in every query",
+        "Target only UNKNOWN criteria",
+        "MATCH and MISMATCH criteria are already resolved",
+        "must not be targeted again except as necessary context",
+        "Preserve exact requested technology names",
+        "do not introduce aliases or implications",
+        "Spring Boot does not imply Spring",
+        "Apache Kafka must not replace Kafka when the criterion requests Kafka",
+        "when the query limit allows",
+        "Do not repeat prior queries",
+    ):
+        assert instruction in prompt
 
 
 @pytest.mark.asyncio
