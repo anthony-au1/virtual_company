@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -25,113 +23,43 @@ from virtual_company.research.models import (
 )
 
 
-@dataclass(frozen=True)
-class EmployeeCountBounds:
-    lower: int | None
-    upper: int | None
-
-
-def _intersect_bounds(bounds: Sequence[EmployeeCountBounds]) -> EmployeeCountBounds:
-    return EmployeeCountBounds(
-        max((value.lower for value in bounds if value.lower is not None), default=None),
-        min((value.upper for value in bounds if value.upper is not None), default=None),
-    )
-
-
-def _contradictory(bounds: EmployeeCountBounds) -> bool:
-    return (
-        bounds.lower is not None
-        and bounds.upper is not None
-        and bounds.lower > bounds.upper
-    )
-
-
-def _fact_bounds(fact: EmployeeCountFact) -> EmployeeCountBounds | None:
+def _fact_bounds(fact: EmployeeCountFact) -> tuple[int | None, int | None] | None:
     match fact.relation:
         case "exact":
-            return EmployeeCountBounds(fact.value, fact.value)
+            return fact.value, fact.value
         case "greater_than":
-            return EmployeeCountBounds(fact.value + 1, None)
+            return fact.value + 1, None
         case "greater_than_or_equal":
-            return EmployeeCountBounds(fact.value, None)
+            return fact.value, None
         case "less_than":
-            return EmployeeCountBounds(None, fact.value - 1)
+            return None, fact.value - 1
         case "less_than_or_equal":
-            return EmployeeCountBounds(None, fact.value)
+            return None, fact.value
         case "approximately":
             return None
 
 
-def _select_size_facts(
-    facts: Sequence[EmployeeCountFact], as_of_year: int
-) -> tuple[list[EmployeeCountFact], str]:
-    scopes = {fact.scope for fact in facts}
-    if len(scopes) != 1 or "regional" in scopes:
-        return [], "Company-size facts have incomparable or regional scopes."
-    if any(fact.year is not None and fact.year > as_of_year for fact in facts):
-        return [], "Company-size facts include future-year observations."
-    latest = max((fact.year for fact in facts if fact.year is not None), default=None)
-    selected = [fact for fact in facts if fact.year is None or fact.year == latest]
-    note = ""
-    if latest is not None:
-        note = (
-            f" Using the latest dated observations ({latest}) and any undated evidence."
-        )
-        if len(selected) < len(facts):
-            note += " Older dated observations were superseded."
-    return selected, note
-
-
-def _describe_size(bounds: EmployeeCountBounds) -> str:
-    if bounds.lower == bounds.upper:
-        return f"{bounds.lower} employees"
-    if bounds.upper is None:
-        return f"at least {bounds.lower} employees"
-    if bounds.lower is None:
-        return f"at most {bounds.upper} employees"
-    return f"between {bounds.lower} and {bounds.upper} employees"
-
-
-def _evaluate_size(
-    criterion: CampaignCriterion, bounds: EmployeeCountBounds
-) -> tuple[QualificationStatus, str]:
+def _fact_proves_size_predicate(
+    criterion: CampaignCriterion, fact: EmployeeCountFact
+) -> QualificationStatus | None:
     threshold = criterion.size_value
     if threshold is None:
         raise ValueError("Company-size criterion needs a threshold")
-    prefix = f"Validated evidence establishes {_describe_size(bounds)}"
-    if (
-        criterion.size_bound == "min"
-        and bounds.upper is not None
-        and bounds.upper < threshold
-    ):
-        return (
-            QualificationStatus.MISMATCH,
-            f"{prefix}, below the campaign minimum of {threshold}.",
-        )
-    if (
-        criterion.size_bound == "max"
-        and bounds.lower is not None
-        and bounds.lower > threshold
-    ):
-        return (
-            QualificationStatus.MISMATCH,
-            f"{prefix}, exceeding the campaign maximum of {threshold}.",
-        )
-    bound_met = (
-        bounds.lower is not None and bounds.lower >= threshold
-        if criterion.size_bound == "min"
-        else bounds.upper is not None and bounds.upper <= threshold
-    )
-    if bound_met:
-        constraint = f"{'minimum' if criterion.size_bound == 'min' else 'maximum'} of {threshold}"
-        return (
-            QualificationStatus.MATCH,
-            f"{prefix}, satisfying the campaign {constraint}.",
-        )
-    return QualificationStatus.UNKNOWN, (
-        "Available company-size evidence does not establish whether the company "
-        "satisfies the campaign size constraint."
-    )
+    bounds = _fact_bounds(fact)
+    if bounds is None:
+        return None
+    lower, upper = bounds
+    if criterion.size_bound == "min":
+        if lower is not None and lower >= threshold:
+            return QualificationStatus.MATCH
+        if fact.scope != "regional" and upper is not None and upper < threshold:
+            return QualificationStatus.MISMATCH
+        return None
+    if lower is not None and lower > threshold:
+        return QualificationStatus.MISMATCH
+    if fact.scope != "regional" and upper is not None and upper <= threshold:
+        return QualificationStatus.MATCH
+    return None
 
 
 def _qualify_size(
@@ -140,31 +68,42 @@ def _qualify_size(
     as_of_year: int,
 ) -> CriterionQualification:
     employee_facts = facts.employee_counts if facts is not None else []
+    eligible_facts = [
+        fact
+        for fact in employee_facts
+        if fact.year is None or fact.year <= as_of_year
+    ]
+    proven = [
+        (fact, result)
+        for fact in eligible_facts
+        if (result := _fact_proves_size_predicate(criterion, fact)) is not None
+    ]
+    preferred_status = (
+        QualificationStatus.MATCH
+        if criterion.size_bound == "min"
+        else QualificationStatus.MISMATCH
+    )
+    decisive = [item for item in proven if item[1] is preferred_status]
+    if not decisive:
+        decisive = proven
+    status = decisive[0][1] if decisive else QualificationStatus.UNKNOWN
     ids = sorted(
-        {evidence_id for fact in employee_facts for evidence_id in fact.evidence_ids},
+        {
+            evidence_id
+            for fact, _ in decisive
+            for evidence_id in fact.evidence_ids
+        },
         key=str,
     )
-    status = QualificationStatus.UNKNOWN
-    reason = "No validated company-size facts are available."
-    if employee_facts:
-        selected, note = _select_size_facts(employee_facts, as_of_year)
-        if not selected:
-            reason = note
-        else:
-            parsed = [_fact_bounds(fact) for fact in selected]
-            bounds = _intersect_bounds([value for value in parsed if value is not None])
-            if _contradictory(bounds):
-                reason = (
-                    "Available evidence contains conflicting company-size information."
-                )
-            elif all(value is not None for value in parsed):
-                status, reason = _evaluate_size(criterion, bounds)
-            else:
-                reason = (
-                    "Available company-size evidence is approximate or otherwise "
-                    "insufficient for the campaign constraint."
-                )
-            reason += note
+    if status is QualificationStatus.UNKNOWN:
+        reason = (
+            "No validated company-size evidence establishes whether the company "
+            "satisfies the campaign size constraint."
+        )
+    elif status is QualificationStatus.MATCH:
+        reason = "Validated employee-count evidence establishes the campaign size constraint."
+    else:
+        reason = "Validated employee-count evidence violates the campaign size constraint."
     return CriterionQualification(
         "company_size", criterion.subject, status, ids, reason
     )

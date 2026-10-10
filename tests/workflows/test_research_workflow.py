@@ -2920,7 +2920,7 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
     state.update(qualification_result)
     result = qualification_result["company_qualifications"][company_id]
     assert result.criteria[0].status is (
-        QualificationStatus.MISMATCH
+        QualificationStatus.MATCH
         if outcome == "facts"
         else QualificationStatus.UNKNOWN
     )
