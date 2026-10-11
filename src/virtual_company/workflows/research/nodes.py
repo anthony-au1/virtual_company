@@ -794,6 +794,7 @@ class ResearchNodes:
             if state.get("company_search_started", False)
             else "discovery_reuse"
         )
+        telemetry_phase = "FOLLOWUP" if adaptive_mode else "INITIAL"
         for company in active_companies:
             investigation = investigations.get(
                 company.id, CompanyInvestigationState(company_id=company.id)
@@ -860,17 +861,65 @@ class ResearchNodes:
                 for _, result in ordered
                 if normalize_fetch_url(result.url) not in preferred_keys
             ]
+            preferred_positions = {
+                normalize_fetch_url(source.url): position
+                for position, source in enumerate(sources, start=1)
+            }
+            merged_positions = {
+                normalize_fetch_url(result.url): index + 1
+                for index, result in unique_results
+            }
+            candidate_decisions = []
+            for candidate_position, result in enumerate(candidate_pool, start=1):
+                normalized_url = normalize_fetch_url(result.url)
+                candidate_decisions.append(
+                    {
+                        "normalized_url": normalized_url,
+                        "merged_pool_position": merged_positions[normalized_url],
+                        "selection_score": self._source_selection_score(
+                            result, company, targets
+                        ),
+                        "matched_unresolved_targets": [
+                            (
+                                f"{target.criterion}/{target.subject}"
+                                if target.subject
+                                else target.criterion
+                            )
+                            for target in targets
+                            if self._result_matches_target(result, target)
+                        ],
+                        "preferred": normalized_url in preferred_keys,
+                        "preferred_position": preferred_positions.get(normalized_url),
+                        "candidate_position": candidate_position,
+                        "fetch_target": fetch_target,
+                    }
+                )
             selected[company.id] = sources
             candidates[company.id] = candidate_pool
             with observability.context(
                 company_id=str(company.id), company_domain=company.domain
             ):
+                selection_metadata = {
+                    "company_id": str(company.id),
+                    "company_name": company.name,
+                    "research_phase": telemetry_phase,
+                    "fetch_phase": fetch_phase,
+                    "fetch_target": fetch_target,
+                    "candidate_decisions": candidate_decisions,
+                }
+                with observability.span(
+                    "company_source_selection", **selection_metadata
+                ):
+                    pass
                 observability.event(
                     "company_sources_selected",
+                    company_name=company.name,
                     available_source_count=len(unique_results),
                     selected_source_count=len(sources),
                     fetch_target=fetch_target,
                     fetch_phase=fetch_phase,
+                    research_phase=telemetry_phase,
+                    candidate_decisions=candidate_decisions,
                 )
                 observability.record(
                     "company_research_sources_selected_total",
@@ -925,6 +974,8 @@ class ResearchNodes:
             if state.get("company_search_started", False)
             else "discovery_reuse"
         )
+        telemetry_phase = "FOLLOWUP" if state.get("adaptive_mode", False) else "INITIAL"
+        companies_by_id = {company.id: company for company in active_companies}
         successes: dict[tuple[UUID, int], WebPage] = {}
         failures: dict[tuple[UUID, int], WebFetchError] = {}
         attempted_indices: dict[UUID, set[int]] = {
@@ -975,6 +1026,7 @@ class ResearchNodes:
                         with observability.context(
                             company_id=str(company_id),
                             source_url=source.url,
+                            normalized_source_url=normalized_url,
                             fetch_attempt=attempt_number,
                             fetch_retry=attempt_number > 1,
                         ):
@@ -1054,6 +1106,13 @@ class ResearchNodes:
             candidates_exhausted = (
                 not target_reached and next_candidate[company_id] >= candidate_count
             )
+            stop_reason = (
+                "SUCCESS_TARGET_REACHED"
+                if target_reached
+                else "CANDIDATES_EXHAUSTED"
+                if candidates_exhausted
+                else None
+            )
             additional_attempts = sum(
                 index >= preferred_counts[company_id]
                 for index in attempted_indices[company_id]
@@ -1068,11 +1127,57 @@ class ResearchNodes:
                 "candidates_exhausted": candidates_exhausted,
                 "additional_candidate_attempts": additional_attempts,
             }
+            candidate_outcomes = []
+            for index, source in enumerate(sources_by_company[company_id]):
+                normalized_url = self._source_state_key(source.url)
+                key = (company_id, index)
+                if key in successes:
+                    outcome = "ATTEMPTED_SUCCESS"
+                elif key in failures:
+                    outcome = "ATTEMPTED_FAILED"
+                elif target_reached:
+                    outcome = "NOT_ATTEMPTED_TARGET_REACHED"
+                else:
+                    outcome = "NOT_ATTEMPTED_CANDIDATES_EXHAUSTED"
+                candidate_outcomes.append(
+                    {
+                        "normalized_url": normalized_url,
+                        "candidate_position": index + 1,
+                        "preferred": index < preferred_counts[company_id],
+                        "preferred_position": index + 1
+                        if index < preferred_counts[company_id]
+                        else None,
+                        "fetch_target": fetch_target,
+                        "outcome": outcome,
+                    }
+                )
             batch_stats[company_id] = stats
+            company = companies_by_id[company_id]
+            with observability.context(
+                company_id=str(company_id),
+                company_name=company.name,
+                company_domain=company.domain,
+            ):
+                fetch_metadata = {
+                    "company_id": str(company_id),
+                    "company_name": company.name,
+                    "research_phase": telemetry_phase,
+                    "fetch_phase": fetch_phase,
+                    "fetch_target": fetch_target,
+                    "candidate_outcomes": candidate_outcomes,
+                    "target_reached": target_reached,
+                    "candidates_exhausted": candidates_exhausted,
+                    "stop_reason": stop_reason,
+                }
+                with observability.span("company_source_fetch_batch", **fetch_metadata):
+                    pass
             observability.event(
                 "company_sources_fetch_batch_completed",
                 company_id=str(company_id),
                 fetch_phase=fetch_phase,
+                research_phase=telemetry_phase,
+                candidate_outcomes=candidate_outcomes,
+                stop_reason=stop_reason,
                 **stats,
             )
             observability.event(

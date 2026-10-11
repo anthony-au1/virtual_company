@@ -318,11 +318,13 @@ class ResearchFake:
 class ObservabilityFake:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, object]]] = []
+        self.spans: list[tuple[str, dict[str, object]]] = []
 
     def context(self, **_: object):
         return nullcontext()
 
-    def span(self, *_: object, **__: object):
+    def span(self, name: str, **attributes: object):
+        self.spans.append((name, attributes))
         return nullcontext()
 
     def event(self, name: str, **context: object) -> None:
@@ -1819,6 +1821,105 @@ async def test_fetch_uses_ranked_candidates_until_success_target_is_reached() ->
         "candidates_exhausted": False,
         "additional_candidate_attempts": 2,
     }
+
+
+@pytest.mark.asyncio
+async def test_source_selection_and_fetch_emit_correlated_candidate_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    preferred = SearchResult(
+        title="Acme Java employees",
+        url="https://ACME.example/java/?utm_source=test",
+        snippet="Acme uses Java.",
+    )
+    backfill = SearchResult(
+        title="Industry profile",
+        url="https://other.example/profile",
+        snippet="Company profile.",
+    )
+    unattempted = SearchResult(
+        title="Company overview",
+        url="https://third.example/overview",
+        snippet="Company overview.",
+    )
+    telemetry = ObservabilityFake()
+    monkeypatch.setattr(
+        "virtual_company.workflows.research.nodes.get_observability",
+        lambda: telemetry,
+    )
+    fetch = FetchFake({preferred.url: WebFetchHttpError(403)})
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._web_fetch = fetch
+    nodes._company_research_successful_fetch_target_per_company = 1
+    state = {
+        "research_companies": [company],
+        "company_search_results": {
+            company.id: [preferred, backfill, unattempted]
+        },
+        "criterion_qualifications": {
+            company.id: [
+                CriterionQualification(
+                    "technology",
+                    "Java",
+                    QualificationStatus.UNKNOWN,
+                    [],
+                    "Missing",
+                )
+            ]
+        },
+    }
+
+    selection = await nodes.select_company_sources(state)  # type: ignore[arg-type]
+    selection_event = next(
+        fields
+        for name, fields in telemetry.events
+        if name == "company_sources_selected"
+    )
+    decisions = selection_event["candidate_decisions"]
+    assert isinstance(decisions, list)
+    assert decisions[0] == {
+        "normalized_url": "https://acme.example/java",
+        "merged_pool_position": 1,
+        "selection_score": nodes._source_selection_score(
+            preferred,
+            company,
+            state["criterion_qualifications"][company.id],
+        ),
+        "matched_unresolved_targets": ["technology/Java"],
+        "preferred": True,
+        "preferred_position": 1,
+        "candidate_position": 1,
+        "fetch_target": 1,
+    }
+    assert decisions[1]["preferred"] is False
+    assert decisions[1]["candidate_position"] == 2
+    assert decisions[2]["preferred"] is False
+
+    await nodes.fetch_company_sources(
+        {"research_companies": [company], **selection}  # type: ignore[arg-type]
+    )
+    fetch_event = next(
+        fields
+        for name, fields in telemetry.events
+        if name == "company_sources_fetch_batch_completed"
+    )
+    outcomes = fetch_event["candidate_outcomes"]
+    assert isinstance(outcomes, list)
+    assert [item["normalized_url"] for item in outcomes] == [
+        "https://acme.example/java",
+        "https://other.example/profile",
+        "https://third.example/overview",
+    ]
+    assert [item["outcome"] for item in outcomes] == [
+        "ATTEMPTED_FAILED",
+        "ATTEMPTED_SUCCESS",
+        "NOT_ATTEMPTED_TARGET_REACHED",
+    ]
+    assert fetch_event["stop_reason"] == "SUCCESS_TARGET_REACHED"
+    assert any(name == "company_source_selection" for name, _ in telemetry.spans)
+    assert any(name == "company_source_fetch_batch" for name, _ in telemetry.spans)
 
 
 @pytest.mark.asyncio
