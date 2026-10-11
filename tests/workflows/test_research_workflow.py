@@ -683,7 +683,7 @@ def test_ranking_payload_keeps_same_url_records_with_different_content_distinct(
 def test_evidence_extraction_prompt_requires_exact_technology_support() -> None:
     prompt = extract_company_evidence_system_prompt().lower()
 
-    assert EXTRACT_COMPANY_EVIDENCE_PROMPT.version == "v2"
+    assert EXTRACT_COMPANY_EVIDENCE_PROMPT.version == "v3"
     assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v3"
     assert "exact technology requested" in prompt
     assert "different or longer technology name is not independent support" in prompt
@@ -694,6 +694,88 @@ def test_evidence_extraction_prompt_requires_exact_technology_support() -> None:
     assert "java ee alone does not establish java" in prompt
     assert "when uncertain, emit no evidence for that technology" in prompt
     assert "springboot/spring-boot/spring_boot for spring boot" in prompt
+    assert "review the page exhaustively" in prompt
+    assert "emit a separate evidence item for every requested criterion or subject" in prompt
+    assert "reusing the same exact excerpt is allowed" in prompt
+    assert "an explicit mention of spring framework supports a requested spring criterion" in prompt
+    assert "spring boot alone does not establish spring" in prompt
+    assert "kafka streams alone does not establish kafka" in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_text", "requested", "emitted", "expected"),
+    [
+        (
+            "The platform uses Spring Framework and Spring Boot.",
+            ["spring", "spring boot"],
+            ["spring", "spring boot"],
+            {"spring", "spring boot"},
+        ),
+        (
+            "The platform uses Spring Boot.",
+            ["spring", "spring boot"],
+            ["spring boot"],
+            {"spring boot"},
+        ),
+        (
+            "The backend is built using the Spring Framework.",
+            ["spring", "spring boot"],
+            ["spring"],
+            {"spring"},
+        ),
+        (
+            "The backend uses Java, Spring Framework, Spring Boot and Kafka.",
+            ["java", "spring", "spring boot", "kafka"],
+            ["java", "spring", "spring boot", "kafka"],
+            {"java", "spring", "spring boot", "kafka"},
+        ),
+        (
+            "Java, J2 EE, Spring Framework, Spring Boot and Hibernate.",
+            ["spring", "spring boot"],
+            ["spring", "spring boot"],
+            {"spring", "spring boot"},
+        ),
+    ],
+)
+async def test_evidence_extraction_preserves_all_explicit_technology_subjects(
+    source_text: str,
+    requested: list[str],
+    emitted: list[str],
+    expected: set[str],
+) -> None:
+    model = campaign()
+    model.technologies = requested
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    page = WebPage(
+        url="https://acme.example/engineering",
+        title="Engineering",
+        content=source_text,
+    )
+    extracted = [
+        ExtractedEvidence(
+            criterion=EvidenceCriterion.TECHNOLOGY,
+            subject=subject,
+            claim=f"Acme uses {subject}.",
+            evidence_text=source_text,
+        )
+        for subject in emitted
+    ]
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._extraction_llm = EvidenceExtractionFake({page.url: extracted})
+
+    output = await nodes.extract_company_evidence(
+        {
+            "campaign": CampaignCriteria.model_validate(model),
+            "research_run_id": uuid4(),
+            "research_companies": [company],
+            "company_web_pages": {company.id: [page]},
+        }
+    )
+
+    evidence = output["validated_evidence"]
+    assert {item.subject.casefold() for item in evidence} == expected
+    assert all(item.evidence_text == source_text for item in evidence)
 
 
 @pytest.mark.asyncio

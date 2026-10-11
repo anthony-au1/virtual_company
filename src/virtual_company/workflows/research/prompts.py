@@ -39,7 +39,7 @@ SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v2")
 EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v1")
 RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v5")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v4")
-EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v2")
+EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v3")
 FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity(
     "generate_followup_company_queries", "v4"
 )
@@ -286,17 +286,27 @@ def extract_company_evidence_system_prompt() -> str:
         "knowledge and do not infer facts that are merely plausible. Extract only positive, "
         "campaign-relevant evidence for target market/geography, industry, technologies, or "
         "company size. Return an empty evidence list when there is no supported evidence. "
-        "For every item, select the constrained criterion, provide a concise factual claim, "
+        "Review the page exhaustively against every requested campaign criterion. For every "
+        "supported item, select the constrained criterion, provide a concise factual claim, "
         "and copy the smallest useful supporting excerpt exactly from the page. The excerpt "
         "MUST occur in the supplied page content. Do not treat a missing technology as negative "
         "evidence. Do not invent URLs, employee counts, headquarters, or unsupported technology. "
-        "For technology, Evidence must establish the EXACT technology requested by the "
+        "A single grounded excerpt may independently support multiple requested criteria or "
+        "technology subjects. Emit a separate Evidence item for every requested criterion or "
+        "subject that the text explicitly supports; reusing the same exact excerpt is allowed. "
+        "Do not omit an explicitly supported subject just because the excerpt already supports "
+        "another one. Never create Evidence for a criterion merely because a related criterion "
+        "was found. For technology, Evidence must establish the EXACT technology requested by the "
         "campaign criterion. A requested name appearing only as part of a different or "
         "longer technology name is not independent support. Normalize spelling and "
         "formatting only, not meaning. Do not infer related technologies, parent/child "
         "technologies, products, frameworks, distributions, or familiar real-world "
-        "relationships. For example, Spring Boot alone does not establish Spring; Apache "
-        "Kafka alone does not establish Kafka; Java EE alone does not establish Java. Apply "
+        "relationships. An explicit mention of Spring Framework supports a requested Spring "
+        "criterion, and an explicit mention of Spring Boot supports a requested Spring Boot "
+        "criterion; when both are present, emit both independently. Spring Boot alone does "
+        "not establish Spring. Apache "
+        "Kafka alone does not establish Kafka; Kafka Streams alone does not establish Kafka; "
+        "Java EE alone does not establish Java. Apply "
         "this rule generally, not only to these examples. When uncertain, emit no Evidence "
         "for that technology. Use the matching campaign technology label as the subject; "
         "harmless spelling, spacing, or punctuation variants of that same technology may "

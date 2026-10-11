@@ -41,7 +41,7 @@ class ExaWebSearchTool:
         try:
             response = await self._client.search(
                 query,
-                type="auto",
+                type="instant",
                 num_results=limit,
                 contents={"highlights": {"max_characters": EXA_HIGHLIGHT_MAX_CHARACTERS}},
             )
