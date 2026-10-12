@@ -1,4 +1,4 @@
-"""Research results and human review route tests."""
+"""Research result and run management route tests."""
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from virtual_company.api.dependencies import get_research_results_service
 from virtual_company.main import app
 from virtual_company.services import (
-    ResearchCompanyNotFoundError,
+    ActiveResearchRunError,
     ResearchRunNotFoundError,
 )
 
@@ -20,13 +20,12 @@ class ResearchResultsServiceStub:
         self,
         *,
         results: object = None,
-        review: object = None,
+        delete_result: object = True,
         runs: list[object] | None = None,
     ) -> None:
         self.results = results
-        self.review = review
+        self.delete_result = delete_result
         self.runs = runs or []
-        self.review_args: dict[str, object] | None = None
 
     async def list_runs(self) -> list[object]:
         return self.runs
@@ -36,11 +35,10 @@ class ResearchResultsServiceStub:
             raise self.results
         return self.results
 
-    async def update_review(self, **kwargs: object) -> object:
-        self.review_args = kwargs
-        if isinstance(self.review, Exception):
-            raise self.review
-        return self.review
+    async def delete_run(self, _run_id: object) -> object:
+        if isinstance(self.delete_result, Exception):
+            raise self.delete_result
+        return self.delete_result
 
 
 @pytest.fixture(autouse=True)
@@ -90,7 +88,6 @@ def research_results() -> SimpleNamespace:
                 name="Example",
                 website="https://example.com",
                 qualification_status="QUALIFIED",
-                review_status="UNREVIEWED",
                 summary=counts,
                 criteria=[
                     SimpleNamespace(
@@ -135,7 +132,7 @@ def test_get_results_returns_complete_product_projection() -> None:
         "not_qualified": 0,
         "insufficient_evidence": 0,
     }
-    assert body["companies"][0]["review_status"] == "UNREVIEWED"
+    assert body["companies"][0]["qualification_status"] == "QUALIFIED"
     assert body["companies"][0]["criteria"][0]["evidence"][0]["claim"] == ("Uses Java")
 
 
@@ -157,9 +154,6 @@ def test_list_research_runs_returns_compact_run_summaries() -> None:
             qualified=4,
             not_qualified=3,
             insufficient_evidence=3,
-            accepted=2,
-            rejected=1,
-            unreviewed=7,
         ),
     )
     app.dependency_overrides[get_research_results_service] = lambda: (
@@ -172,6 +166,8 @@ def test_list_research_runs_returns_compact_run_summaries() -> None:
     body = response.json()
     assert len(body) == 1
     assert body[0]["run_id"] == str(run_id)
+    for field in ("created_at", "started_at", "completed_at"):
+        assert datetime.fromisoformat(body[0][field]) == now
     assert body[0]["campaign"] == {
         "id": str(campaign_id),
         "name": "Australian Fintech Java Research",
@@ -183,34 +179,14 @@ def test_list_research_runs_returns_compact_run_summaries() -> None:
         "qualified": 4,
         "not_qualified": 3,
         "insufficient_evidence": 3,
-        "accepted": 2,
-        "rejected": 1,
-        "unreviewed": 7,
     }
 
 
-def test_patch_review_returns_updated_run_scoped_decision() -> None:
-    run_id, company_id = uuid4(), uuid4()
-    service = ResearchResultsServiceStub(
-        review=SimpleNamespace(company_id=company_id, review_status="ACCEPTED")
-    )
+def test_delete_run_returns_no_content() -> None:
+    run_id = uuid4()
+    service = ResearchResultsServiceStub()
     app.dependency_overrides[get_research_results_service] = lambda: service
-
-    response = TestClient(app).patch(
-        f"/api/v1/research-runs/{run_id}/companies/{company_id}/review",
-        json={"status": "ACCEPTED"},
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "company_id": str(company_id),
-        "review_status": "ACCEPTED",
-    }
-    assert service.review_args == {
-        "research_run_id": run_id,
-        "company_id": company_id,
-        "review_status": "ACCEPTED",
-    }
+    assert TestClient(app).delete(f"/api/v1/research-runs/{run_id}").status_code == 204
 
 
 def test_get_results_maps_missing_run_to_not_found() -> None:
@@ -226,33 +202,22 @@ def test_get_results_maps_missing_run_to_not_found() -> None:
     assert response.json() == {"detail": "Research run not found"}
 
 
-@pytest.mark.parametrize(
-    ("error", "detail"),
-    [
-        (ResearchRunNotFoundError("Research run not found"), "Research run not found"),
-        (
-            ResearchCompanyNotFoundError("Company not found in research run"),
-            "Company not found in research run",
-        ),
-    ],
-)
-def test_patch_review_maps_not_found_errors(error: Exception, detail: str) -> None:
+def test_delete_run_maps_missing_and_running_runs() -> None:
     app.dependency_overrides[get_research_results_service] = lambda: (
-        ResearchResultsServiceStub(review=error)
+        ResearchResultsServiceStub(delete_result=False)
     )
-    response = TestClient(app).patch(
-        f"/api/v1/research-runs/{uuid4()}/companies/{uuid4()}/review",
-        json={"status": "REJECTED"},
-    )
+    response = TestClient(app).delete(f"/api/v1/research-runs/{uuid4()}")
     assert response.status_code == 404
-    assert response.json() == {"detail": detail}
-
-
-def test_malformed_ids_and_invalid_review_status_are_rejected() -> None:
-    client = TestClient(app)
-    assert client.get("/api/v1/research-runs/not-a-uuid/results").status_code == 422
-    response = client.patch(
-        f"/api/v1/research-runs/{uuid4()}/companies/{uuid4()}/review",
-        json={"status": "MAYBE"},
+    app.dependency_overrides[get_research_results_service] = lambda: (
+        ResearchResultsServiceStub(delete_result=ActiveResearchRunError("running"))
     )
-    assert response.status_code == 422
+    response = TestClient(app).delete(f"/api/v1/research-runs/{uuid4()}")
+    assert response.status_code == 409
+    assert TestClient(app).get("/api/v1/research-runs/not-a-uuid/results").status_code == 422
+
+
+def test_human_review_route_and_fields_are_absent() -> None:
+    schema = app.openapi()
+    assert not any("/review" in path for path in schema["paths"])
+    assert "ReviewUpdateRequest" not in schema["components"]["schemas"]
+    assert "ReviewResponse" not in schema["components"]["schemas"]

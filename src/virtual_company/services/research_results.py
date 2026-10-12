@@ -1,4 +1,4 @@
-"""Read-only research-result projection and human review updates."""
+"""Read-only research-result projection and run deletion operations."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from virtual_company.domain.qualification import (
     CompanyQualificationStatus,
     QualificationStatus,
 )
-from virtual_company.domain.review import ReviewStatus
 from virtual_company.repositories.company_qualification import (
     CompanyQualificationRepository,
 )
@@ -25,8 +24,8 @@ class ResearchRunNotFoundError(LookupError):
     """Raised when a requested research run does not exist."""
 
 
-class ResearchCompanyNotFoundError(LookupError):
-    """Raised when a company has no result within the requested run."""
+class ActiveResearchRunError(ValueError):
+    """Raised when an active run cannot be safely deleted."""
 
 
 @dataclass(frozen=True)
@@ -99,7 +98,6 @@ class CompanyResultView:
     name: str
     website: str | None
     qualification_status: CompanyQualificationStatus
-    review_status: ReviewStatus
     summary: StatusCountsView
     criteria: list[CriterionResultView]
 
@@ -113,20 +111,11 @@ class ResearchResultsView:
 
 
 @dataclass(frozen=True)
-class ReviewResultView:
-    company_id: UUID
-    review_status: ReviewStatus
-
-
-@dataclass(frozen=True)
 class ResearchRunListSummaryView:
     researched: int
     qualified: int
     not_qualified: int
     insufficient_evidence: int
-    accepted: int
-    rejected: int
-    unreviewed: int
 
 
 @dataclass(frozen=True)
@@ -222,7 +211,6 @@ class ResearchResultsService:
                     name=company.name,
                     website=company.website,
                     qualification_status=qualification_status,
-                    review_status=ReviewStatus(snapshot.review_status),
                     summary=self._status_counts(summary_counts),
                     criteria=criteria,
                 )
@@ -270,27 +258,18 @@ class ResearchResultsService:
             companies=companies,
         )
 
-    async def update_review(
-        self,
-        *,
-        research_run_id: UUID,
-        company_id: UUID,
-        review_status: ReviewStatus,
-    ) -> ReviewResultView:
-        if await self._runs.get_by_id(research_run_id) is None:
-            raise ResearchRunNotFoundError("Research run not found")
-        snapshot = await self._qualifications.update_review_status(
-            research_run_id=research_run_id,
-            company_id=company_id,
-            review_status=review_status,
-        )
-        if snapshot is None:
-            raise ResearchCompanyNotFoundError("Company not found in research run")
+    async def delete_run(self, research_run_id: UUID) -> bool:
+        """Delete one terminal run and its exclusively owned result data."""
+        run = await self._runs.get_by_id_for_update(research_run_id)
+        if run is None:
+            return False
+        if run.status == "RUNNING":
+            raise ActiveResearchRunError("A running research run cannot be deleted")
+        await self._evidence.delete_by_research_run_id(research_run_id)
+        await self._qualifications.delete_by_research_run_id(research_run_id)
+        await self._runs.delete(run)
         await self._session.commit()
-        return ReviewResultView(
-            company_id=snapshot.company_id,
-            review_status=ReviewStatus(snapshot.review_status),
-        )
+        return True
 
     @staticmethod
     def _status_counts(

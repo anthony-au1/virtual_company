@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import Company, Evidence, ResearchRun
 from virtual_company.domain.qualification import CompanyQualification
+from virtual_company.repositories.campaign import CampaignRepository
 from virtual_company.repositories.campaign_target import CampaignTargetRepository
 from virtual_company.repositories.company import CompanyRepository
 from virtual_company.repositories.company_qualification import (
@@ -53,6 +54,7 @@ class ResearchService:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+        self._campaigns = CampaignRepository(session)
         self._companies = CompanyRepository(session)
         self._targets = CampaignTargetRepository(session)
         self._runs = ResearchRunRepository(session)
@@ -61,12 +63,17 @@ class ResearchService:
 
     async def create_run(self, campaign_id: UUID) -> ResearchRun:
         """Create and commit a running research execution."""
+        campaign = await self._campaigns.seal_for_research(campaign_id)
+        if campaign is None:
+            raise ValueError("Campaign was not found")
+        created_at = datetime.now(UTC)
         run = await self._runs.create(
             ResearchRunCreate(
                 campaign_id=campaign_id,
                 status="RUNNING",
                 companies_found=0,
-                started_at=datetime.now(UTC),
+                created_at=created_at,
+                started_at=created_at,
             )
         )
         await self._session.commit()

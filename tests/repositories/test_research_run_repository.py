@@ -31,7 +31,7 @@ async def test_list_with_summary_uses_one_grouped_query() -> None:
         technologies=[],
     )
     result_proxy = MagicMock()
-    result_proxy.all.return_value = [(run, campaign, 1, 1, 0, 0, 1, 0, 0)]
+    result_proxy.all.return_value = [(run, campaign, 1, 1, 0, 0)]
     session.execute.return_value = result_proxy
 
     result = await ResearchRunRepository(session).list_with_summary()
@@ -45,9 +45,6 @@ async def test_list_with_summary_uses_one_grouped_query() -> None:
                 "qualified": 1,
                 "not_qualified": 0,
                 "insufficient_evidence": 0,
-                "accepted": 1,
-                "rejected": 0,
-                "unreviewed": 0,
             },
         )
     ]

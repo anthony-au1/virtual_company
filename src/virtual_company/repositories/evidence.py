@@ -39,6 +39,13 @@ class EvidenceRepository:
         statement = select(Evidence).where(Evidence.research_run_id == research_run_id)
         return list(await self._session.scalars(statement))
 
+    async def delete_by_research_run_id(self, research_run_id: UUID) -> None:
+        for evidence in await self._session.scalars(
+            select(Evidence).where(Evidence.research_run_id == research_run_id)
+        ):
+            await self._session.delete(evidence)
+        await self._session.flush()
+
     async def update(self, evidence_id: UUID, data: EvidenceUpdate) -> Evidence | None:
         evidence = await self.get_by_id(evidence_id)
         if evidence is None:

@@ -1,4 +1,4 @@
-"""Persistence of final company qualification snapshots and human review."""
+"""Persistence of final company qualification snapshots."""
 
 from uuid import UUID
 
@@ -7,7 +7,6 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import Company, CompanyQualificationSnapshot
-from virtual_company.domain.review import ReviewStatus
 from virtual_company.repositories.dtos import CompanyQualificationUpsert
 
 
@@ -47,22 +46,10 @@ class CompanyQualificationRepository:
         rows = await self._session.execute(statement)
         return [(snapshot, company) for snapshot, company in rows.all()]
 
-    async def update_review_status(
-        self,
-        *,
-        research_run_id: UUID,
-        company_id: UUID,
-        review_status: ReviewStatus,
-    ) -> CompanyQualificationSnapshot | None:
-        """Set the current human decision for an exact run/company result."""
+    async def delete_by_research_run_id(self, research_run_id: UUID) -> None:
         statement = select(CompanyQualificationSnapshot).where(
-            CompanyQualificationSnapshot.research_run_id == research_run_id,
-            CompanyQualificationSnapshot.company_id == company_id,
+            CompanyQualificationSnapshot.research_run_id == research_run_id
         )
-        snapshot = await self._session.scalar(statement)
-        if snapshot is None:
-            return None
-        snapshot.review_status = review_status.value
+        for snapshot in await self._session.scalars(statement):
+            await self._session.delete(snapshot)
         await self._session.flush()
-        await self._session.refresh(snapshot)
-        return snapshot

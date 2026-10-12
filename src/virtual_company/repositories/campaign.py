@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -26,6 +27,20 @@ class CampaignRepository:
 
     async def get_by_id(self, campaign_id: UUID) -> Campaign | None:
         return await self._session.get(Campaign, campaign_id)
+
+    async def get_by_id_for_update(self, campaign_id: UUID) -> Campaign | None:
+        return await self._session.scalar(
+            select(Campaign).where(Campaign.id == campaign_id).with_for_update()
+        )
+
+    async def seal_for_research(self, campaign_id: UUID) -> Campaign | None:
+        campaign = await self.get_by_id_for_update(campaign_id)
+        if campaign is None:
+            return None
+        if campaign.sealed_at is None:
+            campaign.sealed_at = datetime.now(UTC)
+            await self._session.flush()
+        return campaign
 
     async def list(self) -> list[Campaign]:
         return list(await self._session.scalars(select(Campaign)))

@@ -23,9 +23,5 @@ Any criterion mismatch makes a company `NOT_QUALIFIED`. With no mismatch, any un
 yields `INSUFFICIENT_EVIDENCE`. A company is `QUALIFIED` when every configured
 criterion matches.
 
-# Human lead review
-
-Each final company qualification snapshot has an independent human review status:
-`UNREVIEWED`, `ACCEPTED`, or `REJECTED`. It belongs to one company within one
-research run, may move freely between all three values, and never changes automated
-qualification, criterion results, or evidence.
+Once a Campaign's first Research Run starts, its definition and qualification
+criteria are sealed permanently. Run deletion does not remove the seal.

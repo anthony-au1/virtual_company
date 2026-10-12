@@ -55,6 +55,7 @@ async def test_initial_migration_creates_complete_schema() -> None:
                 assert campaign_columns["technologies"]["nullable"] is False
                 assert "company_size" in campaign_columns
                 assert campaign_columns["max_companies_to_research"]["nullable"] is False
+                assert "sealed_at" in campaign_columns
                 assert "company_size_min" not in campaign_columns
                 assert "company_size_max" not in campaign_columns
                 qualification_columns = {
@@ -64,10 +65,7 @@ async def test_initial_migration_creates_complete_schema() -> None:
                     )
                 }
                 assert "criteria_results" in qualification_columns
-                assert qualification_columns["review_status"]["nullable"] is False
-                assert "UNREVIEWED" in str(
-                    qualification_columns["review_status"]["default"]
-                )
+                assert "review_status" not in qualification_columns
 
             await connection.run_sync(verify)
             revision = (

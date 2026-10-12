@@ -16,6 +16,10 @@ class CampaignLimitValidationError(ValueError):
     """Raised when a campaign research limit is below its qualification target."""
 
 
+class CampaignSealedError(ValueError):
+    """Raised when a sealed campaign's research definition is changed."""
+
+
 class CampaignService:
     """Coordinate campaign persistence operations."""
 
@@ -34,11 +38,31 @@ class CampaignService:
     async def list(self) -> list[Campaign]:
         return await self._campaigns.list()
 
+    async def seal_for_research(self, campaign_id: UUID) -> Campaign | None:
+        """Persist the campaign's first-run seal while holding its row lock."""
+        return await self._campaigns.seal_for_research(campaign_id)
+
     async def update(self, campaign_id: UUID, data: CampaignUpdate) -> Campaign | None:
         async with self._session.begin():
-            current = await self._campaigns.get_by_id(campaign_id)
+            current = await self._campaigns.get_by_id_for_update(campaign_id)
             if current is None:
                 return None
+            definition_fields = {
+                "name",
+                "description",
+                "target_market",
+                "industry",
+                "technologies",
+                "company_size",
+                "target_count",
+                "max_companies_to_research",
+            }
+            changed_fields = data.model_fields_set & definition_fields
+            if current.sealed_at is not None and changed_fields:
+                fields = ", ".join(sorted(changed_fields))
+                raise CampaignSealedError(
+                    f"Campaign research definition is sealed; cannot change: {fields}"
+                )
             target_count = (
                 data.target_count
                 if data.target_count is not None

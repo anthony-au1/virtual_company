@@ -14,9 +14,7 @@ from virtual_company.db.models import (
     Evidence,
     ResearchRun,
 )
-from virtual_company.domain.review import ReviewStatus
 from virtual_company.services.research_results import (
-    ResearchCompanyNotFoundError,
     ResearchResultsService,
 )
 
@@ -27,9 +25,12 @@ def build_service() -> tuple[ResearchResultsService, MagicMock]:
     service = ResearchResultsService(session)
     service._runs.get_by_id_with_campaign = AsyncMock()
     service._runs.get_by_id = AsyncMock()
+    service._runs.get_by_id_for_update = AsyncMock()
     service._qualifications.list_for_run = AsyncMock()
-    service._qualifications.update_review_status = AsyncMock()
     service._evidence.list_by_research_run_id = AsyncMock()
+    service._evidence.delete_by_research_run_id = AsyncMock()
+    service._qualifications.delete_by_research_run_id = AsyncMock()
+    service._runs.delete = AsyncMock()
     return service, session
 
 
@@ -93,7 +94,6 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         campaign_id=campaign.id,
         company_id=company_a.id,
         status="INSUFFICIENT_EVIDENCE",
-        review_status="UNREVIEWED",
         criteria_results={
             "criteria": [
                 {
@@ -127,7 +127,6 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         campaign_id=campaign.id,
         company_id=company_b.id,
         status="QUALIFIED",
-        review_status="ACCEPTED",
         criteria_results={"criteria": []},
         created_at=now,
     )
@@ -168,95 +167,47 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("initial", "updated"),
-    [
-        (ReviewStatus.UNREVIEWED, ReviewStatus.ACCEPTED),
-        (ReviewStatus.UNREVIEWED, ReviewStatus.REJECTED),
-        (ReviewStatus.ACCEPTED, ReviewStatus.REJECTED),
-        (ReviewStatus.ACCEPTED, ReviewStatus.UNREVIEWED),
-        (ReviewStatus.REJECTED, ReviewStatus.ACCEPTED),
-        (ReviewStatus.REJECTED, ReviewStatus.UNREVIEWED),
-    ],
-)
-async def test_all_review_transitions_are_simple_independent_updates(
-    initial: ReviewStatus, updated: ReviewStatus
-) -> None:
+async def test_deleting_one_terminal_run_removes_only_its_owned_data() -> None:
     service, session = build_service()
-    run_id, campaign_id, company_id = (uuid4() for _ in range(3))
-    snapshot = CompanyQualificationSnapshot(
+    run_id = uuid4()
+    sealed_at = datetime.now(UTC)
+    campaign = Campaign(
         id=uuid4(),
-        research_run_id=run_id,
-        campaign_id=campaign_id,
-        company_id=company_id,
-        status="NOT_QUALIFIED",
-        review_status=initial.value,
-        criteria_results={"criteria": [{"unchanged": True}]},
+        name="Sealed campaign",
+        target_count=1,
+        max_companies_to_research=10,
+        status="COMPLETED",
+        technologies=[],
+        sealed_at=sealed_at,
     )
-    original_status = snapshot.status
-    original_criteria = snapshot.criteria_results
-    service._runs.get_by_id.return_value = object()
-
-    async def update(**kwargs: object) -> CompanyQualificationSnapshot:
-        snapshot.review_status = str(kwargs["review_status"])
-        return snapshot
-
-    service._qualifications.update_review_status.side_effect = update
-
-    result = await service.update_review(
-        research_run_id=run_id,
-        company_id=company_id,
-        review_status=updated,
+    run = ResearchRun(
+        id=run_id,
+        campaign_id=campaign.id,
+        campaign=campaign,
+        status="COMPLETED",
     )
+    service._runs.get_by_id_for_update.return_value = run
 
-    assert result.review_status is updated
-    assert snapshot.status == original_status
-    assert snapshot.criteria_results is original_criteria
+    assert await service.delete_run(run_id)
+
+    service._evidence.delete_by_research_run_id.assert_awaited_once_with(run_id)
+    service._qualifications.delete_by_research_run_id.assert_awaited_once_with(run_id)
+    service._runs.delete.assert_awaited_once_with(run)
     session.commit.assert_awaited_once()
+    assert campaign.sealed_at == sealed_at
 
 
 @pytest.mark.asyncio
-async def test_cross_run_company_review_is_rejected() -> None:
+async def test_deleting_run_rejects_active_and_unknown_runs() -> None:
     service, session = build_service()
-    service._runs.get_by_id.return_value = object()
-    service._qualifications.update_review_status.return_value = None
-
-    with pytest.raises(ResearchCompanyNotFoundError):
-        await service.update_review(
-            research_run_id=uuid4(),
-            company_id=uuid4(),
-            review_status=ReviewStatus.ACCEPTED,
-        )
-
+    service._runs.get_by_id_for_update.return_value = ResearchRun(
+        id=uuid4(), campaign_id=uuid4(), status="RUNNING"
+    )
+    with pytest.raises(ValueError, match="running research run cannot be deleted"):
+        await service.delete_run(uuid4())
+    service._evidence.delete_by_research_run_id.assert_not_awaited()
+    service._qualifications.delete_by_research_run_id.assert_not_awaited()
     session.commit.assert_not_awaited()
 
-
-@pytest.mark.parametrize(
-    "qualification_status",
-    ["INSUFFICIENT_EVIDENCE", "NOT_QUALIFIED"],
-)
-@pytest.mark.asyncio
-async def test_non_qualified_company_can_be_accepted(
-    qualification_status: str,
-) -> None:
-    service, _ = build_service()
-    snapshot = CompanyQualificationSnapshot(
-        id=uuid4(),
-        research_run_id=uuid4(),
-        campaign_id=uuid4(),
-        company_id=uuid4(),
-        status=qualification_status,
-        review_status="ACCEPTED",
-        criteria_results={"criteria": []},
-    )
-    service._runs.get_by_id.return_value = object()
-    service._qualifications.update_review_status.return_value = snapshot
-
-    result = await service.update_review(
-        research_run_id=snapshot.research_run_id,
-        company_id=snapshot.company_id,
-        review_status=ReviewStatus.ACCEPTED,
-    )
-
-    assert result.review_status is ReviewStatus.ACCEPTED
-    assert snapshot.status == qualification_status
+    service._runs.get_by_id_for_update.return_value = None
+    assert not await service.delete_run(uuid4())

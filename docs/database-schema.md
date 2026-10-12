@@ -20,6 +20,7 @@ Table: campaign
 | `status`                    | `VARCHAR(30)`   |       NO | campaign status                                 |
 | `created_at`                | `TIMESTAMPTZ`   |       NO | created date                                    |
 | `updated_at`                | `TIMESTAMPTZ`   |       NO | last change date                                |
+| `sealed_at`                 | `TIMESTAMPTZ`   |      YES | first run start; campaign definition is sealed  |
 
 status:
 
@@ -95,16 +96,16 @@ Indexes:
 
 Table: research_run
 
-| Column            | PostgreSQL type | Nullable | Description              |
-|-------------------|-----------------|---------:|--------------------------|
-| `id`              | UUID            |       NO | ID execution             |
-| `campaign_id`     | UUID            |       NO | campaign                 |
-| `status`          | VARCHAR(30)     |       NO | RUNNING/COMPLETED/FAILED |
-| `started_at`      | TIMESTAMPTZ     |       NO | started at               |
-| `completed_at`    | TIMESTAMPTZ     |      YES | completed at             |
-| `error`           | TEXT            |      YES | error text               |
-| `companies_found` | INTEGER         |       NO | companies found          |
-| `created_at`      | TIMESTAMPTZ     |       NO | record creation at       |
+| Column            | PostgreSQL type | Nullable | Description                                 |
+|-------------------|-----------------|---------:|---------------------------------------------|
+| `id`              | UUID            |       NO | ID execution                                |
+| `campaign_id`     | UUID            |       NO | campaign                                    |
+| `status`          | VARCHAR(30)     |       NO | RUNNING/COMPLETED/FAILED                    |
+| `started_at`      | TIMESTAMPTZ     |       NO | execution start time                        |
+| `completed_at`    | TIMESTAMPTZ     |      YES | terminal completion time, including failure |
+| `error`           | TEXT            |      YES | error text                                  |
+| `companies_found` | INTEGER         |       NO | companies found                             |
+| `created_at`      | TIMESTAMPTZ     |       NO | Run record creation time                    |
 
 status:
 
@@ -115,7 +116,7 @@ status:
 Indexes:
 
 - PK (id)
-- FK (company_id) -> company (id)
+- FK (campaign_id) -> campaign (id)
 
 ## Final qualification snapshots
 
@@ -128,7 +129,6 @@ Table: `company_qualifications`
 | `campaign_id`      | UUID            | NO       | FK to campaign(id)                              |
 | `company_id`       | UUID            | NO       | FK to company(id)                               |
 | `status`           | VARCHAR(30)     | NO       | QUALIFIED, NOT_QUALIFIED, INSUFFICIENT_EVIDENCE |
-| `review_status`    | VARCHAR(30)     | NO       | UNREVIEWED, ACCEPTED, REJECTED                  |
 | `criteria_results` | JSONB           | NO       | Object containing a criteria array              |
 | `created_at`       | TIMESTAMPTZ     | NO       | Database timestamp, default now()               |
 
@@ -139,6 +139,5 @@ and reason. No Evidence content is copied. Retries replace status and JSON while
 preserving ID and created_at. Snapshots commit with research-run completion; no
 intermediate rounds or legacy-run backfill are stored.
 
-`review_status` defaults to `UNREVIEWED` and is a human decision scoped to the
-snapshot's `(research_run_id, company_id)`. Qualification snapshot upserts do not
-change it.
+Qualification snapshots contain only the automatic qualification result and
+criterion-level results for that run/company pair.

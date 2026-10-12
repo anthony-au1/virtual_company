@@ -16,7 +16,6 @@ from virtual_company.domain.qualification import (
     CompanyQualificationStatus,
     QualificationStatus,
 )
-from virtual_company.domain.review import ReviewStatus
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
 
 CampaignStatus = Literal["DRAFT", "RUNNING", "PAUSED", "COMPLETED", "FAILED"]
@@ -83,6 +82,7 @@ class CampaignResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    sealed_at: datetime | None
 
 
 class ResearchWorkflowResponse(BaseModel):
@@ -209,7 +209,6 @@ class CompanyResearchResultResponse(BaseModel):
     name: str
     website: str | None
     qualification_status: CompanyQualificationStatus
-    review_status: ReviewStatus
     summary: QualificationCountsResponse
     criteria: list[CriterionResultResponse]
 
@@ -236,9 +235,6 @@ class ResearchRunListSummaryResponse(BaseModel):
     qualified: int
     not_qualified: int
     insufficient_evidence: int
-    accepted: int
-    rejected: int
-    unreviewed: int
 
 
 class ResearchRunListItemResponse(BaseModel):
@@ -249,16 +245,3 @@ class ResearchRunListItemResponse(BaseModel):
     completed_at: datetime | None
     campaign: ResearchRunListCampaignResponse
     summary: ResearchRunListSummaryResponse
-
-
-class ReviewUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    status: ReviewStatus
-
-
-class ReviewResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    company_id: UUID
-    review_status: ReviewStatus

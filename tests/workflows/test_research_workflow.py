@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 from contextlib import nullcontext
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -82,6 +83,11 @@ class CampaignServiceFake:
         self.value = value
 
     async def get_by_id(self, _: UUID) -> Campaign | None:
+        return self.value
+
+    async def seal_for_research(self, _: UUID) -> Campaign | None:
+        if self.value is not None and self.value.sealed_at is None:
+            self.value.sealed_at = datetime.now(UTC)
         return self.value
 
 
@@ -369,6 +375,20 @@ def make_nodes(
         web_fetch=FetchFake({}),
         web_search_concurrency=2,
     )
+
+
+@pytest.mark.asyncio
+async def test_loading_campaign_for_first_run_seals_its_definition() -> None:
+    model = campaign()
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+
+    result = await nodes.load_campaign({"campaign_id": model.id})  # type: ignore[arg-type]
+
+    assert result["campaign"].id == model.id
+    sealed_at = model.sealed_at
+    assert sealed_at is not None
+    await nodes.load_campaign({"campaign_id": model.id})  # type: ignore[arg-type]
+    assert model.sealed_at == sealed_at
 
 
 @pytest.mark.asyncio

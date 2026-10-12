@@ -9,18 +9,18 @@ from virtual_company.services.research import (
     ResearchService,
 )
 from virtual_company.services.research_results import (
-    ResearchCompanyNotFoundError,
+    ActiveResearchRunError,
     ResearchResultsService,
     ResearchRunNotFoundError,
 )
 
 __all__ = [
+    "ActiveResearchRunError",
     "CampaignService",
     "CompanyService",
     "EvidenceService",
     "PersistedCompanies",
     "PersistedEvidence",
-    "ResearchCompanyNotFoundError",
     "ResearchResultsService",
     "ResearchRunNotFoundError",
     "ResearchService",

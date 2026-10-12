@@ -16,7 +16,10 @@ from virtual_company.api.models import (
     ResearchWorkflowResponse,
 )
 from virtual_company.services import CampaignService
-from virtual_company.services.campaign import CampaignLimitValidationError
+from virtual_company.services.campaign import (
+    CampaignLimitValidationError,
+    CampaignSealedError,
+)
 from virtual_company.tools import WebSearchConfigurationError
 from virtual_company.workflows.research import ResearchWorkflow
 from virtual_company.workflows.research.nodes import (
@@ -66,6 +69,10 @@ async def update_campaign(
     except CampaignLimitValidationError as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
+        ) from error
+    except CampaignSealedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(error)
         ) from error
     if campaign is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")

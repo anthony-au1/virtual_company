@@ -33,6 +33,14 @@ class ResearchRunRepository:
     async def get_by_id(self, research_run_id: UUID) -> ResearchRun | None:
         return await self._session.get(ResearchRun, research_run_id)
 
+    async def get_by_id_for_update(self, research_run_id: UUID) -> ResearchRun | None:
+        statement = (
+            select(ResearchRun)
+            .where(ResearchRun.id == research_run_id)
+            .with_for_update()
+        )
+        return await self._session.scalar(statement)
+
     async def get_by_id_with_campaign(
         self, research_run_id: UUID
     ) -> ResearchRun | None:
@@ -49,7 +57,7 @@ class ResearchRunRepository:
     async def list_with_summary(
         self,
     ) -> list[tuple[ResearchRun, Campaign, dict[str, int]]]:
-        """Load runs, campaigns, and grouped qualification/review counts in one query."""
+        """Load runs, campaigns, and grouped qualification counts in one query."""
         snapshot = CompanyQualificationSnapshot
         statement = (
             select(
@@ -64,15 +72,6 @@ class ResearchRunRepository:
                 ),
                 func.count(case((snapshot.status == "INSUFFICIENT_EVIDENCE", 1))).label(
                     "insufficient_evidence"
-                ),
-                func.count(case((snapshot.review_status == "ACCEPTED", 1))).label(
-                    "accepted"
-                ),
-                func.count(case((snapshot.review_status == "REJECTED", 1))).label(
-                    "rejected"
-                ),
-                func.count(case((snapshot.review_status == "UNREVIEWED", 1))).label(
-                    "unreviewed"
                 ),
             )
             .join(Campaign, Campaign.id == ResearchRun.campaign_id)
@@ -90,13 +89,14 @@ class ResearchRunRepository:
                     "qualified": qualified,
                     "not_qualified": not_qualified,
                     "insufficient_evidence": insufficient_evidence,
-                    "accepted": accepted,
-                    "rejected": rejected,
-                    "unreviewed": unreviewed,
                 },
             )
-            for run, campaign, researched, qualified, not_qualified, insufficient_evidence, accepted, rejected, unreviewed in rows
+            for run, campaign, researched, qualified, not_qualified, insufficient_evidence in rows
         ]
+
+    async def delete(self, research_run: ResearchRun) -> None:
+        await self._session.delete(research_run)
+        await self._session.flush()
 
     async def update(
         self, research_run_id: UUID, data: ResearchRunUpdate

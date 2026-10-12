@@ -165,7 +165,7 @@ class ResearchNodes:
         self, state: ResearchWorkflowState
     ) -> dict[str, CampaignCriteria]:
         """Load the campaign into a compact workflow DTO."""
-        campaign = await self._campaigns.get_by_id(state["campaign_id"])
+        campaign = await self._campaigns.seal_for_research(state["campaign_id"])
         if campaign is None:
             raise CampaignNotFoundError("Campaign not found")
         criteria = CampaignCriteria.model_validate(campaign)

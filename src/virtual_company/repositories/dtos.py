@@ -119,6 +119,7 @@ class ResearchRunCreate(BaseModel):
     status: str
     companies_found: int
     started_at: datetime | None = None
+    created_at: datetime | None = None
     completed_at: datetime | None = None
     error: str | None = None
 

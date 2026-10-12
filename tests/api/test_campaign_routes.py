@@ -12,6 +12,7 @@ from virtual_company.api.dependencies import get_campaign_service, get_research_
 from virtual_company.db.models import Campaign
 from virtual_company.main import app
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
+from virtual_company.services.campaign import CampaignSealedError
 from virtual_company.tools import WebSearchNotConfiguredError
 from virtual_company.workflows.research.models import ResearchWorkflowResult
 from virtual_company.workflows.research.nodes import (
@@ -169,6 +170,27 @@ def test_patch_null_clears_nullable_field_and_keeps_omitted_fields_unchanged() -
     assert service.update_data is not None
     assert service.update_data.description is None
     assert service.update_data.model_fields_set == {"description"}
+
+
+def test_patch_maps_sealed_definition_to_conflict() -> None:
+    class SealedCampaignService(CampaignServiceStub):
+        async def update(
+            self, _campaign_id: object, _data: CampaignUpdate
+        ) -> Campaign | None:
+            raise CampaignSealedError("Campaign research definition is sealed")
+
+    app.dependency_overrides[get_campaign_service] = lambda: SealedCampaignService(
+        campaign()
+    )
+
+    response = TestClient(app).patch(
+        f"/api/v1/campaigns/{uuid4()}", json={"technologies": ["Go"]}
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Campaign research definition is sealed"
+    }
 
 
 def test_campaign_status_validation_and_missing_campaign_return_errors() -> None:

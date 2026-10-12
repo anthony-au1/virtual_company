@@ -47,6 +47,7 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        sa.Column("sealed_at", sa.DateTime(timezone=True)),
     )
     op.create_check_constraint(
         "ck_campaign_max_companies_to_research_ge_target_count",
@@ -184,12 +185,6 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("status", sa.String(30), nullable=False),
-        sa.Column(
-            "review_status",
-            sa.String(30),
-            server_default="UNREVIEWED",
-            nullable=False,
-        ),
         sa.Column("criteria_results", postgresql.JSONB(), nullable=False),
         sa.Column(
             "created_at",

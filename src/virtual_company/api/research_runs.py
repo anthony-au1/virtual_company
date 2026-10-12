@@ -1,4 +1,4 @@
-"""Research result and human review HTTP endpoints."""
+"""Research result and run management HTTP endpoints."""
 
 from __future__ import annotations
 
@@ -13,14 +13,12 @@ from virtual_company.api.models import (
     ResearchRunListCampaignResponse,
     ResearchRunListItemResponse,
     ResearchRunListSummaryResponse,
-    ReviewResponse,
-    ReviewUpdateRequest,
 )
 from virtual_company.services import (
-    ResearchCompanyNotFoundError,
     ResearchResultsService,
     ResearchRunNotFoundError,
 )
+from virtual_company.services.research_results import ActiveResearchRunError
 
 router = APIRouter(prefix="/api/v1/research-runs", tags=["research-runs"])
 ResearchResultsServiceDependency = Annotated[
@@ -66,26 +64,18 @@ async def list_research_runs(
     ]
 
 
-@router.patch("/{run_id}/companies/{company_id}/review", response_model=ReviewResponse)
-async def update_company_review(
-    run_id: UUID,
-    company_id: UUID,
-    payload: ReviewUpdateRequest,
-    service: ResearchResultsServiceDependency,
-) -> ReviewResponse:
-    """Replace the user's current decision for a company in one run."""
+@router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_research_run(
+    run_id: UUID, service: ResearchResultsServiceDependency
+) -> None:
+    """Delete one terminal run and its exclusively owned data."""
     try:
-        result = await service.update_review(
-            research_run_id=run_id,
-            company_id=company_id,
-            review_status=payload.status,
+        deleted = await service.delete_run(run_id)
+    except ActiveResearchRunError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(error)
+        ) from error
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Research run not found"
         )
-    except ResearchRunNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except ResearchCompanyNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    return ReviewResponse.model_validate(result)

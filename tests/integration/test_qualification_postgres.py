@@ -1,6 +1,7 @@
 """Opt-in PostgreSQL upsert verification in an isolated temporary schema."""
 
 import os
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -12,15 +13,17 @@ from virtual_company.config import DEFAULT_DATABASE_URL
 from virtual_company.db import Base
 from virtual_company.db.models import (
     Campaign,
+    CampaignTarget,
     Company,
     CompanyQualificationSnapshot,
+    Evidence,
     ResearchRun,
 )
-from virtual_company.domain.review import ReviewStatus
 from virtual_company.repositories.company_qualification import (
     CompanyQualificationRepository,
 )
 from virtual_company.repositories.dtos import CompanyQualificationUpsert
+from virtual_company.services.research_results import ResearchResultsService
 
 
 @pytest.mark.integration
@@ -108,30 +111,117 @@ async def test_committed_snapshots_are_idempotent_and_run_scoped() -> None:
             assert len(rows) == 3
             stored = next(row for row in rows if row.id == identity)
             assert stored.status == "INSUFFICIENT_EVIDENCE"
-            assert stored.review_status == "UNREVIEWED"
             assert stored.criteria_results == {"criteria": []}
             assert stored.created_at.tzinfo is not None
             assert all(
                 row.criteria_results == payload for row in rows if row.id != identity
             )
-            repository = CompanyQualificationRepository(session)
-            await repository.update_review_status(
-                research_run_id=run_a,
-                company_id=company_a,
-                review_status=ReviewStatus.ACCEPTED,
-            )
-            await session.commit()
+            assert stored.status == "INSUFFICIENT_EVIDENCE"
+            assert stored.criteria_results == {"criteria": []}
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(DropSchema(schema, cascade=True, if_exists=True))
+        await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("RUN_QUALIFICATION_DB_TESTS") != "true",
+    reason="Opt-in local PostgreSQL test",
+)
+async def test_deleting_a_run_preserves_campaign_siblings_and_canonical_company() -> None:
+    schema = f"test_run_delete_{uuid4().hex}"
+    engine = create_async_engine(
+        os.getenv("QUALIFICATION_TEST_DATABASE_URL", DEFAULT_DATABASE_URL)
+    )
+    scoped = engine.execution_options(schema_translate_map={None: schema})
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(CreateSchema(schema))
+        async with scoped.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        sessions = async_sessionmaker(scoped, expire_on_commit=False)
+        campaign_id, company_id, run_to_delete, sibling_run = (
+            uuid4() for _ in range(4)
+        )
+        sealed_at = datetime.now(UTC)
         async with sessions() as session:
-            accepted = await session.scalar(
-                select(CompanyQualificationSnapshot).where(
-                    CompanyQualificationSnapshot.research_run_id == run_a,
-                    CompanyQualificationSnapshot.company_id == company_a,
+            session.add(
+                Campaign(
+                    id=campaign_id,
+                    name="Sealed campaign",
+                    target_count=1,
+                    status="COMPLETED",
+                    technologies=[],
+                    sealed_at=sealed_at,
                 )
             )
-            assert accepted is not None
-            assert accepted.review_status == "ACCEPTED"
-            assert accepted.status == "INSUFFICIENT_EVIDENCE"
-            assert accepted.criteria_results == {"criteria": []}
+            session.add(Company(id=company_id, name="Canonical company"))
+            await session.flush()
+            session.add(
+                CampaignTarget(campaign_id=campaign_id, company_id=company_id)
+            )
+            session.add_all(
+                [
+                    ResearchRun(
+                        id=run_id,
+                        campaign_id=campaign_id,
+                        status="COMPLETED",
+                        companies_found=1,
+                    )
+                    for run_id in (run_to_delete, sibling_run)
+                ]
+            )
+            await session.flush()
+            for run_id in (run_to_delete, sibling_run):
+                session.add(
+                    Evidence(
+                        company_id=company_id,
+                        research_run_id=run_id,
+                        claim="Run scoped claim",
+                        evidence_text="Evidence for this execution",
+                        source_url=f"https://example.test/{run_id}",
+                    )
+                )
+                session.add(
+                    CompanyQualificationSnapshot(
+                        research_run_id=run_id,
+                        campaign_id=campaign_id,
+                        company_id=company_id,
+                        status="QUALIFIED",
+                        criteria_results={"criteria": []},
+                    )
+                )
+            await session.commit()
+
+        async with sessions() as session:
+            assert await ResearchResultsService(session).delete_run(run_to_delete)
+
+        async with sessions() as session:
+            assert await session.get(Campaign, campaign_id) is not None
+            assert await session.get(Company, company_id) is not None
+            assert await session.get(ResearchRun, run_to_delete) is None
+            assert await session.get(ResearchRun, sibling_run) is not None
+            assert await session.get(CampaignTarget, (campaign_id, company_id)) is not None
+            assert await session.scalar(
+                select(CompanyQualificationSnapshot).where(
+                    CompanyQualificationSnapshot.research_run_id == sibling_run
+                )
+            ) is not None
+            assert await session.scalar(
+                select(Evidence).where(Evidence.research_run_id == sibling_run)
+            ) is not None
+            assert await session.scalar(
+                select(CompanyQualificationSnapshot).where(
+                    CompanyQualificationSnapshot.research_run_id == run_to_delete
+                )
+            ) is None
+            assert await session.scalar(
+                select(Evidence).where(Evidence.research_run_id == run_to_delete)
+            ) is None
+            campaign = await session.get(Campaign, campaign_id)
+            assert campaign is not None and campaign.sealed_at == sealed_at
     finally:
         async with engine.begin() as connection:
             await connection.execute(DropSchema(schema, cascade=True, if_exists=True))

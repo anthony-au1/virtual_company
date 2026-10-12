@@ -70,3 +70,36 @@ async def test_serializes_existing_results_without_committing(
         ]
     }
     session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_creation_and_terminal_transitions_populate_lifecycle_timestamps() -> None:
+    session = MagicMock(spec=AsyncSession)
+    session.commit = AsyncMock()
+    service = ResearchService(session)
+    service._campaigns.seal_for_research = AsyncMock(return_value=object())
+    created_run = MagicMock()
+    service._runs.create = AsyncMock(return_value=created_run)
+
+    await service.create_run(uuid4())
+
+    create_data = service._runs.create.await_args.args[0]
+    assert create_data.status == "RUNNING"
+    assert create_data.created_at is not None
+    assert create_data.started_at == create_data.created_at
+    assert create_data.completed_at is None
+    session.commit.assert_awaited_once()
+
+    completed_run = MagicMock()
+    service._runs.update = AsyncMock(return_value=completed_run)
+    await service.complete_run(uuid4(), 4)
+    completion = service._runs.update.await_args.args[1]
+    assert completion.status == "COMPLETED"
+    assert completion.completed_at is not None
+
+    service._runs.update = AsyncMock(return_value=completed_run)
+    await service.fail_run(uuid4(), "failure")
+    failure = service._runs.update.await_args.args[1]
+    assert failure.status == "FAILED"
+    assert failure.completed_at is not None
+    assert failure.error == "failure"
