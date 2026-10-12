@@ -19,7 +19,7 @@ from virtual_company.workflows.research.models import (
 )
 
 
-class EvidenceForCoverage(Protocol):
+class ResearchEvidenceForCoverage(Protocol):
     id: UUID
     company_id: UUID
     research_run_id: UUID | None
@@ -29,7 +29,7 @@ class EvidenceForCoverage(Protocol):
 
 def assess_evidence_coverage(
     campaign: CampaignCriteria,
-    evidence: Sequence[EvidenceForCoverage],
+    evidence: Sequence[ResearchEvidenceForCoverage],
     *,
     company_id: UUID,
     research_run_id: UUID,

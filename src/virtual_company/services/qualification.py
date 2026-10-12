@@ -11,10 +11,10 @@ from virtual_company.domain.criteria import (
     campaign_criteria,
 )
 from virtual_company.domain.qualification import (
-    CompanyQualification,
-    CompanyQualificationStatus,
     CriterionQualification,
     QualificationStatus,
+    ResearchCompanyQualification,
+    ResearchCompanyQualificationStatus,
 )
 from virtual_company.research.models import (
     CategoricalEvidenceFact,
@@ -69,9 +69,7 @@ def _qualify_size(
 ) -> CriterionQualification:
     employee_facts = facts.employee_counts if facts is not None else []
     eligible_facts = [
-        fact
-        for fact in employee_facts
-        if fact.year is None or fact.year <= as_of_year
+        fact for fact in employee_facts if fact.year is None or fact.year <= as_of_year
     ]
     proven = [
         (fact, result)
@@ -88,11 +86,7 @@ def _qualify_size(
         decisive = proven
     status = decisive[0][1] if decisive else QualificationStatus.UNKNOWN
     ids = sorted(
-        {
-            evidence_id
-            for fact, _ in decisive
-            for evidence_id in fact.evidence_ids
-        },
+        {evidence_id for fact, _ in decisive for evidence_id in fact.evidence_ids},
         key=str,
     )
     if status is QualificationStatus.UNKNOWN:
@@ -103,7 +97,9 @@ def _qualify_size(
     elif status is QualificationStatus.MATCH:
         reason = "Validated employee-count evidence establishes the campaign size constraint."
     else:
-        reason = "Validated employee-count evidence violates the campaign size constraint."
+        reason = (
+            "Validated employee-count evidence violates the campaign size constraint."
+        )
     return CriterionQualification(
         "company_size", criterion.subject, status, ids, reason
     )
@@ -160,12 +156,12 @@ def qualify_company(
 
 def aggregate_qualification(
     company_id: UUID, criteria: list[CriterionQualification]
-) -> CompanyQualification:
+) -> ResearchCompanyQualification:
     statuses = {item.status for item in criteria}
     if QualificationStatus.MISMATCH in statuses:
-        status = CompanyQualificationStatus.NOT_QUALIFIED
+        status = ResearchCompanyQualificationStatus.NOT_QUALIFIED
     elif QualificationStatus.UNKNOWN in statuses:
-        status = CompanyQualificationStatus.INSUFFICIENT_EVIDENCE
+        status = ResearchCompanyQualificationStatus.INSUFFICIENT_EVIDENCE
     else:
-        status = CompanyQualificationStatus.QUALIFIED
-    return CompanyQualification(company_id, status, criteria)
+        status = ResearchCompanyQualificationStatus.QUALIFIED
+    return ResearchCompanyQualification(company_id, status, criteria)

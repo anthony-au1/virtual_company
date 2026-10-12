@@ -6,8 +6,8 @@ from typing import TypedDict
 from uuid import UUID
 
 from virtual_company.domain.qualification import (
-    CompanyQualification,
     CriterionQualification,
+    ResearchCompanyQualification,
 )
 from virtual_company.research.models import (
     DiscoveredCompany,
@@ -21,7 +21,7 @@ from virtual_company.workflows.research.models import (
     CompanyInvestigationState,
     ExtractedCompanyCandidate,
     ResearchCompany,
-    ValidatedEvidence,
+    ValidatedResearchEvidence,
 )
 
 
@@ -46,12 +46,12 @@ class ResearchWorkflowState(TypedDict):
     company_fetch_batch_stats: dict[UUID, dict[str, object]]
     company_web_pages: dict[UUID, list[WebPage]]
     attributable_company_web_pages: dict[UUID, list[WebPage]]
-    validated_evidence: list[ValidatedEvidence]
+    validated_research_evidence: list[ValidatedResearchEvidence]
     investigations: dict[UUID, CompanyInvestigationState]
     active_company_ids: list[UUID]
     adaptive_mode: bool
     company_search_started: bool
     criterion_qualifications: dict[UUID, list[CriterionQualification]]
     qualification_facts: dict[UUID, QualificationFactsCacheEntry]
-    company_qualifications: dict[UUID, CompanyQualification]
+    research_company_qualifications: dict[UUID, ResearchCompanyQualification]
     error: str | None

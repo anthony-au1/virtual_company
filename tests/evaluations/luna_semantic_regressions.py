@@ -21,8 +21,8 @@ from virtual_company.research.models import (
 )
 from virtual_company.services.qualification import qualify_company
 from virtual_company.services.qualification_evidence_extractor import (
-    EvidenceForExtraction,
     QualificationEvidenceExtractor,
+    ResearchEvidenceForExtraction,
 )
 from virtual_company.workflows.research.prompts import (
     EXTRACT_QUALIFICATION_FACTS_PROMPT,
@@ -250,7 +250,7 @@ def _criterion_id(case: EvaluationCase) -> str:
     )
 
 
-def _evidence(case: EvaluationCase) -> EvidenceForExtraction:
+def _evidence(case: EvaluationCase) -> ResearchEvidenceForExtraction:
     return SimpleNamespace(
         id=uuid5(_NAMESPACE, f"{case.company}/{case.subject}/{case.evidence}"),
         criterion=case.criterion,

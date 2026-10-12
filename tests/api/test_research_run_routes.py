@@ -213,7 +213,10 @@ def test_delete_run_maps_missing_and_running_runs() -> None:
     )
     response = TestClient(app).delete(f"/api/v1/research-runs/{uuid4()}")
     assert response.status_code == 409
-    assert TestClient(app).get("/api/v1/research-runs/not-a-uuid/results").status_code == 422
+    assert (
+        TestClient(app).get("/api/v1/research-runs/not-a-uuid/results").status_code
+        == 422
+    )
 
 
 def test_human_review_route_and_fields_are_absent() -> None:

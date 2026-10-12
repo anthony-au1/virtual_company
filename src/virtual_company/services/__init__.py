@@ -1,13 +1,13 @@
 """Application services coordinating repository operations."""
 
 from virtual_company.services.campaign import CampaignService
-from virtual_company.services.company import CompanyService
-from virtual_company.services.evidence import EvidenceService
 from virtual_company.services.research import (
-    PersistedCompanies,
-    PersistedEvidence,
+    PersistedResearchCompanies,
+    PersistedResearchEvidence,
     ResearchService,
 )
+from virtual_company.services.research_company import ResearchCompanyService
+from virtual_company.services.research_evidence import ResearchEvidenceService
 from virtual_company.services.research_results import (
     ActiveResearchRunError,
     ResearchResultsService,
@@ -17,10 +17,10 @@ from virtual_company.services.research_results import (
 __all__ = [
     "ActiveResearchRunError",
     "CampaignService",
-    "CompanyService",
-    "EvidenceService",
-    "PersistedCompanies",
-    "PersistedEvidence",
+    "PersistedResearchCompanies",
+    "PersistedResearchEvidence",
+    "ResearchCompanyService",
+    "ResearchEvidenceService",
     "ResearchResultsService",
     "ResearchRunNotFoundError",
     "ResearchService",

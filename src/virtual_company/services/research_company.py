@@ -6,15 +6,15 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.db.models import Company
-from virtual_company.repositories.company import CompanyRepository
+from virtual_company.db.models import ResearchCompany
+from virtual_company.repositories.research_company import ResearchCompanyRepository
 
 
-class CompanyService:
+class ResearchCompanyService:
     """Coordinate company retrieval operations."""
 
     def __init__(self, session: AsyncSession) -> None:
-        self._companies = CompanyRepository(session)
+        self._companies = ResearchCompanyRepository(session)
 
-    async def get_by_id(self, company_id: UUID) -> Company | None:
+    async def get_by_id(self, company_id: UUID) -> ResearchCompany | None:
         return await self._companies.get_by_id(company_id)

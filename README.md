@@ -172,8 +172,8 @@ reinterpreting claim or excerpt wording. Size qualification remains a determinis
 comparison over normalized employee-count facts and conservative bounds.
 
 Results and supporting evidence IDs remain in LangGraph's
-`company_qualifications` state and are persisted once all investigations terminate.
-The `company_qualifications` table stores one final snapshot per run/company; retries
+`research_company_qualifications` state and are persisted once all investigations terminate.
+The `research_company_qualifications` table stores one final snapshot per run/company; retries
 replace its status and criterion results without changing its ID or creation time.
 Snapshots commit with run completion. They do not change campaign-target records
 or the public research response. Company qualification spans contain status and criterion
@@ -183,12 +183,12 @@ stops that company's search; unknown required criteria receive priority, followe
 preferred enrichment within the configured investigation rounds. Evidence extraction
 continues to request positive facts and qualification remains deterministic.
 
-Inspect a completed run using the existing singular company table:
+Inspect a completed run using the Research-scoped tables:
 
 ```sql
 SELECT c.name, q.status, q.criteria_results
-FROM company_qualifications q
-JOIN company c ON c.id = q.company_id
+FROM research_company_qualifications q
+JOIN research_company c ON c.id = q.company_id
 WHERE q.research_run_id = :research_run_id
 ORDER BY c.name;
 ```

@@ -9,14 +9,14 @@ from uuid import UUID
 
 from virtual_company.domain.criteria import campaign_criteria, normalize_subject
 from virtual_company.domain.qualification import (
-    CompanyQualification,
-    CompanyQualificationStatus,
     CriterionQualification,
     QualificationStatus,
+    ResearchCompanyQualification,
+    ResearchCompanyQualificationStatus,
 )
 from virtual_company.llm.base import LLMProvider
 from virtual_company.observability import get_observability
-from virtual_company.repositories.dtos import EvidenceCreate
+from virtual_company.repositories.dtos import ResearchEvidenceCreate
 from virtual_company.research.models import (
     DiscoveredCompany,
     EvidenceCriterion,
@@ -41,8 +41,8 @@ from virtual_company.services.qualification import (
     qualify_company,
 )
 from virtual_company.services.qualification_evidence_extractor import (
-    EvidenceForExtraction,
     QualificationEvidenceExtractor,
+    ResearchEvidenceForExtraction,
 )
 from virtual_company.tools.web_fetch import (
     WebFetchError,
@@ -65,7 +65,7 @@ from virtual_company.workflows.research.models import (
     GeneratedSearchQueries,
     InvestigationStopReason,
     ResearchCompany,
-    ValidatedEvidence,
+    ValidatedResearchEvidence,
 )
 from virtual_company.workflows.research.prompts import (
     COMPANY_QUERY_PROMPT,
@@ -352,7 +352,8 @@ class ResearchNodes:
         """Rank and validate one bounded candidate pool once."""
         campaign = self._campaign(state)
         candidate_limit = min(
-            len(state["aggregated_company_candidates"]), campaign.max_companies_to_research
+            len(state["aggregated_company_candidates"]),
+            campaign.max_companies_to_research,
         )
         ranking_candidates = [
             candidate.model_copy(
@@ -421,21 +422,29 @@ class ResearchNodes:
         ]
         existing_companies = list(state.get("research_companies", []))
         existing_ids = {company.id for company in existing_companies}
-        newly_activated = [company for company in activated if company.id not in existing_ids]
+        newly_activated = [
+            company for company in activated if company.id not in existing_ids
+        ]
         research_companies = existing_companies + newly_activated
         discovered_by_id = dict(state.get("discovered_companies_by_id", {}))
         discovered_by_id.update(persisted.discovered_by_company_id)
         investigations = dict(state.get("investigations", {}))
         for company in newly_activated:
-            investigations[company.id] = CompanyInvestigationState(company_id=company.id)
+            investigations[company.id] = CompanyInvestigationState(
+                company_id=company.id
+            )
         pending_count = max(len(pending) - len(batch), 0)
         activation_type = "initial" if not existing_companies else "refill"
         observability = get_observability()
         observability.event(
             "company_candidates_activated",
             activation_type=activation_type,
-            initial_activation_count=(len(newly_activated) if activation_type == "initial" else 0),
-            refill_activation_count=(len(newly_activated) if activation_type == "refill" else 0),
+            initial_activation_count=(
+                len(newly_activated) if activation_type == "initial" else 0
+            ),
+            refill_activation_count=(
+                len(newly_activated) if activation_type == "refill" else 0
+            ),
             activated_candidate_names=[company.name for company in newly_activated],
             activated_candidate_ids=[str(company.id) for company in newly_activated],
             qualified_count=qualified_count,
@@ -445,7 +454,8 @@ class ResearchNodes:
             ranked_pool_count=len(state["discovered_companies"]),
         )
         return {
-            "companies_found": state.get("companies_found", 0) + persisted.companies_found,
+            "companies_found": state.get("companies_found", 0)
+            + persisted.companies_found,
             "research_companies": research_companies,
             "discovered_companies_by_id": discovered_by_id,
             "active_company_ids": [company.id for company in newly_activated],
@@ -457,7 +467,7 @@ class ResearchNodes:
             "company_fetch_batch_stats": {},
             "company_web_pages": {},
             "attributable_company_web_pages": {},
-            "validated_evidence": [],
+            "validated_research_evidence": [],
             "adaptive_mode": False,
             "company_search_started": False,
         }
@@ -821,9 +831,7 @@ class ResearchNodes:
             ordered = sorted(
                 unique_results,
                 key=lambda item: (
-                    -self._source_selection_score(
-                        item[1], company, targets
-                    ),
+                    -self._source_selection_score(item[1], company, targets),
                     item[0],
                 ),
             )
@@ -1191,7 +1199,9 @@ class ResearchNodes:
         context = {
             "candidate_count": sum(len(items) for items in sources_by_company.values()),
             "fetch_target_per_company": fetch_target,
-            "fetch_attempt_count": sum(len(items) for items in attempted_indices.values()),
+            "fetch_attempt_count": sum(
+                len(items) for items in attempted_indices.values()
+            ),
             "web_page_count": sum(len(pages) for pages in pages_by_company.values()),
             "failed_source_count": sum(len(items) for items in failures),
         }
@@ -1220,7 +1230,7 @@ class ResearchNodes:
 
     async def extract_company_evidence(
         self, state: ResearchWorkflowState
-    ) -> dict[str, list[ValidatedEvidence]]:
+    ) -> dict[str, list[ValidatedResearchEvidence]]:
         """Extract and validate page-specific campaign evidence without failing on one page."""
         campaign = self._campaign(state)
         research_run_id = state["research_run_id"]
@@ -1272,7 +1282,7 @@ class ResearchNodes:
         groups = await asyncio.gather(
             *(extract_page(company, page) for company, page in work)
         )
-        validated: list[ValidatedEvidence] = []
+        validated: list[ValidatedResearchEvidence] = []
         extracted_count = 0
         rejected_count = 0
         pages_with_evidence = 0
@@ -1282,11 +1292,13 @@ class ResearchNodes:
                 continue
             successful_pages += 1
             extracted_count += len(extracted)
-            page_validated: list[ValidatedEvidence] = []
+            page_validated: list[ValidatedResearchEvidence] = []
             rejection_reasons: dict[str, int] = {}
             for item in extracted:
-                candidate, rejection_reason = self._validated_evidence_with_reason(
-                    campaign, company, research_run_id, page, item
+                candidate, rejection_reason = (
+                    self._validated_research_evidence_with_reason(
+                        campaign, company, research_run_id, page, item
+                    )
                 )
                 if candidate is not None:
                     page_validated.append(candidate)
@@ -1341,9 +1353,7 @@ class ResearchNodes:
             ]
             fetched_pages = pages_by_company.get(company.id, [])
             raw_fetched_pages = state.get("company_web_pages", {}).get(company.id, [])
-            fetch_stats = state.get("company_fetch_batch_stats", {}).get(
-                company.id, {}
-            )
+            fetch_stats = state.get("company_fetch_batch_stats", {}).get(company.id, {})
             selected_count = int(
                 fetch_stats.get(
                     "candidates_available",
@@ -1369,9 +1379,9 @@ class ResearchNodes:
                     pages_with_evidence_count=len(
                         {item.source_url for item in company_evidence}
                     ),
-                    validated_evidence_count=len(company_evidence),
+                    validated_research_evidence_count=len(company_evidence),
                 )
-        return {"validated_evidence": deduplicated}
+        return {"validated_research_evidence": deduplicated}
 
     async def validate_company_page_attribution(
         self, state: ResearchWorkflowState
@@ -1445,13 +1455,15 @@ class ResearchNodes:
         )
         return {"attributable_company_web_pages": attributable}
 
-    async def persist_evidence(self, state: ResearchWorkflowState) -> dict[str, object]:
+    async def persist_research_evidence(
+        self, state: ResearchWorkflowState
+    ) -> dict[str, object]:
         """Persist validated evidence with run-scoped duplicate protection."""
         research_run_id = state["research_run_id"]
         if research_run_id is None:
             raise ValueError("Research run was not created")
         evidence = [
-            EvidenceCreate(
+            ResearchEvidenceCreate(
                 company_id=item.company_id,
                 research_run_id=item.research_run_id,
                 criterion=item.criterion,
@@ -1461,9 +1473,9 @@ class ResearchNodes:
                 source_url=item.source_url,
                 source_title=item.source_title,
             )
-            for item in state["validated_evidence"]
+            for item in state["validated_research_evidence"]
         ]
-        outcome = await self._research.persist_evidence(
+        outcome = await self._research.persist_research_evidence(
             research_run_id=research_run_id, evidence=evidence
         )
         context = {
@@ -1510,7 +1522,7 @@ class ResearchNodes:
         research_run_id = state["research_run_id"]
         if research_run_id is None:
             raise ValueError("Research run was not created")
-        evidence = await self._research.list_evidence_for_run(research_run_id)
+        evidence = await self._research.list_research_evidence_for_run(research_run_id)
         fact_cache = dict(state.get("qualification_facts", {}))
         evidence_by_company = {
             company.id: [item for item in evidence if item.company_id == company.id]
@@ -1744,12 +1756,12 @@ class ResearchNodes:
         ):
             raise ValueError("Qualification requires all investigations to be terminal")
         campaign = self._campaign(state)
-        results: dict[UUID, CompanyQualification] = {}
+        results: dict[UUID, ResearchCompanyQualification] = {}
         observability = get_observability()
         run_id = state["research_run_id"]
         if run_id is None:
             raise ValueError("Research run was not created")
-        run_evidence = await self._research.list_evidence_for_run(run_id)
+        run_evidence = await self._research.list_research_evidence_for_run(run_id)
         fact_cache = dict(state.get("qualification_facts", {}))
         evidence_by_company = {
             company.id: [item for item in run_evidence if item.company_id == company.id]
@@ -1782,9 +1794,7 @@ class ResearchNodes:
         )
         criterion_qualifications = dict(previous_qualifications)
         for company in state["research_companies"]:
-            evaluated_criteria = qualify_company(
-                campaign, fact_cache[company.id].facts
-            )
+            evaluated_criteria = qualify_company(campaign, fact_cache[company.id].facts)
             criteria = self._preserve_resolved_qualifications(
                 evaluated_criteria,
                 criterion_qualifications.get(company.id),
@@ -1815,7 +1825,7 @@ class ResearchNodes:
                 observability.event("company_qualified", **metadata)
             results[company.id] = result
         return {
-            "company_qualifications": results,
+            "research_company_qualifications": results,
             "qualification_facts": fact_cache,
             "criterion_qualifications": criterion_qualifications,
         }
@@ -1823,7 +1833,7 @@ class ResearchNodes:
     async def _extract_incremental_qualification_facts(
         self,
         campaign: CampaignCriteria,
-        evidence: list[EvidenceForExtraction],
+        evidence: list[ResearchEvidenceForExtraction],
         *,
         previous_entry: QualificationFactsCacheEntry | None,
         previous_qualifications: list[CriterionQualification] | None,
@@ -1898,7 +1908,7 @@ class ResearchNodes:
     @staticmethod
     def _facts_are_stale(
         cached: QualificationFactsCacheEntry | None,
-        evidence: list[EvidenceForExtraction],
+        evidence: list[ResearchEvidenceForExtraction],
     ) -> bool:
         evidence_ids = sorted({item.id for item in evidence}, key=str)
         return (
@@ -1907,7 +1917,7 @@ class ResearchNodes:
             or cached.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
         )
 
-    async def persist_company_qualifications(
+    async def persist_research_company_qualifications(
         self, state: ResearchWorkflowState
     ) -> dict[str, object]:
         """Persist already calculated final results before committing the run."""
@@ -1923,14 +1933,14 @@ class ResearchNodes:
             raise ValueError(
                 "Qualification persistence requires terminal investigations"
             )
-        results = state["company_qualifications"]
+        results = state["research_company_qualifications"]
         if set(results) != company_ids or any(
             result.company_id != company_id for company_id, result in results.items()
         ):
             raise ValueError(
                 "Every researched company must have one final qualification"
             )
-        await self._research.persist_company_qualifications(
+        await self._research.persist_research_company_qualifications(
             campaign_id=state["campaign_id"],
             research_run_id=run_id,
             qualifications=list(results.values()),
@@ -1996,8 +2006,8 @@ class ResearchNodes:
     def _qualified_count(state: ResearchWorkflowState) -> int:
         """Count activated companies with a current qualified result."""
         return sum(
-            result.status is CompanyQualificationStatus.QUALIFIED
-            for result in state.get("company_qualifications", {}).values()
+            result.status is ResearchCompanyQualificationStatus.QUALIFIED
+            for result in state.get("research_company_qualifications", {}).values()
         )
 
     @classmethod
@@ -2027,18 +2037,12 @@ class ResearchNodes:
         state: ResearchWorkflowState, company_id: UUID
     ) -> list[CriterionQualification]:
         criteria = state.get("criterion_qualifications", {}).get(company_id, [])
-        return [
-            item
-            for item in criteria
-            if item.status is QualificationStatus.UNKNOWN
-        ]
+        return [item for item in criteria if item.status is QualificationStatus.UNKNOWN]
 
     @staticmethod
     def _target_keys(criteria: list[CriterionQualification]) -> set[str]:
         return {
-            "|".join(
-                (item.criterion, normalize_subject(item.criterion, item.subject))
-            )
+            "|".join((item.criterion, normalize_subject(item.criterion, item.subject)))
             for item in criteria
         }
 
@@ -2074,9 +2078,7 @@ class ResearchNodes:
         return result[-60:]
 
     @staticmethod
-    def _query_matches_target(
-        query: str, target: CriterionQualification
-    ) -> bool:
+    def _query_matches_target(query: str, target: CriterionQualification) -> bool:
         searchable = " ".join(query.casefold().split())
         subject = " ".join((target.subject or "").casefold().split())
         if target.criterion == EvidenceCriterion.COMPANY_SIZE.value:
@@ -2123,15 +2125,19 @@ class ResearchNodes:
             explicitly_unresolved = any(
                 cls._query_matches_target(query, target) for target in targets
             )
-            if key and key not in seen and not (
-                explicitly_resolved and not explicitly_unresolved
+            if (
+                key
+                and key not in seen
+                and not (explicitly_resolved and not explicitly_unresolved)
             ):
                 candidates.append(query)
                 seen.add(key)
 
         selected: list[str] = []
         selected_keys: set[str] = set()
-        for target in cls._prioritize_targets_by_history(list(targets), attempted_queries):
+        for target in cls._prioritize_targets_by_history(
+            list(targets), attempted_queries
+        ):
             candidate = next(
                 (
                     query
@@ -2169,7 +2175,12 @@ class ResearchNodes:
                 focus = "official company sources"
             elif any(
                 token in searchable
-                for token in ("architecture", "engineering", "technical blog", "migration")
+                for token in (
+                    "architecture",
+                    "engineering",
+                    "technical blog",
+                    "migration",
+                )
             ):
                 focus = "engineering and architecture articles"
             else:
@@ -2184,8 +2195,7 @@ class ResearchNodes:
     ) -> bool:
         if target.criterion == EvidenceCriterion.COMPANY_SIZE.value:
             search_text = " ".join(
-                value.casefold()
-                for value in (result.title, result.snippet or "")
+                value.casefold() for value in (result.title, result.snippet or "")
             )
             return any(
                 token in search_text
@@ -2233,27 +2243,27 @@ class ResearchNodes:
                 break
         return results, contributions
 
-    def _validated_evidence(
+    def _validated_research_evidence(
         self,
         campaign: CampaignCriteria,
         company: ResearchCompany,
         research_run_id: UUID,
         page: WebPage,
         item: ExtractedEvidence,
-    ) -> ValidatedEvidence | None:
+    ) -> ValidatedResearchEvidence | None:
         """Validate that extracted evidence is grounded in the supplied page."""
-        return self._validated_evidence_with_reason(
+        return self._validated_research_evidence_with_reason(
             campaign, company, research_run_id, page, item
         )[0]
 
-    def _validated_evidence_with_reason(
+    def _validated_research_evidence_with_reason(
         self,
         campaign: CampaignCriteria,
         company: ResearchCompany,
         research_run_id: UUID,
         page: WebPage,
         item: ExtractedEvidence,
-    ) -> tuple[ValidatedEvidence | None, str | None]:
+    ) -> tuple[ValidatedResearchEvidence | None, str | None]:
         """Validate one item and return a bounded diagnostic rejection reason."""
 
         excerpt = self._normalize_whitespace(item.evidence_text)
@@ -2267,7 +2277,7 @@ class ResearchNodes:
         if subject is None and item.criterion is not EvidenceCriterion.COMPANY_SIZE:
             return None, "invalid_subject"
         return (
-            ValidatedEvidence(
+            ValidatedResearchEvidence(
                 company_id=company.id,
                 research_run_id=research_run_id,
                 criterion=item.criterion,
@@ -2312,10 +2322,10 @@ class ResearchNodes:
 
     @classmethod
     def _deduplicate_evidence(
-        cls, evidence: list[ValidatedEvidence]
-    ) -> list[ValidatedEvidence]:
+        cls, evidence: list[ValidatedResearchEvidence]
+    ) -> list[ValidatedResearchEvidence]:
         seen: set[tuple[str, ...]] = set()
-        deduplicated: list[ValidatedEvidence] = []
+        deduplicated: list[ValidatedResearchEvidence] = []
         for item in evidence:
             key = (
                 str(item.company_id),
@@ -2396,9 +2406,7 @@ class ResearchNodes:
         if len(exact_matches) == 1:
             return exact_matches[0]
         if len(exact_matches) > 1:
-            return ResearchNodes._disambiguate_ranked_sources(
-                company, exact_matches
-            )
+            return ResearchNodes._disambiguate_ranked_sources(company, exact_matches)
 
         normalized_name = normalize_company_name(company.name)
         normalized_matches = [

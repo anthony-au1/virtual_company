@@ -31,9 +31,7 @@ def campaign(*, sealed_at: datetime | None = None) -> Campaign:
 def service_with(campaign_model: Campaign) -> CampaignService:
     session = MagicMock(spec=AsyncSession)
     service = CampaignService(session)
-    service._campaigns.get_by_id_for_update = AsyncMock(
-        return_value=campaign_model
-    )
+    service._campaigns.get_by_id_for_update = AsyncMock(return_value=campaign_model)
     service._campaigns.update = AsyncMock(return_value=campaign_model)
     return service
 

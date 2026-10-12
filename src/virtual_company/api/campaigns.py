@@ -43,7 +43,9 @@ async def create_campaign(
 @router.get("", response_model=list[CampaignResponse])
 async def list_campaigns(service: CampaignServiceDependency) -> list[CampaignResponse]:
     """List campaigns."""
-    return [CampaignResponse.model_validate(campaign) for campaign in await service.list()]
+    return [
+        CampaignResponse.model_validate(campaign) for campaign in await service.list()
+    ]
 
 
 @router.get("/{campaign_id}", response_model=CampaignResponse)
@@ -53,7 +55,9 @@ async def get_campaign(
     """Retrieve one campaign."""
     campaign = await service.get_by_id(campaign_id)
     if campaign is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
+        )
     return CampaignResponse.model_validate(campaign)
 
 
@@ -75,7 +79,9 @@ async def update_campaign(
             status_code=status.HTTP_409_CONFLICT, detail=str(error)
         ) from error
     if campaign is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
+        )
     return CampaignResponse.model_validate(campaign)
 
 
@@ -84,9 +90,11 @@ async def list_campaign_companies(
     campaign_id: UUID, service: CampaignServiceDependency
 ) -> list[CompanyResponse]:
     """List companies associated with a campaign."""
-    companies = await service.list_companies(campaign_id)
+    companies = await service.list_research_companies(campaign_id)
     if companies is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
+        )
     return [CompanyResponse.model_validate(company) for company in companies]
 
 
@@ -98,7 +106,11 @@ async def research_campaign(
     try:
         result = await workflow.run(campaign_id)
     except CampaignNotFoundError as error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
+        ) from error
     except WebSearchConfigurationError as error:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)
+        ) from error
     return ResearchWorkflowResponse.model_validate(result.model_dump())

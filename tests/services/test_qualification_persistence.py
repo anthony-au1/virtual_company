@@ -7,18 +7,18 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.domain.qualification import (
-    CompanyQualification,
-    CompanyQualificationStatus,
     CriterionQualification,
     QualificationStatus,
+    ResearchCompanyQualification,
+    ResearchCompanyQualificationStatus,
 )
 from virtual_company.services.research import ResearchService
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", list(CompanyQualificationStatus))
+@pytest.mark.parametrize("status", list(ResearchCompanyQualificationStatus))
 async def test_serializes_existing_results_without_committing(
-    status: CompanyQualificationStatus,
+    status: ResearchCompanyQualificationStatus,
 ) -> None:
     session = MagicMock(spec=AsyncSession)
     service = ResearchService(session)
@@ -40,8 +40,8 @@ async def test_serializes_existing_results_without_committing(
             "Missing size",
         ),
     ]
-    result = CompanyQualification(company_id, status, criteria)
-    await service.persist_company_qualifications(
+    result = ResearchCompanyQualification(company_id, status, criteria)
+    await service.persist_research_company_qualifications(
         campaign_id=campaign_id, research_run_id=run_id, qualifications=[result]
     )
     data = service._qualifications.upsert.await_args.args[0]
@@ -73,7 +73,9 @@ async def test_serializes_existing_results_without_committing(
 
 
 @pytest.mark.asyncio
-async def test_run_creation_and_terminal_transitions_populate_lifecycle_timestamps() -> None:
+async def test_run_creation_and_terminal_transitions_populate_lifecycle_timestamps() -> (
+    None
+):
     session = MagicMock(spec=AsyncSession)
     session.commit = AsyncMock()
     service = ResearchService(session)

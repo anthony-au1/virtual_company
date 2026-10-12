@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from virtual_company.db.models import (
     Campaign,
-    CompanyQualificationSnapshot,
+    ResearchCompanyQualification,
     ResearchRun,
 )
 from virtual_company.repositories._helpers import apply_updates, create_values
@@ -58,7 +58,7 @@ class ResearchRunRepository:
         self,
     ) -> list[tuple[ResearchRun, Campaign, dict[str, int]]]:
         """Load runs, campaigns, and grouped qualification counts in one query."""
-        snapshot = CompanyQualificationSnapshot
+        snapshot = ResearchCompanyQualification
         statement = (
             select(
                 ResearchRun,

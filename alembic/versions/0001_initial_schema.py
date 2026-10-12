@@ -55,8 +55,8 @@ def upgrade() -> None:
         "max_companies_to_research >= target_count",
     )
     op.create_table(
-        "company",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        "research_company",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("name", sa.String(500), nullable=False),
         sa.Column("website", sa.String(1000)),
         sa.Column("domain", sa.String(255)),
@@ -77,6 +77,7 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        sa.PrimaryKeyConstraint("id", name="research_company_pkey"),
     )
     op.create_table(
         "research_run",
@@ -115,7 +116,10 @@ def upgrade() -> None:
         sa.Column(
             "company_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("company.id"),
+            sa.ForeignKey(
+                "research_company.id",
+                name="campaign_targets_research_company_id_fkey",
+            ),
             primary_key=True,
         ),
         sa.Column("score", sa.Numeric()),
@@ -128,18 +132,23 @@ def upgrade() -> None:
         ),
     )
     op.create_table(
-        "evidence",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        "research_evidence",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column(
             "company_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("company.id"),
+            sa.ForeignKey(
+                "research_company.id",
+                name="research_evidence_research_company_id_fkey",
+            ),
             nullable=False,
         ),
         sa.Column(
             "research_run_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("research_run.id"),
+            sa.ForeignKey(
+                "research_run.id", name="research_evidence_research_run_id_fkey"
+            ),
         ),
         sa.Column("criterion", sa.String(50)),
         sa.Column("subject", sa.String(500)),
@@ -161,27 +170,41 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        sa.PrimaryKeyConstraint("id", name="research_evidence_pkey"),
     )
-    op.create_index("ix_evidence_research_run_id", "evidence", ["research_run_id"])
+    op.create_index(
+        "ix_research_evidence_research_run_id",
+        "research_evidence",
+        ["research_run_id"],
+    )
     op.create_table(
-        "company_qualifications",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        "research_company_qualifications",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column(
             "research_run_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("research_run.id"),
+            sa.ForeignKey(
+                "research_run.id",
+                name="research_company_qualifications_research_run_id_fkey",
+            ),
             nullable=False,
         ),
         sa.Column(
             "campaign_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("campaign.id"),
+            sa.ForeignKey(
+                "campaign.id",
+                name="research_company_qualifications_campaign_id_fkey",
+            ),
             nullable=False,
         ),
         sa.Column(
             "company_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("company.id"),
+            sa.ForeignKey(
+                "research_company.id",
+                name="research_company_qualifications_research_company_id_fkey",
+            ),
             nullable=False,
         ),
         sa.Column("status", sa.String(30), nullable=False),
@@ -195,16 +218,19 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "research_run_id",
             "company_id",
-            name="uq_company_qualifications_run_company",
+            name="uq_research_company_qualifications_run_company",
         ),
+        sa.PrimaryKeyConstraint("id", name="research_company_qualifications_pkey"),
     )
 
 
 def downgrade() -> None:
-    op.drop_table("company_qualifications")
-    op.drop_index("ix_evidence_research_run_id", table_name="evidence")
-    op.drop_table("evidence")
+    op.drop_table("research_company_qualifications")
+    op.drop_index(
+        "ix_research_evidence_research_run_id", table_name="research_evidence"
+    )
+    op.drop_table("research_evidence")
     op.drop_table("campaign_targets")
     op.drop_table("research_run")
-    op.drop_table("company")
+    op.drop_table("research_company")
     op.drop_table("campaign")

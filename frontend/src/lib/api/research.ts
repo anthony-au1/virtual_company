@@ -73,19 +73,21 @@ export type ResearchCompany = {
   criteria: CriterionResult[];
 };
 
+export type ResearchEvidence = {
+  id: string;
+  claim: string;
+  evidence_text: string;
+  source_url: string;
+  source_title: string | null;
+  source_type: string | null;
+};
+
 export type CriterionResult = {
   criterion: string;
   subject: string | null;
   status: CriterionStatus;
   reason: string;
-  evidence: Array<{
-    id: string;
-    claim: string;
-    evidence_text: string;
-    source_url: string;
-    source_title: string | null;
-    source_type: string | null;
-  }>;
+  evidence: ResearchEvidence[];
 };
 
 export function listResearchRuns(): Promise<ResearchRunListItem[]> {

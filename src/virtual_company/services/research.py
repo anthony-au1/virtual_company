@@ -9,39 +9,39 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.db.models import Company, Evidence, ResearchRun
-from virtual_company.domain.qualification import CompanyQualification
+from virtual_company.db.models import ResearchCompany, ResearchEvidence, ResearchRun
+from virtual_company.domain.qualification import ResearchCompanyQualification
 from virtual_company.repositories.campaign import CampaignRepository
 from virtual_company.repositories.campaign_target import CampaignTargetRepository
-from virtual_company.repositories.company import CompanyRepository
-from virtual_company.repositories.company_qualification import (
-    CompanyQualificationRepository,
-)
 from virtual_company.repositories.dtos import (
     CampaignTargetCreate,
-    CompanyCreate,
-    CompanyQualificationUpsert,
-    EvidenceCreate,
+    ResearchCompanyCreate,
+    ResearchCompanyQualificationUpsert,
+    ResearchEvidenceCreate,
     ResearchRunCreate,
     ResearchRunUpdate,
 )
-from virtual_company.repositories.evidence import EvidenceRepository
+from virtual_company.repositories.research_company import ResearchCompanyRepository
+from virtual_company.repositories.research_company_qualification import (
+    ResearchCompanyQualificationRepository,
+)
+from virtual_company.repositories.research_evidence import ResearchEvidenceRepository
 from virtual_company.repositories.research_run import ResearchRunRepository
 from virtual_company.research.models import DiscoveredCompany
 from virtual_company.research.normalization import normalize_domain
 
 
 @dataclass(frozen=True)
-class PersistedCompanies:
+class PersistedResearchCompanies:
     """The new campaign-candidate count and exact company records resolved for one run."""
 
     companies_found: int
-    companies: list[Company]
+    companies: list[ResearchCompany]
     discovered_by_company_id: dict[UUID, DiscoveredCompany]
 
 
 @dataclass(frozen=True)
-class PersistedEvidence:
+class PersistedResearchEvidence:
     """Outcome of idempotently storing evidence for one research run."""
 
     created_count: int
@@ -55,11 +55,11 @@ class ResearchService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._campaigns = CampaignRepository(session)
-        self._companies = CompanyRepository(session)
+        self._companies = ResearchCompanyRepository(session)
         self._targets = CampaignTargetRepository(session)
         self._runs = ResearchRunRepository(session)
-        self._evidence = EvidenceRepository(session)
-        self._qualifications = CompanyQualificationRepository(session)
+        self._evidence = ResearchEvidenceRepository(session)
+        self._qualifications = ResearchCompanyQualificationRepository(session)
 
     async def create_run(self, campaign_id: UUID) -> ResearchRun:
         """Create and commit a running research execution."""
@@ -84,10 +84,10 @@ class ResearchService:
         *,
         campaign_id: UUID,
         companies: list[DiscoveredCompany],
-    ) -> PersistedCompanies:
+    ) -> PersistedResearchCompanies:
         """Persist discovery candidates and return their resolved records for this run."""
         created_targets = 0
-        persisted_companies: list[Company] = []
+        persisted_companies: list[ResearchCompany] = []
         discovered_by_company_id: dict[UUID, DiscoveredCompany] = {}
         for discovered in companies:
             domain = normalize_domain(discovered.domain or discovered.website)
@@ -98,7 +98,7 @@ class ResearchService:
             )
             if company is None:
                 company = await self._companies.create(
-                    CompanyCreate(
+                    ResearchCompanyCreate(
                         name=discovered.name,
                         website=discovered.website,
                         domain=domain,
@@ -112,7 +112,7 @@ class ResearchService:
                 created_targets += 1
             persisted_companies.append(company)
             discovered_by_company_id[company.id] = discovered
-        return PersistedCompanies(
+        return PersistedResearchCompanies(
             companies_found=created_targets,
             companies=persisted_companies,
             discovered_by_company_id=discovered_by_company_id,
@@ -135,19 +135,19 @@ class ResearchService:
         await self._session.commit()
         return run
 
-    async def persist_evidence(
-        self, *, research_run_id: UUID, evidence: list[EvidenceCreate]
-    ) -> PersistedEvidence:
+    async def persist_research_evidence(
+        self, *, research_run_id: UUID, evidence: list[ResearchEvidenceCreate]
+    ) -> PersistedResearchEvidence:
         """Store distinct evidence items without duplicating a retried node's output."""
         existing = await self._evidence.list_by_research_run_id(research_run_id)
-        seen = {self._evidence_key(item) for item in existing}
+        seen = {self._research_evidence_key(item) for item in existing}
         created_count = 0
         skipped_count = 0
         created_by_company: dict[UUID, int] = {}
         for item in evidence:
             if item.research_run_id != research_run_id:
                 raise ValueError("Evidence must belong to the active research run")
-            key = self._evidence_key(item)
+            key = self._research_evidence_key(item)
             if key in seen:
                 skipped_count += 1
                 continue
@@ -157,23 +157,23 @@ class ResearchService:
             created_by_company[item.company_id] = (
                 created_by_company.get(item.company_id, 0) + 1
             )
-        return PersistedEvidence(
+        return PersistedResearchEvidence(
             created_count=created_count,
             skipped_count=skipped_count,
             created_by_company=created_by_company,
         )
 
-    async def persist_company_qualifications(
+    async def persist_research_company_qualifications(
         self,
         *,
         campaign_id: UUID,
         research_run_id: UUID,
-        qualifications: Sequence[CompanyQualification],
+        qualifications: Sequence[ResearchCompanyQualification],
     ) -> None:
         """Stage final snapshots for the same transaction as run completion."""
         for result in qualifications:
             await self._qualifications.upsert(
-                CompanyQualificationUpsert(
+                ResearchCompanyQualificationUpsert(
                     campaign_id=campaign_id,
                     research_run_id=research_run_id,
                     company_id=result.company_id,
@@ -195,13 +195,17 @@ class ResearchService:
                 )
             )
 
-    async def list_evidence_for_run(self, research_run_id: UUID) -> list[Evidence]:
+    async def list_research_evidence_for_run(
+        self, research_run_id: UUID
+    ) -> list[ResearchEvidence]:
         """Load all accumulated Evidence for one research execution."""
         return await self._evidence.list_by_research_run_id(research_run_id)
 
-    async def list_evidence_for_company(self, company_id: UUID) -> list[Evidence]:
+    async def list_research_evidence_for_company(
+        self, company_id: UUID
+    ) -> list[ResearchEvidence]:
         """Load persisted company evidence across research runs."""
-        return await self._evidence.list_by_company_id(company_id)
+        return await self._evidence.list_by_research_company_id(company_id)
 
     async def fail_run(self, research_run_id: UUID, error: str) -> ResearchRun:
         """Discard uncommitted work and persist a failed run."""
@@ -218,7 +222,9 @@ class ResearchService:
         return run
 
     @staticmethod
-    def _evidence_key(evidence: Evidence | EvidenceCreate) -> tuple[str, ...]:
+    def _research_evidence_key(
+        evidence: ResearchEvidence | ResearchEvidenceCreate,
+    ) -> tuple[str, ...]:
         """Return a conservative normalized identity for same-run evidence."""
 
         def normalized(value: object) -> str:

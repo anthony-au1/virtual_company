@@ -25,7 +25,7 @@ class PromptIdentity:
     version: str
 
 
-class QualificationEvidencePromptItem(Protocol):
+class ResearchQualificationEvidencePromptItem(Protocol):
     """Persisted Evidence fields serialized for qualification extraction."""
 
     id: UUID
@@ -378,7 +378,7 @@ def extract_qualification_facts_system_prompt() -> str:
 
 def extract_qualification_facts_user_prompt(
     criteria: list[dict[str, object]],
-    evidence: Sequence[QualificationEvidencePromptItem],
+    evidence: Sequence[ResearchQualificationEvidencePromptItem],
 ) -> str:
     """Serialize configured concepts and compact persisted Evidence."""
     serialized_evidence = [

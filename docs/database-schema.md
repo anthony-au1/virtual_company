@@ -1,8 +1,9 @@
 # Database Schema
 
-## Entity
+## Research entities
 
-Represents a software entity discovered during analysis.
+These tables persist entities owned by the Research workflow.
+Research-scoped table names are created directly by the project's initial schema.
 
 Table: campaign
 
@@ -34,7 +35,7 @@ Indexes:
 
 - PK (id)
 
-Table: company
+Table: research_company
 
 | Column            | PostgreSQL type | Nullable | Description          |
 |-------------------|-----------------|---------:|----------------------|
@@ -68,9 +69,9 @@ Indexes:
 
 - UNIQUE (campaign_id, company_id)
 - FK (campaign_id) -> campaign (id)
-- FK (company_id) -> company (id)
+- FK (company_id) -> research_company (id)
 
-Table: evidence
+Table: research_evidence
 
 | Column            | PostgreSQL type | Nullable | Description                                     |
 |-------------------|-----------------|---------:|-------------------------------------------------|
@@ -91,7 +92,8 @@ Table: evidence
 Indexes:
 
 - PK (id)
-- FK (company_id) -> company (id)
+- `ix_research_evidence_research_run_id` (research_run_id)
+- FK (company_id) -> research_company (id)
 - FK (research_run_id) -> research_run (id)
 
 Table: research_run
@@ -120,19 +122,19 @@ Indexes:
 
 ## Final qualification snapshots
 
-Table: `company_qualifications`
+Table: `research_company_qualifications`
 
 | Column             | PostgreSQL type | Nullable | Description                                     |
 |--------------------|-----------------|----------|-------------------------------------------------|
 | `id`               | UUID            | NO       | Snapshot ID                                     |
 | `research_run_id`  | UUID            | NO       | FK to research_run(id)                          |
 | `campaign_id`      | UUID            | NO       | FK to campaign(id)                              |
-| `company_id`       | UUID            | NO       | FK to company(id)                               |
+| `company_id`       | UUID            | NO       | FK to research_company(id)                      |
 | `status`           | VARCHAR(30)     | NO       | QUALIFIED, NOT_QUALIFIED, INSUFFICIENT_EVIDENCE |
 | `criteria_results` | JSONB           | NO       | Object containing a criteria array              |
 | `created_at`       | TIMESTAMPTZ     | NO       | Database timestamp, default now()               |
 
-Unique constraint: `uq_company_qualifications_run_company` on
+Unique constraint: `uq_research_company_qualifications_run_company` on
 `(research_run_id, company_id)`, also supporting lookups by run.
 Each criterion includes criterion, subject, status, evidence_ids (UUID strings),
 and reason. No Evidence content is copied. Retries replace status and JSON while

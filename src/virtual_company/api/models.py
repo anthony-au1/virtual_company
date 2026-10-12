@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
@@ -13,12 +14,19 @@ from virtual_company.domain.criteria import (
     CompanySizeCriteria,
 )
 from virtual_company.domain.qualification import (
-    CompanyQualificationStatus,
     QualificationStatus,
 )
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
 
 CampaignStatus = Literal["DRAFT", "RUNNING", "PAUSED", "COMPLETED", "FAILED"]
+
+
+class CompanyQualificationStatus(StrEnum):
+    """Stable public OpenAPI enum for Research company qualification status."""
+
+    QUALIFIED = "QUALIFIED"
+    NOT_QUALIFIED = "NOT_QUALIFIED"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 
 
 class CampaignCreateRequest(CampaignCreate):

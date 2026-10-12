@@ -44,7 +44,9 @@ class CampaignServiceStub:
         self.update_data = data
         return self.campaign
 
-    async def list_companies(self, _campaign_id: object) -> list[object] | None:
+    async def list_research_companies(
+        self, _campaign_id: object
+    ) -> list[object] | None:
         return [] if self.campaign is not None else None
 
 
@@ -188,9 +190,7 @@ def test_patch_maps_sealed_definition_to_conflict() -> None:
     )
 
     assert response.status_code == 409
-    assert response.json() == {
-        "detail": "Campaign research definition is sealed"
-    }
+    assert response.json() == {"detail": "Campaign research definition is sealed"}
 
 
 def test_campaign_status_validation_and_missing_campaign_return_errors() -> None:

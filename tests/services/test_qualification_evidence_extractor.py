@@ -269,9 +269,9 @@ async def test_technology_evidence_requires_the_exact_normalized_subject() -> No
             )
         ]
     )
-    boot_result = await QualificationEvidenceExtractor(ProviderStub(boot_output)).extract(
-        campaign(["Spring"]), [spring_boot]
-    )
+    boot_result = await QualificationEvidenceExtractor(
+        ProviderStub(boot_output)
+    ).extract(campaign(["Spring"]), [spring_boot])
     assert boot_result.facts is not None
     assert boot_result.facts.categorical[0].state == "unknown"
     assert boot_result.facts.categorical[0].evidence_ids == []
@@ -286,16 +286,18 @@ async def test_technology_evidence_requires_the_exact_normalized_subject() -> No
             )
         ]
     )
-    reverse = await QualificationEvidenceExtractor(ProviderStub(reverse_output)).extract(
-        campaign(["Spring Boot"]), [spring_only]
-    )
+    reverse = await QualificationEvidenceExtractor(
+        ProviderStub(reverse_output)
+    ).extract(campaign(["Spring Boot"]), [spring_only])
     assert reverse.facts is not None
     assert reverse.facts.categorical[0].state == "unknown"
 
 
 @pytest.mark.asyncio
 async def test_shared_multi_technology_excerpt_can_support_both_criteria() -> None:
-    java = evidence("Our services are built using Java and Spring Boot.", subject="Java")
+    java = evidence(
+        "Our services are built using Java and Spring Boot.", subject="Java"
+    )
     spring_boot = evidence(
         "Our services are built using Java and Spring Boot.", subject="Spring Boot"
     )
@@ -305,7 +307,9 @@ async def test_shared_multi_technology_excerpt_can_support_both_criteria() -> No
                 criterion_id="criterion_2", state="supported", evidence_ids=[java.id]
             ),
             CategoricalEvidenceFact(
-                criterion_id="criterion_3", state="supported", evidence_ids=[spring_boot.id]
+                criterion_id="criterion_3",
+                state="supported",
+                evidence_ids=[spring_boot.id],
             ),
         ]
     )
@@ -384,7 +388,11 @@ async def test_operational_extraction_failure_retries_once_for_same_evidence() -
 async def test_operational_extraction_failure_exhausts_after_one_retry() -> None:
     item = evidence("Kafka services", subject="Kafka")
     provider = ProviderSequence(
-        [RuntimeError("first failure"), RuntimeError("second failure"), QualificationFacts()]
+        [
+            RuntimeError("first failure"),
+            RuntimeError("second failure"),
+            QualificationFacts(),
+        ]
     )
     extractor = QualificationEvidenceExtractor(provider)
     first = await extractor.extract(campaign(), [item])
@@ -428,7 +436,9 @@ async def test_failed_incremental_refresh_retains_previous_successful_facts() ->
 
 
 @pytest.mark.asyncio
-async def test_successful_semantic_unknown_and_task1_downgrade_are_cached_as_success() -> None:
+async def test_successful_semantic_unknown_and_task1_downgrade_are_cached_as_success() -> (
+    None
+):
     java = evidence("Our backend uses Java", subject="Java")
     unsupported_spring = QualificationFacts(
         categorical=[

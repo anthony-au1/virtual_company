@@ -6,10 +6,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.db.models import Campaign, Company
+from virtual_company.db.models import Campaign, ResearchCompany
 from virtual_company.repositories.campaign import CampaignRepository
-from virtual_company.repositories.company import CompanyRepository
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
+from virtual_company.repositories.research_company import ResearchCompanyRepository
 
 
 class CampaignLimitValidationError(ValueError):
@@ -26,7 +26,7 @@ class CampaignService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._campaigns = CampaignRepository(session)
-        self._companies = CompanyRepository(session)
+        self._companies = ResearchCompanyRepository(session)
 
     async def create(self, data: CampaignCreate) -> Campaign:
         async with self._session.begin():
@@ -79,7 +79,9 @@ class CampaignService:
                 )
             return await self._campaigns.update(campaign_id, data)
 
-    async def list_companies(self, campaign_id: UUID) -> list[Company] | None:
+    async def list_research_companies(
+        self, campaign_id: UUID
+    ) -> list[ResearchCompany] | None:
         if await self._campaigns.get_by_id(campaign_id) is None:
             return None
         return await self._companies.list_by_campaign_id(campaign_id)

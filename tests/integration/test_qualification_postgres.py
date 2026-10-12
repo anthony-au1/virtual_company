@@ -14,15 +14,15 @@ from virtual_company.db import Base
 from virtual_company.db.models import (
     Campaign,
     CampaignTarget,
-    Company,
-    CompanyQualificationSnapshot,
-    Evidence,
+    ResearchCompany,
+    ResearchCompanyQualification,
+    ResearchEvidence,
     ResearchRun,
 )
-from virtual_company.repositories.company_qualification import (
-    CompanyQualificationRepository,
+from virtual_company.repositories.dtos import ResearchCompanyQualificationUpsert
+from virtual_company.repositories.research_company_qualification import (
+    ResearchCompanyQualificationRepository,
 )
-from virtual_company.repositories.dtos import CompanyQualificationUpsert
 from virtual_company.services.research_results import ResearchResultsService
 
 
@@ -56,7 +56,10 @@ async def test_committed_snapshots_are_idempotent_and_run_scoped() -> None:
                 )
             )
             session.add_all(
-                [Company(id=company_a, name="A"), Company(id=company_b, name="B")]
+                [
+                    ResearchCompany(id=company_a, name="A"),
+                    ResearchCompany(id=company_b, name="B"),
+                ]
             )
             await session.flush()
             session.add_all(
@@ -71,7 +74,7 @@ async def test_committed_snapshots_are_idempotent_and_run_scoped() -> None:
                 ]
             )
             await session.flush()
-            repository = CompanyQualificationRepository(session)
+            repository = ResearchCompanyQualificationRepository(session)
             payload = {
                 "criteria": [
                     {
@@ -83,7 +86,7 @@ async def test_committed_snapshots_are_idempotent_and_run_scoped() -> None:
                     }
                 ]
             }
-            data = CompanyQualificationUpsert(
+            data = ResearchCompanyQualificationUpsert(
                 research_run_id=run_a,
                 campaign_id=campaign_id,
                 company_id=company_a,
@@ -107,7 +110,7 @@ async def test_committed_snapshots_are_idempotent_and_run_scoped() -> None:
             await repository.upsert(data.model_copy(update={"research_run_id": run_b}))
             await session.commit()
         async with sessions() as session:
-            rows = list(await session.scalars(select(CompanyQualificationSnapshot)))
+            rows = list(await session.scalars(select(ResearchCompanyQualification)))
             assert len(rows) == 3
             stored = next(row for row in rows if row.id == identity)
             assert stored.status == "INSUFFICIENT_EVIDENCE"
@@ -130,7 +133,9 @@ async def test_committed_snapshots_are_idempotent_and_run_scoped() -> None:
     os.getenv("RUN_QUALIFICATION_DB_TESTS") != "true",
     reason="Opt-in local PostgreSQL test",
 )
-async def test_deleting_a_run_preserves_campaign_siblings_and_canonical_company() -> None:
+async def test_deleting_a_run_preserves_campaign_siblings_and_canonical_company() -> (
+    None
+):
     schema = f"test_run_delete_{uuid4().hex}"
     engine = create_async_engine(
         os.getenv("QUALIFICATION_TEST_DATABASE_URL", DEFAULT_DATABASE_URL)
@@ -157,11 +162,9 @@ async def test_deleting_a_run_preserves_campaign_siblings_and_canonical_company(
                     sealed_at=sealed_at,
                 )
             )
-            session.add(Company(id=company_id, name="Canonical company"))
+            session.add(ResearchCompany(id=company_id, name="Canonical company"))
             await session.flush()
-            session.add(
-                CampaignTarget(campaign_id=campaign_id, company_id=company_id)
-            )
+            session.add(CampaignTarget(campaign_id=campaign_id, company_id=company_id))
             session.add_all(
                 [
                     ResearchRun(
@@ -176,7 +179,7 @@ async def test_deleting_a_run_preserves_campaign_siblings_and_canonical_company(
             await session.flush()
             for run_id in (run_to_delete, sibling_run):
                 session.add(
-                    Evidence(
+                    ResearchEvidence(
                         company_id=company_id,
                         research_run_id=run_id,
                         claim="Run scoped claim",
@@ -185,7 +188,7 @@ async def test_deleting_a_run_preserves_campaign_siblings_and_canonical_company(
                     )
                 )
                 session.add(
-                    CompanyQualificationSnapshot(
+                    ResearchCompanyQualification(
                         research_run_id=run_id,
                         campaign_id=campaign_id,
                         company_id=company_id,
@@ -200,26 +203,44 @@ async def test_deleting_a_run_preserves_campaign_siblings_and_canonical_company(
 
         async with sessions() as session:
             assert await session.get(Campaign, campaign_id) is not None
-            assert await session.get(Company, company_id) is not None
+            assert await session.get(ResearchCompany, company_id) is not None
             assert await session.get(ResearchRun, run_to_delete) is None
             assert await session.get(ResearchRun, sibling_run) is not None
-            assert await session.get(CampaignTarget, (campaign_id, company_id)) is not None
-            assert await session.scalar(
-                select(CompanyQualificationSnapshot).where(
-                    CompanyQualificationSnapshot.research_run_id == sibling_run
+            assert (
+                await session.get(CampaignTarget, (campaign_id, company_id)) is not None
+            )
+            assert (
+                await session.scalar(
+                    select(ResearchCompanyQualification).where(
+                        ResearchCompanyQualification.research_run_id == sibling_run
+                    )
                 )
-            ) is not None
-            assert await session.scalar(
-                select(Evidence).where(Evidence.research_run_id == sibling_run)
-            ) is not None
-            assert await session.scalar(
-                select(CompanyQualificationSnapshot).where(
-                    CompanyQualificationSnapshot.research_run_id == run_to_delete
+                is not None
+            )
+            assert (
+                await session.scalar(
+                    select(ResearchEvidence).where(
+                        ResearchEvidence.research_run_id == sibling_run
+                    )
                 )
-            ) is None
-            assert await session.scalar(
-                select(Evidence).where(Evidence.research_run_id == run_to_delete)
-            ) is None
+                is not None
+            )
+            assert (
+                await session.scalar(
+                    select(ResearchCompanyQualification).where(
+                        ResearchCompanyQualification.research_run_id == run_to_delete
+                    )
+                )
+                is None
+            )
+            assert (
+                await session.scalar(
+                    select(ResearchEvidence).where(
+                        ResearchEvidence.research_run_id == run_to_delete
+                    )
+                )
+                is None
+            )
             campaign = await session.get(Campaign, campaign_id)
             assert campaign is not None and campaign.sealed_at == sealed_at
     finally:

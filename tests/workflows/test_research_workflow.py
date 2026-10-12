@@ -15,12 +15,12 @@ import pytest
 from virtual_company.config import Settings
 from virtual_company.db.models import Campaign
 from virtual_company.domain.qualification import (
-    CompanyQualification,
-    CompanyQualificationStatus,
     CriterionQualification,
     QualificationStatus,
+    ResearchCompanyQualification,
+    ResearchCompanyQualificationStatus,
 )
-from virtual_company.repositories.dtos import EvidenceCreate
+from virtual_company.repositories.dtos import ResearchEvidenceCreate
 from virtual_company.research.models import (
     CategoricalEvidenceFact,
     DiscoveredCompany,
@@ -133,7 +133,7 @@ class ResearchServiceFake:
             },
         )
 
-    async def persist_company_qualifications(
+    async def persist_research_company_qualifications(
         self, *, campaign_id: UUID, research_run_id: UUID, qualifications: list
     ) -> None:
         for result in qualifications:
@@ -142,7 +142,7 @@ class ResearchServiceFake:
     async def complete_run(self, run_id: UUID, companies_found: int) -> None:
         self.runs[run_id].status = "COMPLETED"
 
-    async def persist_evidence(
+    async def persist_research_evidence(
         self, *, research_run_id: UUID, evidence: list[object]
     ) -> SimpleNamespace:
         created_by_company: dict[UUID, int] = {}
@@ -158,10 +158,12 @@ class ResearchServiceFake:
             created_by_company=created_by_company,
         )
 
-    async def list_evidence_for_run(self, run_id: UUID) -> list[SimpleNamespace]:
+    async def list_research_evidence_for_run(
+        self, run_id: UUID
+    ) -> list[SimpleNamespace]:
         return [item for item in self.evidence if item.research_run_id == run_id]
 
-    async def list_evidence_for_company(
+    async def list_research_evidence_for_company(
         self, company_id: UUID
     ) -> list[SimpleNamespace]:
         return [item for item in self.evidence if item.company_id == company_id]
@@ -457,11 +459,16 @@ def test_fair_result_merge_deduplicates_overlapping_urls() -> None:
 
 
 @pytest.mark.asyncio
-async def test_source_selection_reserves_available_sources_for_unknown_criteria() -> None:
+async def test_source_selection_reserves_available_sources_for_unknown_criteria() -> (
+    None
+):
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Java", "Spring Boot", ]
+    model.technologies = [
+        "Java",
+        "Spring Boot",
+    ]
     company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
     nodes._company_research_followup_successful_fetch_target_per_company = 2
@@ -491,8 +498,11 @@ async def test_source_selection_reserves_available_sources_for_unknown_criteria(
             "criterion_qualifications": {
                 company.id: [
                     CriterionQualification(
-                        "technology", subject,
-                        QualificationStatus.UNKNOWN, [], "Missing"
+                        "technology",
+                        subject,
+                        QualificationStatus.UNKNOWN,
+                        [],
+                        "Missing",
                     )
                     for subject in ("Java", "Spring Boot")
                 ]
@@ -502,10 +512,7 @@ async def test_source_selection_reserves_available_sources_for_unknown_criteria(
             },
         }
     )  # type: ignore[arg-type]
-    urls = {
-        item.url
-        for item in output["selected_company_sources"][company.id]
-    }
+    urls = {item.url for item in output["selected_company_sources"][company.id]}
     assert "https://third-party.example/acme-java" in urls
     assert "https://third-party.example/acme-spring" in urls
 
@@ -559,8 +566,7 @@ def _expand_ranking_payload(prompt: str) -> list[dict[str, object]]:
                 if key != "supporting_source_ids"
             },
             "supporting_results": [
-                sources[source_id]
-                for source_id in candidate["supporting_source_ids"]
+                sources[source_id] for source_id in candidate["supporting_source_ids"]
             ],
         }
         for candidate in payload["candidates"]
@@ -665,7 +671,9 @@ def test_ranking_payload_preserves_repeated_source_reference_multiplicity() -> N
     assert _expand_ranking_payload(prompt) == [candidate.model_dump()]
 
 
-def test_ranking_payload_keeps_same_url_records_with_different_content_distinct() -> None:
+def test_ranking_payload_keeps_same_url_records_with_different_content_distinct() -> (
+    None
+):
     first = SearchResult(
         title="Company profile",
         url="https://source.example/company",
@@ -710,16 +718,25 @@ def test_evidence_extraction_prompt_requires_exact_technology_support() -> None:
     assert "exact technology requested" in prompt
     assert "different or longer technology name is not independent support" in prompt
     assert "normalize spelling and formatting only, not meaning" in prompt
-    assert "related technologies, parent/child technologies, products, frameworks" in prompt
+    assert (
+        "related technologies, parent/child technologies, products, frameworks"
+        in prompt
+    )
     assert "spring boot alone does not establish spring" in prompt
     assert "apache kafka alone does not establish kafka" in prompt
     assert "java ee alone does not establish java" in prompt
     assert "when uncertain, emit no evidence for that technology" in prompt
     assert "springboot/spring-boot/spring_boot for spring boot" in prompt
     assert "review the page exhaustively" in prompt
-    assert "emit a separate evidence item for every requested criterion or subject" in prompt
+    assert (
+        "emit a separate evidence item for every requested criterion or subject"
+        in prompt
+    )
     assert "reusing the same exact excerpt is allowed" in prompt
-    assert "an explicit mention of spring framework supports a requested spring criterion" in prompt
+    assert (
+        "an explicit mention of spring framework supports a requested spring criterion"
+        in prompt
+    )
     assert "spring boot alone does not establish spring" in prompt
     assert "kafka streams alone does not establish kafka" in prompt
 
@@ -795,7 +812,7 @@ async def test_evidence_extraction_preserves_all_explicit_technology_subjects(
         }
     )
 
-    evidence = output["validated_evidence"]
+    evidence = output["validated_research_evidence"]
     assert {item.subject.casefold() for item in evidence} == expected
     assert all(item.evidence_text == source_text for item in evidence)
 
@@ -834,10 +851,12 @@ async def test_evidence_extraction_prompt_negative_exact_technology_cases(
         }
     )  # type: ignore[arg-type]
 
-    assert output["validated_evidence"] == []
+    assert output["validated_research_evidence"] == []
     assert requested in fake.prompts[0]
     assert page_text in fake.prompts[0]
-    assert "exact technology requested" in extract_company_evidence_system_prompt().lower()
+    assert (
+        "exact technology requested" in extract_company_evidence_system_prompt().lower()
+    )
 
 
 @pytest.mark.asyncio
@@ -883,7 +902,7 @@ async def test_evidence_extraction_rejects_punctuation_colliding_technologies(
         }
     )  # type: ignore[arg-type]
 
-    assert output["validated_evidence"] == []
+    assert output["validated_research_evidence"] == []
 
 
 @pytest.mark.asyncio
@@ -939,7 +958,7 @@ async def test_evidence_extraction_accepts_exact_technology_and_format_variants(
         }
     )  # type: ignore[arg-type]
 
-    evidence = output["validated_evidence"]
+    evidence = output["validated_research_evidence"]
     assert len(evidence) == 1
     assert evidence[0].subject == requested
     assert evidence[0].evidence_text == excerpt
@@ -1220,14 +1239,9 @@ async def test_ranked_pool_limit_is_separate_from_initial_activation(
         for index in range(aggregated_count)
     ]
     research = ResearchFake(
-        [
-            found(candidate.name, candidate.supporting_urls)
-            for candidate in aggregate
-        ]
+        [found(candidate.name, candidate.supporting_urls) for candidate in aggregate]
     )
-    nodes = make_nodes(
-        ExtractionFake({}), research, model
-    )
+    nodes = make_nodes(ExtractionFake({}), research, model)
 
     ranking = await nodes.rank_company_candidates(
         {
@@ -1238,7 +1252,9 @@ async def test_ranked_pool_limit_is_separate_from_initial_activation(
     ranked = ranking["discovered_companies"]
 
     assert len(ranked) == expected_ranked_count
-    assert f"Discovery candidate limit: {min(aggregated_count, 10)}" in research.prompts[0]
+    assert (
+        f"Discovery candidate limit: {min(aggregated_count, 10)}" in research.prompts[0]
+    )
 
     state = {
         "campaign_id": model.id,
@@ -1248,7 +1264,7 @@ async def test_ranked_pool_limit_is_separate_from_initial_activation(
         "research_companies": [],
         "discovered_companies_by_id": {},
         "investigations": {},
-        "company_qualifications": {},
+        "research_company_qualifications": {},
     }
     state.update(await nodes.persist_companies(state))  # type: ignore[arg-type]
 
@@ -1369,9 +1385,7 @@ async def test_workflow_completes_after_investigating_a_small_ranked_pool() -> N
         for i in range(3)
     ]
     service = ResearchServiceFake()
-    research = ResearchFake(
-        [found(result.title, [result.url]) for result in results]
-    )
+    research = ResearchFake([found(result.title, [result.url]) for result in results])
     workflow = ResearchWorkflow(
         campaigns=CampaignServiceFake(model),
         research=service,
@@ -1393,9 +1407,7 @@ async def test_workflow_completes_after_investigating_a_small_ranked_pool() -> N
 
     assert outcome.status == "COMPLETED"
     assert service.targets == [f"Candidate {i}" for i in range(3)]
-    assert service.persist_company_calls == [
-        [f"Candidate {i}" for i in range(3)]
-    ]
+    assert service.persist_company_calls == [[f"Candidate {i}" for i in range(3)]]
     assert research.models.count(DiscoveredCompanies) == 1
     assert len(service.qualifications) == 3
 
@@ -1414,7 +1426,7 @@ async def test_activation_refills_only_the_qualification_shortfall() -> None:
         "research_companies": [],
         "discovered_companies_by_id": {},
         "investigations": {},
-        "company_qualifications": {},
+        "research_company_qualifications": {},
     }
 
     state.update(await nodes.persist_companies(state))  # type: ignore[arg-type]
@@ -1424,13 +1436,13 @@ async def test_activation_refills_only_the_qualification_shortfall() -> None:
     assert len(state["active_company_ids"]) == 5
 
     first_ids = [company.id for company in state["research_companies"]]
-    state["company_qualifications"] = {
-        company_id: CompanyQualification(
+    state["research_company_qualifications"] = {
+        company_id: ResearchCompanyQualification(
             company_id=company_id,
             status=(
-                CompanyQualificationStatus.QUALIFIED
+                ResearchCompanyQualificationStatus.QUALIFIED
                 if index < 2
-                else CompanyQualificationStatus.INSUFFICIENT_EVIDENCE
+                else ResearchCompanyQualificationStatus.INSUFFICIENT_EVIDENCE
             ),
             criteria=[],
         )
@@ -1445,17 +1457,17 @@ async def test_activation_refills_only_the_qualification_shortfall() -> None:
     assert len(state["active_company_ids"]) == 3
 
     refill_ids = [company.id for company in state["research_companies"][-3:]]
-    state["company_qualifications"].update(
+    state["research_company_qualifications"].update(
         {
-            refill_ids[0]: CompanyQualification(
-                refill_ids[0], CompanyQualificationStatus.QUALIFIED, []
+            refill_ids[0]: ResearchCompanyQualification(
+                refill_ids[0], ResearchCompanyQualificationStatus.QUALIFIED, []
             ),
-            refill_ids[1]: CompanyQualification(
-                refill_ids[1], CompanyQualificationStatus.QUALIFIED, []
+            refill_ids[1]: ResearchCompanyQualification(
+                refill_ids[1], ResearchCompanyQualificationStatus.QUALIFIED, []
             ),
-            refill_ids[2]: CompanyQualification(
+            refill_ids[2]: ResearchCompanyQualification(
                 refill_ids[2],
-                CompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
+                ResearchCompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
                 [],
             ),
         }
@@ -1474,8 +1486,10 @@ async def test_activation_refills_only_the_qualification_shortfall() -> None:
     ]
 
     candidate_nine_id = state["active_company_ids"][0]
-    state["company_qualifications"][candidate_nine_id] = CompanyQualification(
-        candidate_nine_id, CompanyQualificationStatus.QUALIFIED, []
+    state["research_company_qualifications"][candidate_nine_id] = (
+        ResearchCompanyQualification(
+            candidate_nine_id, ResearchCompanyQualificationStatus.QUALIFIED, []
+        )
     )
     assert route_candidate_pool(state) == "complete"  # type: ignore[arg-type]
 
@@ -1483,7 +1497,7 @@ async def test_activation_refills_only_the_qualification_shortfall() -> None:
 async def _run_activation_scenario(
     model: Campaign,
     candidate_names: list[str],
-    statuses: dict[str, CompanyQualificationStatus],
+    statuses: dict[str, ResearchCompanyQualificationStatus],
 ) -> dict[str, object]:
     nodes = make_nodes(
         ExtractionFake({}),
@@ -1498,15 +1512,17 @@ async def _run_activation_scenario(
         "research_companies": [],
         "discovered_companies_by_id": {},
         "investigations": {},
-        "company_qualifications": {},
+        "research_company_qualifications": {},
     }
     for _ in range(len(candidate_names) + 1):
         previous_ids = {item.id for item in state["research_companies"]}  # type: ignore[union-attr]
         state.update(await nodes.persist_companies(state))  # type: ignore[arg-type]
         for company in state["research_companies"]:  # type: ignore[union-attr]
             if company.id not in previous_ids:
-                state["company_qualifications"][company.id] = CompanyQualification(  # type: ignore[index]
-                    company.id, statuses[company.name], []
+                state["research_company_qualifications"][company.id] = (
+                    ResearchCompanyQualification(  # type: ignore[index]
+                        company.id, statuses[company.name], []
+                    )
                 )
         if route_candidate_pool(state) == "complete":  # type: ignore[arg-type]
             break
@@ -1524,10 +1540,10 @@ async def test_candidate_activation_stops_after_target_with_no_extra_company() -
         model,
         ["A", "B", "C", "D"],
         {
-            "A": CompanyQualificationStatus.QUALIFIED,
-            "B": CompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
-            "C": CompanyQualificationStatus.QUALIFIED,
-            "D": CompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
+            "A": ResearchCompanyQualificationStatus.QUALIFIED,
+            "B": ResearchCompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
+            "C": ResearchCompanyQualificationStatus.QUALIFIED,
+            "D": ResearchCompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
         },
     )
 
@@ -1536,10 +1552,13 @@ async def test_candidate_activation_stops_after_target_with_no_extra_company() -
         "B",
         "C",
     ]
-    assert sum(
-        result.status is CompanyQualificationStatus.QUALIFIED
-        for result in state["company_qualifications"].values()
-    ) == 2
+    assert (
+        sum(
+            result.status is ResearchCompanyQualificationStatus.QUALIFIED
+            for result in state["research_company_qualifications"].values()
+        )
+        == 2
+    )
 
 
 @pytest.mark.asyncio
@@ -1552,19 +1571,22 @@ async def test_candidate_activation_stops_at_campaign_research_limit() -> None:
         model,
         names,
         {
-            "A": CompanyQualificationStatus.QUALIFIED,
-            "B": CompanyQualificationStatus.NOT_QUALIFIED,
-            "C": CompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
-            "D": CompanyQualificationStatus.QUALIFIED,
+            "A": ResearchCompanyQualificationStatus.QUALIFIED,
+            "B": ResearchCompanyQualificationStatus.NOT_QUALIFIED,
+            "C": ResearchCompanyQualificationStatus.INSUFFICIENT_EVIDENCE,
+            "D": ResearchCompanyQualificationStatus.QUALIFIED,
         },
     )
 
     assert [company.name for company in state["research_companies"]] == names[:3]
-    assert len(state["company_qualifications"]) == 3
-    assert sum(
-        result.status is CompanyQualificationStatus.QUALIFIED
-        for result in state["company_qualifications"].values()
-    ) == 1
+    assert len(state["research_company_qualifications"]) == 3
+    assert (
+        sum(
+            result.status is ResearchCompanyQualificationStatus.QUALIFIED
+            for result in state["research_company_qualifications"].values()
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -1578,24 +1600,30 @@ async def test_all_researched_results_remain_when_target_is_difficult() -> None:
         names,
         {
             name: (
-                CompanyQualificationStatus.QUALIFIED
+                ResearchCompanyQualificationStatus.QUALIFIED
                 if index == 0
-                else CompanyQualificationStatus.NOT_QUALIFIED
+                else ResearchCompanyQualificationStatus.NOT_QUALIFIED
             )
             for index, name in enumerate(names)
         },
     )
 
     assert len(state["research_companies"]) == 10
-    assert len(state["company_qualifications"]) == 10
-    assert sum(
-        result.status is CompanyQualificationStatus.QUALIFIED
-        for result in state["company_qualifications"].values()
-    ) == 1
-    assert sum(
-        result.status is CompanyQualificationStatus.NOT_QUALIFIED
-        for result in state["company_qualifications"].values()
-    ) == 9
+    assert len(state["research_company_qualifications"]) == 10
+    assert (
+        sum(
+            result.status is ResearchCompanyQualificationStatus.QUALIFIED
+            for result in state["research_company_qualifications"].values()
+        )
+        == 1
+    )
+    assert (
+        sum(
+            result.status is ResearchCompanyQualificationStatus.NOT_QUALIFIED
+            for result in state["research_company_qualifications"].values()
+        )
+        == 9
+    )
 
 
 def test_candidate_pool_route_completes_when_exhausted_below_target() -> None:
@@ -1607,13 +1635,13 @@ def test_candidate_pool_route_completes_when_exhausted_below_target() -> None:
         "campaign": CampaignCriteria.model_validate(model),
         "discovered_companies": ranked,
         "discovered_companies_by_id": dict(zip(ids, ranked, strict=True)),
-        "company_qualifications": {
-            company_id: CompanyQualification(
+        "research_company_qualifications": {
+            company_id: ResearchCompanyQualification(
                 company_id,
                 (
-                    CompanyQualificationStatus.QUALIFIED
+                    ResearchCompanyQualificationStatus.QUALIFIED
                     if index == 0
-                    else CompanyQualificationStatus.INSUFFICIENT_EVIDENCE
+                    else ResearchCompanyQualificationStatus.INSUFFICIENT_EVIDENCE
                 ),
                 [],
             )
@@ -1630,10 +1658,13 @@ def test_candidate_pool_route_stops_at_campaign_research_limit() -> None:
     ids = [uuid4() for _ in range(5)]
     state = {
         "campaign": CampaignCriteria.model_validate(model),
-        "research_companies": [ResearchCompany(id=id_, name=f"Company {index}") for index, id_ in enumerate(ids)],
-        "company_qualifications": {
-            ids[0]: CompanyQualification(
-                ids[0], CompanyQualificationStatus.QUALIFIED, []
+        "research_companies": [
+            ResearchCompany(id=id_, name=f"Company {index}")
+            for index, id_ in enumerate(ids)
+        ],
+        "research_company_qualifications": {
+            ids[0]: ResearchCompanyQualification(
+                ids[0], ResearchCompanyQualificationStatus.QUALIFIED, []
             )
         },
         "discovered_companies": [found("Still ranked", [])],
@@ -1875,9 +1906,7 @@ async def test_source_selection_and_fetch_emit_correlated_candidate_diagnostics(
     nodes._company_research_successful_fetch_target_per_company = 1
     state = {
         "research_companies": [company],
-        "company_search_results": {
-            company.id: [preferred, backfill, unattempted]
-        },
+        "company_search_results": {company.id: [preferred, backfill, unattempted]},
         "criterion_qualifications": {
             company.id: [
                 CriterionQualification(
@@ -1967,15 +1996,15 @@ async def test_fetch_stops_at_target_when_initial_candidates_succeed() -> None:
     assert len(output["company_web_pages"][company.id]) == 5
     assert output["company_fetch_batch_stats"][company.id]["target_reached"] is True
     assert (
-        output["company_fetch_batch_stats"][company.id][
-            "additional_candidate_attempts"
-        ]
+        output["company_fetch_batch_stats"][company.id]["additional_candidate_attempts"]
         == 0
     )
 
 
 @pytest.mark.asyncio
-async def test_fetch_success_counts_even_when_evidence_extraction_finds_nothing() -> None:
+async def test_fetch_success_counts_even_when_evidence_extraction_finds_nothing() -> (
+    None
+):
     model = campaign()
     company = ResearchCompany(id=uuid4(), name="Acme")
     page = WebPage(url="https://acme.example/backend", content="No useful claims.")
@@ -2003,7 +2032,7 @@ async def test_fetch_success_counts_even_when_evidence_extraction_finds_nothing(
         }
     )  # type: ignore[arg-type]
 
-    assert evidence["validated_evidence"] == []
+    assert evidence["validated_research_evidence"] == []
     assert fetched["company_fetch_batch_stats"][company.id]["fetch_successes"] == 1
 
 
@@ -2092,9 +2121,7 @@ async def test_fetch_candidate_exhaustion_is_normal_and_does_not_search_again() 
         SearchResult(title=f"Result {index}", url=f"https://acme.example/{index}")
         for index in range(3)
     ]
-    fetch = FetchFake(
-        {sources[1].url: WebFetchHttpError(403)}
-    )
+    fetch = FetchFake({sources[1].url: WebFetchHttpError(403)})
     search = SearchFake([])
     nodes = ResearchNodes(
         campaigns=CampaignServiceFake(model),
@@ -2117,7 +2144,9 @@ async def test_fetch_candidate_exhaustion_is_normal_and_does_not_search_again() 
     assert fetch.calls == [source.url for source in sources]
     assert len(output["company_web_pages"][company.id]) == 2
     assert output["company_fetch_batch_stats"][company.id]["target_reached"] is False
-    assert output["company_fetch_batch_stats"][company.id]["candidates_exhausted"] is True
+    assert (
+        output["company_fetch_batch_stats"][company.id]["candidates_exhausted"] is True
+    )
     assert search.calls == []
 
 
@@ -2183,15 +2212,12 @@ async def test_evidence_extraction_validates_provenance_whitespace_and_duplicate
             "company_web_pages": {company.id: [page]},
         }
     )  # type: ignore[arg-type]
-    evidence = output["validated_evidence"]
+    evidence = output["validated_research_evidence"]
     assert len(evidence) == 1
     assert evidence[0].source_url == page.url
     assert evidence[0].source_title == page.title
     assert evidence[0].subject == "Java"
-    assert (
-        '"technologies":["Java","Spring Boot","Kafka"]'
-        in fake.prompts[0]
-    )
+    assert '"technologies":["Java","Spring Boot","Kafka"]' in fake.prompts[0]
 
 
 @pytest.mark.asyncio
@@ -2225,7 +2251,7 @@ async def test_evidence_extraction_rejects_absent_excerpt_and_continues_after_fa
             "company_web_pages": {company.id: [valid_page, failed_page]},
         }
     )  # type: ignore[arg-type]
-    assert output["validated_evidence"] == []
+    assert output["validated_research_evidence"] == []
 
 
 @pytest.mark.asyncio
@@ -2286,7 +2312,7 @@ async def test_evidence_extraction_preserves_explicit_size_and_geography_precisi
         }
     )  # type: ignore[arg-type]
     assert [
-        (item.criterion, item.subject) for item in output["validated_evidence"]
+        (item.criterion, item.subject) for item in output["validated_research_evidence"]
     ] == [
         (EvidenceCriterion.TARGET_MARKET, "Australia"),
         (EvidenceCriterion.INDUSTRY, "Fintech"),
@@ -2298,12 +2324,14 @@ async def test_evidence_extraction_preserves_explicit_size_and_geography_precisi
 async def test_evidence_persistence_is_idempotent_within_one_research_run() -> None:
     class EvidenceRepositoryFake:
         def __init__(self) -> None:
-            self.items: list[EvidenceCreate] = []
+            self.items: list[ResearchEvidenceCreate] = []
 
-        async def list_by_research_run_id(self, _: UUID) -> list[EvidenceCreate]:
+        async def list_by_research_run_id(
+            self, _: UUID
+        ) -> list[ResearchEvidenceCreate]:
             return self.items
 
-        async def create(self, item: EvidenceCreate) -> EvidenceCreate:
+        async def create(self, item: ResearchEvidenceCreate) -> ResearchEvidenceCreate:
             self.items.append(item)
             return item
 
@@ -2311,7 +2339,7 @@ async def test_evidence_persistence_is_idempotent_within_one_research_run() -> N
     service = object.__new__(ResearchService)
     service._evidence = repository
     run_id = uuid4()
-    item = EvidenceCreate(
+    item = ResearchEvidenceCreate(
         company_id=uuid4(),
         research_run_id=run_id,
         criterion="technology",
@@ -2320,10 +2348,12 @@ async def test_evidence_persistence_is_idempotent_within_one_research_run() -> N
         evidence_text="We use Java.",
         source_url="https://acme.example/engineering",
     )
-    first = await service.persist_evidence(
+    first = await service.persist_research_evidence(
         research_run_id=run_id, evidence=[item, item]
     )
-    second = await service.persist_evidence(research_run_id=run_id, evidence=[item])
+    second = await service.persist_research_evidence(
+        research_run_id=run_id, evidence=[item]
+    )
     assert (first.created_count, first.skipped_count) == (1, 1)
     assert (second.created_count, second.skipped_count) == (0, 1)
     assert repository.items == [item]
@@ -2333,12 +2363,14 @@ async def test_evidence_persistence_is_idempotent_within_one_research_run() -> N
 async def test_evidence_persistence_collapses_same_statement_across_sources() -> None:
     class EvidenceRepositoryFake:
         def __init__(self) -> None:
-            self.items: list[EvidenceCreate] = []
+            self.items: list[ResearchEvidenceCreate] = []
 
-        async def list_by_research_run_id(self, _: UUID) -> list[EvidenceCreate]:
+        async def list_by_research_run_id(
+            self, _: UUID
+        ) -> list[ResearchEvidenceCreate]:
             return self.items
 
-        async def create(self, item: EvidenceCreate) -> EvidenceCreate:
+        async def create(self, item: ResearchEvidenceCreate) -> ResearchEvidenceCreate:
             self.items.append(item)
             return item
 
@@ -2347,7 +2379,7 @@ async def test_evidence_persistence_collapses_same_statement_across_sources() ->
     service._evidence = repository
     run_id = uuid4()
     company_id = uuid4()
-    first = EvidenceCreate(
+    first = ResearchEvidenceCreate(
         company_id=company_id,
         research_run_id=run_id,
         criterion="technology",
@@ -2362,7 +2394,7 @@ async def test_evidence_persistence_collapses_same_statement_across_sources() ->
             "source_url": "https://acme.example/jobs/two",
         }
     )
-    outcome = await service.persist_evidence(
+    outcome = await service.persist_research_evidence(
         research_run_id=run_id, evidence=[first, duplicate]
     )
     assert (outcome.created_count, outcome.skipped_count) == (1, 1)
@@ -2453,7 +2485,10 @@ async def test_followup_filters_duplicates_and_resolved_criteria() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Java", "Spring Boot", ]
+    model.technologies = [
+        "Java",
+        "Spring Boot",
+    ]
     company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
     prior_query = "Acme Java engineering"
     research = ResearchFake(
@@ -2520,7 +2555,10 @@ async def test_unresolved_criteria_receive_query_coverage_when_queries_exist() -
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Java", "Spring Boot", ]
+    model.technologies = [
+        "Java",
+        "Spring Boot",
+    ]
     company = ResearchCompany(id=uuid4(), name="Acme")
     research = ResearchFake(
         [],
@@ -2533,8 +2571,7 @@ async def test_unresolved_criteria_receive_query_coverage_when_queries_exist() -
     nodes = make_nodes(ExtractionFake({}), research, model)
     qualifications = [
         CriterionQualification(
-            "technology", subject,
-            QualificationStatus.UNKNOWN, [], "Missing"
+            "technology", subject, QualificationStatus.UNKNOWN, [], "Missing"
         )
         for subject in ("Java", "Spring Boot")
     ]
@@ -2600,7 +2637,9 @@ async def test_attempted_urls_are_not_selected_or_fetched_again() -> None:
             "research_companies": [company],
             "active_company_ids": [company.id],
             "adaptive_mode": True,
-            "company_search_results": {company.id: [SearchResult(title="New", url=new_url)]},
+            "company_search_results": {
+                company.id: [SearchResult(title="New", url=new_url)]
+            },
             "investigations": fetched["investigations"],
         }
     )  # type: ignore[arg-type]
@@ -2615,7 +2654,12 @@ async def test_transient_fetch_failure_remains_available_for_one_later_retry() -
     result = SearchResult(title="Java engineering", url=url)
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
     nodes._web_fetch = FetchSequenceFake(
-        {url: [WebFetchTimeoutError("timeout"), WebPage(url=url, content="Acme uses Java.")]}
+        {
+            url: [
+                WebFetchTimeoutError("timeout"),
+                WebPage(url=url, content="Acme uses Java."),
+            ]
+        }
     )
     investigation = CompanyInvestigationState(company_id=company.id)
     first_selection = await nodes.select_company_sources(
@@ -2694,11 +2738,13 @@ async def test_transient_fetch_failure_remains_available_for_one_later_retry() -
             ],
         }
     )  # type: ignore[arg-type]
-    assert len(extracted["validated_evidence"]) == 1
+    assert len(extracted["validated_research_evidence"]) == 1
 
 
 @pytest.mark.asyncio
-async def test_transient_fetch_retry_exhaustion_and_nonretryable_failure_are_terminal() -> None:
+async def test_transient_fetch_retry_exhaustion_and_nonretryable_failure_are_terminal() -> (
+    None
+):
     model = campaign()
     company = ResearchCompany(id=uuid4(), name="Acme")
     url = "https://acme.example/page"
@@ -2725,7 +2771,9 @@ async def test_transient_fetch_retry_exhaustion_and_nonretryable_failure_are_ter
     transient_fetch = FetchSequenceFake(
         {url: [WebFetchTimeoutError("first"), WebFetchTimeoutError("second")]}
     )
-    first = await fetch_once(transient_fetch, CompanyInvestigationState(company_id=company.id))
+    first = await fetch_once(
+        transient_fetch, CompanyInvestigationState(company_id=company.id)
+    )
     assert first.transient_fetch_failures[url] == 1
     second = await fetch_once(transient_fetch, first)
     assert url in second.attempted_urls
@@ -2744,9 +2792,7 @@ async def test_transient_fetch_retry_exhaustion_and_nonretryable_failure_are_ter
 
     missing_url = "https://acme.example/missing"
     missing = SearchResult(title="Missing", url=missing_url)
-    permanent_fetch = FetchSequenceFake(
-        {missing_url: [WebFetchHttpError(404)]}
-    )
+    permanent_fetch = FetchSequenceFake({missing_url: [WebFetchHttpError(404)]})
     permanent = await fetch_once(
         permanent_fetch,
         CompanyInvestigationState(company_id=company.id),
@@ -2782,11 +2828,15 @@ def test_fact_cache_status_and_evidence_snapshot_control_freshness() -> None:
 
 
 @pytest.mark.asyncio
-async def test_coverage_retries_failed_fact_extraction_but_caches_semantic_unknown() -> None:
+async def test_coverage_retries_failed_fact_extraction_but_caches_semantic_unknown() -> (
+    None
+):
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Java", ]
+    model.technologies = [
+        "Java",
+    ]
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     item = SimpleNamespace(
@@ -2803,7 +2853,10 @@ async def test_coverage_retries_failed_fact_extraction_but_caches_semantic_unkno
 
     class FactProvider:
         def __init__(self) -> None:
-            self.outputs: list[object] = [RuntimeError("temporary"), QualificationFacts()]
+            self.outputs: list[object] = [
+                RuntimeError("temporary"),
+                QualificationFacts(),
+            ]
             self.calls = 0
 
         async def generate_structured(self, **_: object) -> object:
@@ -2840,7 +2893,10 @@ async def test_coverage_retries_failed_fact_extraction_but_caches_semantic_unkno
     success = state["qualification_facts"][company.id]
     assert success.status is QualificationFactsCacheStatus.SUCCESS
     assert success.facts == QualificationFacts()
-    assert state["criterion_qualifications"][company.id][0].status is QualificationStatus.UNKNOWN
+    assert (
+        state["criterion_qualifications"][company.id][0].status
+        is QualificationStatus.UNKNOWN
+    )
     assert provider.calls == 2
 
     state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
@@ -2947,7 +3003,10 @@ async def test_airwallex_followup_only_extracts_unknown_and_preserves_matches() 
 
     qualified = await nodes.qualify_companies(state)  # type: ignore[arg-type]
 
-    assert qualified["company_qualifications"][company.id].status.value == "INSUFFICIENT_EVIDENCE"
+    assert (
+        qualified["research_company_qualifications"][company.id].status.value
+        == "INSUFFICIENT_EVIDENCE"
+    )
     assert len(provider.prompts) == 2
 
 
@@ -2962,9 +3021,7 @@ async def test_mismatch_does_not_block_unknown_followup_or_get_re_evaluated() ->
     run_id = uuid4()
     service = ResearchServiceFake()
     service.evidence = [
-        _qualification_evidence(
-            company, run_id, "company_size", None, "40 employees"
-        )
+        _qualification_evidence(company, run_id, "company_size", None, "40 employees")
     ]
     provider = SemanticFactsProvider()
     nodes = ResearchNodes(
@@ -2995,9 +3052,10 @@ async def test_mismatch_does_not_block_unknown_followup_or_get_re_evaluated() ->
 
     state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
 
-    assert [item["criterion_id"] for item in _criteria_from_semantic_prompt(provider.prompts[-1])] == [
-        "criterion_0"
-    ]
+    assert [
+        item["criterion_id"]
+        for item in _criteria_from_semantic_prompt(provider.prompts[-1])
+    ] == ["criterion_0"]
     assert len(provider.prompts) == 2
     assert state["criterion_qualifications"][company.id][1].status is (
         QualificationStatus.MISMATCH
@@ -3040,7 +3098,9 @@ async def test_semantic_targets_shrink_as_criteria_resolve_across_rounds() -> No
     service.evidence.extend(
         [
             _qualification_evidence(company, run_id, "technology", "Java", "Uses Java"),
-            _qualification_evidence(company, run_id, "technology", "Spring", "Uses Spring"),
+            _qualification_evidence(
+                company, run_id, "technology", "Spring", "Uses Spring"
+            ),
         ]
     )
 
@@ -3071,7 +3131,9 @@ async def test_coverage_stops_companies_independently() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Kafka", ]
+    model.technologies = [
+        "Kafka",
+    ]
     complete = ResearchCompany(id=uuid4(), name="Complete")
     stalled = ResearchCompany(id=uuid4(), name="Stalled")
     progressing = ResearchCompany(id=uuid4(), name="Progressing")
@@ -3138,7 +3200,9 @@ async def test_coverage_stops_at_maximum_adaptive_rounds() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Kafka", ]
+    model.technologies = [
+        "Kafka",
+    ]
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     service = ResearchServiceFake()
@@ -3212,12 +3276,15 @@ async def test_adaptive_pages_must_pass_attribution() -> None:
 async def test_qualification_reads_current_run_evidence_without_external_calls() -> (
     None
 ):
-    from virtual_company.domain.qualification import CompanyQualificationStatus
+    from virtual_company.domain.qualification import ResearchCompanyQualificationStatus
 
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["spring", "spring boot", ]
+    model.technologies = [
+        "spring",
+        "spring boot",
+    ]
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
     company_id = uuid4()
     run_id = uuid4()
@@ -3238,13 +3305,13 @@ async def test_qualification_reads_current_run_evidence_without_external_calls()
             company_id: CompanyInvestigationState(company_id=company_id, stopped=True)
         },
         "active_company_ids": [],
-        "validated_evidence": [],
+        "validated_research_evidence": [],
         "research_run_id": run_id,
     }
     qualification_result = await nodes.qualify_companies(state)
     state.update(qualification_result)
-    result = qualification_result["company_qualifications"][company_id]
-    assert result.status is CompanyQualificationStatus.INSUFFICIENT_EVIDENCE
+    result = qualification_result["research_company_qualifications"][company_id]
+    assert result.status is ResearchCompanyQualificationStatus.INSUFFICIENT_EVIDENCE
     assert [item.status for item in result.criteria] == [
         QualificationStatus.UNKNOWN,
         QualificationStatus.MATCH,
@@ -3263,14 +3330,14 @@ async def test_graph_qualifies_once_after_terminal_before_completion(
 ) -> None:
     events = []
     original = ResearchNodes.qualify_companies
-    original_persist = ResearchNodes.persist_company_qualifications
+    original_persist = ResearchNodes.persist_research_company_qualifications
 
     async def qualify(nodes: ResearchNodes, state: dict) -> dict:
         assert not state["active_company_ids"]
         assert all(item.stopped for item in state["investigations"].values())
         events.append("qualify")
         result = await original(nodes, state)
-        assert len(result["company_qualifications"]) == 1
+        assert len(result["research_company_qualifications"]) == 1
         return result
 
     async def persist(nodes: ResearchNodes, state: dict) -> dict:
@@ -3278,12 +3345,14 @@ async def test_graph_qualifies_once_after_terminal_before_completion(
         return await original_persist(nodes, state)
 
     async def complete(nodes: ResearchNodes, state: dict) -> dict:
-        assert len(state["company_qualifications"]) == 1
+        assert len(state["research_company_qualifications"]) == 1
         events.append("complete")
         return {"error": None}
 
     monkeypatch.setattr(ResearchNodes, "qualify_companies", qualify)
-    monkeypatch.setattr(ResearchNodes, "persist_company_qualifications", persist)
+    monkeypatch.setattr(
+        ResearchNodes, "persist_research_company_qualifications", persist
+    )
     monkeypatch.setattr(ResearchNodes, "complete_research_run", complete)
     model = campaign()
     url = "https://acme.example"
@@ -3358,14 +3427,16 @@ async def test_persistence_rejects_incomplete_final_state(invalid: str) -> None:
     from unittest.mock import AsyncMock
 
     from virtual_company.domain.qualification import (
-        CompanyQualification,
-        CompanyQualificationStatus,
+        ResearchCompanyQualification,
+        ResearchCompanyQualificationStatus,
     )
 
     nodes = make_nodes(ExtractionFake({}), ResearchFake([]), campaign())
-    nodes._research.persist_company_qualifications = AsyncMock()
+    nodes._research.persist_research_company_qualifications = AsyncMock()
     company_id = uuid4()
-    result = CompanyQualification(company_id, CompanyQualificationStatus.QUALIFIED, [])
+    result = ResearchCompanyQualification(
+        company_id, ResearchCompanyQualificationStatus.QUALIFIED, []
+    )
     state = {
         "campaign_id": uuid4(),
         "research_run_id": uuid4(),
@@ -3374,19 +3445,19 @@ async def test_persistence_rejects_incomplete_final_state(invalid: str) -> None:
         "investigations": {
             company_id: CompanyInvestigationState(company_id=company_id, stopped=True)
         },
-        "company_qualifications": {company_id: result},
+        "research_company_qualifications": {company_id: result},
     }
     if invalid == "missing_result":
-        state["company_qualifications"] = {}
+        state["research_company_qualifications"] = {}
     elif invalid == "wrong_company":
-        state["company_qualifications"] = {uuid4(): result}
+        state["research_company_qualifications"] = {uuid4(): result}
     elif invalid == "active":
         state["active_company_ids"] = [company_id]
     else:
         state["research_run_id"] = None
     with pytest.raises(ValueError):
-        await nodes.persist_company_qualifications(state)
-    nodes._research.persist_company_qualifications.assert_not_awaited()
+        await nodes.persist_research_company_qualifications(state)
+    nodes._research.persist_research_company_qualifications.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -3397,7 +3468,7 @@ async def test_persistence_failure_prevents_run_completion(
 
     model = campaign()
     service = ResearchServiceFake()
-    service.persist_company_qualifications = AsyncMock(
+    service.persist_research_company_qualifications = AsyncMock(
         side_effect=RuntimeError("Snapshot write failed")
     )
     service.complete_run = AsyncMock()
@@ -3477,11 +3548,9 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
     state["active_company_ids"] = []
     qualification_result = await nodes.qualify_companies(state)
     state.update(qualification_result)
-    result = qualification_result["company_qualifications"][company_id]
+    result = qualification_result["research_company_qualifications"][company_id]
     assert result.criteria[0].status is (
-        QualificationStatus.MATCH
-        if outcome == "facts"
-        else QualificationStatus.UNKNOWN
+        QualificationStatus.MATCH if outcome == "facts" else QualificationStatus.UNKNOWN
     )
     assert result.criteria[0].evidence_ids == ([item.id] if outcome == "facts" else [])
     assert provider.generate_structured.await_count == (
@@ -3546,7 +3615,9 @@ async def test_discovery_size_mismatch_continues_unknown_criterion_research() ->
 
 
 @pytest.mark.asyncio
-async def test_discovery_evidence_resolving_all_criteria_avoids_company_search() -> None:
+async def test_discovery_evidence_resolving_all_criteria_avoids_company_search() -> (
+    None
+):
     class DiscoveryEvidenceFake(ExtractionFake):
         async def generate_structured(self, **kwargs: object) -> object:
             if kwargs["response_model"] is ExtractedEvidenceItems:
@@ -3578,7 +3649,9 @@ async def test_discovery_evidence_resolving_all_criteria_avoids_company_search()
             return await super().generate_structured(**kwargs)
 
     model = campaign()
-    model.technologies = ["Java", ]
+    model.technologies = [
+        "Java",
+    ]
     model.company_size = {"min": 100}
     url = "https://candidate.example/about"
     search = SearchFake([SearchResult(title="Candidate 0", url=url)])
@@ -3677,7 +3750,9 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Spring", ]
+    model.technologies = [
+        "Spring",
+    ]
     company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
     generic = SearchResult(
         title="Careers", url="https://acme.example/careers", snippet="Open roles"
@@ -3725,9 +3800,7 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
 
 
 @pytest.mark.asyncio
-async def test_source_selection_prioritizes_company_specific_unknown_subjects() -> (
-    None
-):
+async def test_source_selection_prioritizes_company_specific_unknown_subjects() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
@@ -3815,7 +3888,7 @@ async def test_unknown_criteria_use_remaining_rounds_then_resolve() -> None:
         state["investigations"][company.id].stop_reason
         is InvestigationStopReason.MAX_ROUNDS
     )
-    result = (await nodes.qualify_companies(state))["company_qualifications"][
+    result = (await nodes.qualify_companies(state))["research_company_qualifications"][
         company.id
     ]
     assert result.status.value == "INSUFFICIENT_EVIDENCE"
@@ -3827,7 +3900,9 @@ async def test_size_mismatch_is_retained_after_all_criteria_resolve() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Java", ]
+    model.technologies = [
+        "Java",
+    ]
     model.company_size = {"max": 500}
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
@@ -3866,7 +3941,7 @@ async def test_size_mismatch_is_retained_after_all_criteria_resolve() -> None:
         state["investigations"][company.id].stop_reason
         is InvestigationStopReason.CRITERIA_RESOLVED
     )
-    result = (await nodes.qualify_companies(state))["company_qualifications"][
+    result = (await nodes.qualify_companies(state))["research_company_qualifications"][
         company.id
     ]
     assert result.status.value == "NOT_QUALIFIED"

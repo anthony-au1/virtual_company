@@ -7,50 +7,59 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.db.models import CampaignTarget, Company
+from virtual_company.db.models import CampaignTarget, ResearchCompany
 from virtual_company.repositories._helpers import apply_updates, create_values
-from virtual_company.repositories.dtos import CompanyCreate, CompanyUpdate
+from virtual_company.repositories.dtos import (
+    ResearchCompanyCreate,
+    ResearchCompanyUpdate,
+)
 from virtual_company.research.normalization import normalize_domain
 
 
-class CompanyRepository:
+class ResearchCompanyRepository:
     """Provide asynchronous persistence operations for companies."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(self, data: CompanyCreate) -> Company:
-        company = Company(**create_values(data))
+    async def create(self, data: ResearchCompanyCreate) -> ResearchCompany:
+        company = ResearchCompany(**create_values(data))
         self._session.add(company)
         await self._session.flush()
         await self._session.refresh(company)
         return company
 
-    async def get_by_id(self, company_id: UUID) -> Company | None:
-        return await self._session.get(Company, company_id)
+    async def get_by_id(self, company_id: UUID) -> ResearchCompany | None:
+        return await self._session.get(ResearchCompany, company_id)
 
-    async def get_by_normalized_domain(self, domain: str) -> Company | None:
+    async def get_by_normalized_domain(self, domain: str) -> ResearchCompany | None:
         """Return the company whose stored domain normalizes to ``domain``."""
         companies = await self._session.scalars(
-            select(Company).where(Company.domain.is_not(None))
+            select(ResearchCompany).where(ResearchCompany.domain.is_not(None))
         )
         return next(
-            (company for company in companies if normalize_domain(company.domain) == domain),
+            (
+                company
+                for company in companies
+                if normalize_domain(company.domain) == domain
+            ),
             None,
         )
 
-    async def list(self) -> list[Company]:
-        return list(await self._session.scalars(select(Company)))
+    async def list(self) -> list[ResearchCompany]:
+        return list(await self._session.scalars(select(ResearchCompany)))
 
-    async def list_by_campaign_id(self, campaign_id: UUID) -> list[Company]:
+    async def list_by_campaign_id(self, campaign_id: UUID) -> list[ResearchCompany]:
         statement = (
-            select(Company)
+            select(ResearchCompany)
             .join(CampaignTarget)
             .where(CampaignTarget.campaign_id == campaign_id)
         )
         return list(await self._session.scalars(statement))
 
-    async def update(self, company_id: UUID, data: CompanyUpdate) -> Company | None:
+    async def update(
+        self, company_id: UUID, data: ResearchCompanyUpdate
+    ) -> ResearchCompany | None:
         company = await self.get_by_id(company_id)
         if company is None:
             return None

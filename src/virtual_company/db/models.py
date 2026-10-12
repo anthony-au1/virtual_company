@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -65,10 +66,10 @@ class Campaign(Base):
     research_runs: Mapped[list[ResearchRun]] = relationship(back_populates="campaign")
 
 
-class Company(Base):
+class ResearchCompany(Base):
     """A company discovered during research."""
 
-    __tablename__ = "company"
+    __tablename__ = "research_company"
 
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
@@ -92,9 +93,11 @@ class Company(Base):
     )
 
     campaign_targets: Mapped[list[CampaignTarget]] = relationship(
-        back_populates="company"
+        back_populates="research_company"
     )
-    evidence: Mapped[list[Evidence]] = relationship(back_populates="company")
+    research_evidence: Mapped[list[ResearchEvidence]] = relationship(
+        back_populates="research_company"
+    )
 
 
 class CampaignTarget(Base):
@@ -106,7 +109,12 @@ class CampaignTarget(Base):
         PostgreSQLUUID(as_uuid=True), ForeignKey("campaign.id"), primary_key=True
     )
     company_id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), ForeignKey("company.id"), primary_key=True
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "research_company.id",
+            name="campaign_targets_research_company_id_fkey",
+        ),
+        primary_key=True,
     )
     score: Mapped[Decimal | None] = mapped_column(Numeric)
     status: Mapped[str | None] = mapped_column(String)
@@ -115,22 +123,30 @@ class CampaignTarget(Base):
     )
 
     campaign: Mapped[Campaign] = relationship(back_populates="targets")
-    company: Mapped[Company] = relationship(back_populates="campaign_targets")
+    research_company: Mapped[ResearchCompany] = relationship(
+        back_populates="campaign_targets"
+    )
 
 
-class Evidence(Base):
+class ResearchEvidence(Base):
     """A source-backed claim about a company."""
 
-    __tablename__ = "evidence"
+    __tablename__ = "research_evidence"
+    __table_args__ = (Index("ix_research_evidence_research_run_id", "research_run_id"),)
 
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
     )
     company_id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), ForeignKey("company.id")
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "research_company.id",
+            name="research_evidence_research_company_id_fkey",
+        ),
     )
     research_run_id: Mapped[UUID | None] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), ForeignKey("research_run.id")
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("research_run.id", name="research_evidence_research_run_id_fkey"),
     )
     criterion: Mapped[str | None] = mapped_column(String(50))
     subject: Mapped[str | None] = mapped_column(String(500))
@@ -147,8 +163,12 @@ class Evidence(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    company: Mapped[Company] = relationship(back_populates="evidence")
-    research_run: Mapped[ResearchRun | None] = relationship(back_populates="evidence")
+    research_company: Mapped[ResearchCompany] = relationship(
+        back_populates="research_evidence"
+    )
+    research_run: Mapped[ResearchRun | None] = relationship(
+        back_populates="research_evidence"
+    )
 
 
 class ResearchRun(Base):
@@ -174,18 +194,20 @@ class ResearchRun(Base):
     )
 
     campaign: Mapped[Campaign] = relationship(back_populates="research_runs")
-    evidence: Mapped[list[Evidence]] = relationship(back_populates="research_run")
+    research_evidence: Mapped[list[ResearchEvidence]] = relationship(
+        back_populates="research_run"
+    )
 
 
-class CompanyQualificationSnapshot(Base):
+class ResearchCompanyQualification(Base):
     """One final qualification result per company and research run."""
 
-    __tablename__ = "company_qualifications"
+    __tablename__ = "research_company_qualifications"
     __table_args__ = (
         UniqueConstraint(
             "research_run_id",
             "company_id",
-            name="uq_company_qualifications_run_company",
+            name="uq_research_company_qualifications_run_company",
         ),
     )
 
@@ -193,13 +215,28 @@ class CompanyQualificationSnapshot(Base):
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
     )
     research_run_id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), ForeignKey("research_run.id"), nullable=False
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "research_run.id",
+            name="research_company_qualifications_research_run_id_fkey",
+        ),
+        nullable=False,
     )
     campaign_id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), ForeignKey("campaign.id"), nullable=False
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "campaign.id",
+            name="research_company_qualifications_campaign_id_fkey",
+        ),
+        nullable=False,
     )
     company_id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), ForeignKey("company.id"), nullable=False
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "research_company.id",
+            name="research_company_qualifications_research_company_id_fkey",
+        ),
+        nullable=False,
     )
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     criteria_results: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

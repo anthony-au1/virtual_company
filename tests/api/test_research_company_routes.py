@@ -8,28 +8,33 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from virtual_company.api.dependencies import get_company_service, get_evidence_service
-from virtual_company.db.models import Company, Evidence
+from virtual_company.api.dependencies import (
+    get_research_company_service,
+    get_research_evidence_service,
+)
+from virtual_company.db.models import ResearchCompany, ResearchEvidence
 from virtual_company.main import app
 
 
-class CompanyServiceStub:
+class ResearchCompanyServiceStub:
     """In-memory company service substitute for route tests."""
 
-    def __init__(self, company: Company | None) -> None:
+    def __init__(self, company: ResearchCompany | None) -> None:
         self.company = company
 
-    async def get_by_id(self, _company_id: object) -> Company | None:
+    async def get_by_id(self, _company_id: object) -> ResearchCompany | None:
         return self.company
 
 
-class EvidenceServiceStub:
+class ResearchEvidenceServiceStub:
     """In-memory evidence service substitute for route tests."""
 
-    def __init__(self, evidence: list[Evidence] | None) -> None:
+    def __init__(self, evidence: list[ResearchEvidence] | None) -> None:
         self.evidence = evidence
 
-    async def list_for_company(self, _company_id: object) -> list[Evidence] | None:
+    async def list_for_research_company(
+        self, _company_id: object
+    ) -> list[ResearchEvidence] | None:
         return self.evidence
 
 
@@ -43,8 +48,10 @@ def clear_dependency_overrides() -> None:
 
 def test_get_company_and_evidence_responses() -> None:
     now = datetime.now(UTC)
-    company = Company(id=uuid4(), name="Example", created_at=now, updated_at=now)
-    evidence = Evidence(
+    company = ResearchCompany(
+        id=uuid4(), name="Example", created_at=now, updated_at=now
+    )
+    evidence = ResearchEvidence(
         id=uuid4(),
         company_id=company.id,
         claim="Uses Python",
@@ -53,8 +60,12 @@ def test_get_company_and_evidence_responses() -> None:
         observed_at=now,
         created_at=now,
     )
-    app.dependency_overrides[get_company_service] = lambda: CompanyServiceStub(company)
-    app.dependency_overrides[get_evidence_service] = lambda: EvidenceServiceStub([evidence])
+    app.dependency_overrides[get_research_company_service] = lambda: ResearchCompanyServiceStub(
+        company
+    )
+    app.dependency_overrides[get_research_evidence_service] = lambda: (
+        ResearchEvidenceServiceStub([evidence])
+    )
     client = TestClient(app)
 
     company_response = client.get(f"/api/v1/companies/{company.id}")
@@ -67,8 +78,12 @@ def test_get_company_and_evidence_responses() -> None:
 
 
 def test_missing_company_returns_not_found() -> None:
-    app.dependency_overrides[get_company_service] = lambda: CompanyServiceStub(None)
-    app.dependency_overrides[get_evidence_service] = lambda: EvidenceServiceStub(None)
+    app.dependency_overrides[get_research_company_service] = lambda: ResearchCompanyServiceStub(
+        None
+    )
+    app.dependency_overrides[get_research_evidence_service] = lambda: (
+        ResearchEvidenceServiceStub(None)
+    )
     client = TestClient(app)
 
     assert client.get(f"/api/v1/companies/{uuid4()}").status_code == 404

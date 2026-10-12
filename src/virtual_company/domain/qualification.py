@@ -11,7 +11,7 @@ class QualificationStatus(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
-class CompanyQualificationStatus(StrEnum):
+class ResearchCompanyQualificationStatus(StrEnum):
     QUALIFIED = "QUALIFIED"
     NOT_QUALIFIED = "NOT_QUALIFIED"
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
@@ -27,7 +27,7 @@ class CriterionQualification:
 
 
 @dataclass(frozen=True)
-class CompanyQualification:
+class ResearchCompanyQualification:
     company_id: UUID
-    status: CompanyQualificationStatus
+    status: ResearchCompanyQualificationStatus
     criteria: list[CriterionQualification]

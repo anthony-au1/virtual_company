@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from virtual_company.api.campaigns import router as campaigns_router
-from virtual_company.api.companies import router as companies_router
+from virtual_company.api.research_companies import router as companies_router
 from virtual_company.api.research_runs import router as research_runs_router
 from virtual_company.tools import WebSearchConfigurationError
 

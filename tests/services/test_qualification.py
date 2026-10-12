@@ -6,8 +6,10 @@ from uuid import UUID, uuid4
 import pytest
 
 from virtual_company.domain.criteria import CompanySizeCriteria
-from virtual_company.domain.qualification import CompanyQualificationStatus as Overall
 from virtual_company.domain.qualification import QualificationStatus as Status
+from virtual_company.domain.qualification import (
+    ResearchCompanyQualificationStatus as Overall,
+)
 from virtual_company.research.models import (
     CategoricalEvidenceFact,
     EmployeeCountEvidenceFact,
@@ -189,7 +191,9 @@ def test_regional_facts_prove_minimum_only_from_lower_bound(
     evidence_id = uuid4()
     result = qualify_company(
         campaign(minimum=500),
-        QualificationFacts(employee_counts=[count(value, evidence_id, scope="regional")]),
+        QualificationFacts(
+            employee_counts=[count(value, evidence_id, scope="regional")]
+        ),
     )[-1]
     assert result.status is expected
     assert result.evidence_ids == ([evidence_id] if expected is Status.MATCH else [])
@@ -215,13 +219,13 @@ def test_maximum_mismatch_wins_over_smaller_observations() -> None:
     "value,expected",
     [(700, Status.UNKNOWN), (7000, Status.MISMATCH)],
 )
-def test_regional_facts_never_prove_maximum_match(
-    value: int, expected: Status
-) -> None:
+def test_regional_facts_never_prove_maximum_match(value: int, expected: Status) -> None:
     evidence_id = uuid4()
     result = qualify_company(
         campaign(maximum=5000),
-        QualificationFacts(employee_counts=[count(value, evidence_id, scope="regional")]),
+        QualificationFacts(
+            employee_counts=[count(value, evidence_id, scope="regional")]
+        ),
     )[-1]
     assert result.status is expected
     assert result.evidence_ids == ([evidence_id] if expected is Status.MISMATCH else [])
@@ -257,7 +261,9 @@ def test_min_and_max_are_evaluated_independently() -> None:
 
     results = qualify_company(
         campaign(minimum=500, maximum=5000),
-        QualificationFacts(employee_counts=[count(1000, uuid4()), count(8000, uuid4())]),
+        QualificationFacts(
+            employee_counts=[count(1000, uuid4()), count(8000, uuid4())]
+        ),
     )
     assert [item.status for item in results[-2:]] == [Status.MATCH, Status.MISMATCH]
 

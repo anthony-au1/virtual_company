@@ -54,7 +54,7 @@ class CampaignUpdate(BaseModel):
     status: str | None = None
 
 
-class CompanyCreate(BaseModel):
+class ResearchCompanyCreate(BaseModel):
     name: str
     website: str | None = None
     domain: str | None = None
@@ -65,7 +65,7 @@ class CompanyCreate(BaseModel):
     employee_number: int | None = None
 
 
-class CompanyUpdate(BaseModel):
+class ResearchCompanyUpdate(BaseModel):
     name: str | None = None
     website: str | None = None
     domain: str | None = None
@@ -88,7 +88,7 @@ class CampaignTargetUpdate(BaseModel):
     status: str | None = None
 
 
-class EvidenceCreate(BaseModel):
+class ResearchEvidenceCreate(BaseModel):
     company_id: UUID
     research_run_id: UUID | None = None
     criterion: str | None = None
@@ -102,7 +102,7 @@ class EvidenceCreate(BaseModel):
     observed_at: datetime | None = None
 
 
-class EvidenceUpdate(BaseModel):
+class ResearchEvidenceUpdate(BaseModel):
     criterion: str | None = None
     subject: str | None = None
     claim: str | None = None
@@ -131,7 +131,7 @@ class ResearchRunUpdate(BaseModel):
     companies_found: int | None = None
 
 
-class CompanyQualificationUpsert(BaseModel):
+class ResearchCompanyQualificationUpsert(BaseModel):
     research_run_id: UUID
     campaign_id: UUID
     company_id: UUID

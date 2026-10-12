@@ -52,4 +52,4 @@ async def test_list_with_summary_uses_one_grouped_query() -> None:
     statement = session.execute.await_args.args[0]
     sql = str(statement.compile(dialect=postgresql.dialect())).lower()
     assert "group by research_run.id, campaign.id" in sql
-    assert "left outer join company_qualifications" in sql
+    assert "left outer join research_company_qualifications" in sql

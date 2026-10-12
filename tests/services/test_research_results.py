@@ -9,9 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import (
     Campaign,
-    Company,
-    CompanyQualificationSnapshot,
-    Evidence,
+    ResearchCompany,
+    ResearchCompanyQualification,
+    ResearchEvidence,
     ResearchRun,
 )
 from virtual_company.services.research_results import (
@@ -62,11 +62,11 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         companies_found=3,
         created_at=now,
     )
-    company_a = Company(
+    company_a = ResearchCompany(
         id=uuid4(), name="Alpha", website="https://alpha.example"
     )
-    company_b = Company(id=uuid4(), name="Beta")
-    java_evidence = Evidence(
+    company_b = ResearchCompany(id=uuid4(), name="Beta")
+    java_evidence = ResearchEvidence(
         id=uuid4(),
         company_id=company_a.id,
         research_run_id=run.id,
@@ -78,7 +78,7 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         observed_at=now,
         created_at=now,
     )
-    unrelated = Evidence(
+    unrelated = ResearchEvidence(
         id=uuid4(),
         company_id=company_b.id,
         research_run_id=run.id,
@@ -88,7 +88,7 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         observed_at=now,
         created_at=now,
     )
-    snapshot_a = CompanyQualificationSnapshot(
+    snapshot_a = ResearchCompanyQualification(
         id=uuid4(),
         research_run_id=run.id,
         campaign_id=campaign.id,
@@ -121,7 +121,7 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         },
         created_at=now,
     )
-    snapshot_b = CompanyQualificationSnapshot(
+    snapshot_b = ResearchCompanyQualification(
         id=uuid4(),
         research_run_id=run.id,
         campaign_id=campaign.id,

@@ -29,7 +29,7 @@ from virtual_company.workflows.research.prompts import (
 )
 
 
-class EvidenceForExtraction(Protocol):
+class ResearchEvidenceForExtraction(Protocol):
     id: UUID
     criterion: str | None
     subject: str | None
@@ -54,7 +54,7 @@ class QualificationEvidenceExtractor:
     async def extract(
         self,
         campaign: CampaignForQualification,
-        evidence: Sequence[EvidenceForExtraction],
+        evidence: Sequence[ResearchEvidenceForExtraction],
         *,
         previous_entry: QualificationFactsCacheEntry | None = None,
         target_criterion_ids: set[str] | None = None,
@@ -204,7 +204,7 @@ class QualificationEvidenceExtractor:
     def _validate_references(
         facts: QualificationFacts,
         criteria_by_id: dict[str, CampaignCriterion],
-        evidence_by_id: dict[UUID, EvidenceForExtraction],
+        evidence_by_id: dict[UUID, ResearchEvidenceForExtraction],
         allowed_evidence_ids: set[UUID],
     ) -> QualificationFacts:
         categorical = []
@@ -259,7 +259,7 @@ class QualificationEvidenceExtractor:
 
     @staticmethod
     def _evidence_supports_criterion(
-        evidence: EvidenceForExtraction, criterion: CampaignCriterion
+        evidence: ResearchEvidenceForExtraction, criterion: CampaignCriterion
     ) -> bool:
         if evidence.criterion != criterion.criterion:
             return False

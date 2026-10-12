@@ -10,13 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.domain.criteria import CompanySizeCriteria
 from virtual_company.domain.qualification import (
-    CompanyQualificationStatus,
     QualificationStatus,
+    ResearchCompanyQualificationStatus,
 )
-from virtual_company.repositories.company_qualification import (
-    CompanyQualificationRepository,
+from virtual_company.repositories.research_company_qualification import (
+    ResearchCompanyQualificationRepository,
 )
-from virtual_company.repositories.evidence import EvidenceRepository
+from virtual_company.repositories.research_evidence import ResearchEvidenceRepository
 from virtual_company.repositories.research_run import ResearchRunRepository
 
 
@@ -77,7 +77,7 @@ class ResearchSummaryView:
 
 
 @dataclass(frozen=True)
-class CriterionEvidenceView:
+class ResearchCriterionEvidenceView:
     id: UUID
     claim: str
     evidence_text: str
@@ -92,15 +92,15 @@ class CriterionResultView:
     subject: str | None
     status: QualificationStatus
     reason: str
-    evidence: list[CriterionEvidenceView]
+    evidence: list[ResearchCriterionEvidenceView]
 
 
 @dataclass(frozen=True)
-class CompanyResultView:
+class ResearchCompanyResultView:
     company_id: UUID
     name: str
     website: str | None
-    qualification_status: CompanyQualificationStatus
+    qualification_status: ResearchCompanyQualificationStatus
     summary: StatusCountsView
     criteria: list[CriterionResultView]
 
@@ -110,7 +110,7 @@ class ResearchResultsView:
     research_run: ResearchRunView
     campaign: CampaignResultView
     summary: ResearchSummaryView
-    companies: list[CompanyResultView]
+    companies: list[ResearchCompanyResultView]
 
 
 @dataclass(frozen=True)
@@ -141,8 +141,8 @@ class ResearchResultsService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._runs = ResearchRunRepository(session)
-        self._qualifications = CompanyQualificationRepository(session)
-        self._evidence = EvidenceRepository(session)
+        self._qualifications = ResearchCompanyQualificationRepository(session)
+        self._evidence = ResearchEvidenceRepository(session)
 
     async def list_runs(self) -> list[ResearchRunListItemView]:
         """Return compact run summaries without loading result criteria or evidence."""
@@ -173,10 +173,12 @@ class ResearchResultsService:
             (item.company_id, item.id): item for item in run_evidence
         }
 
-        qualification_counts = {status: 0 for status in CompanyQualificationStatus}
-        companies: list[CompanyResultView] = []
+        qualification_counts = {
+            status: 0 for status in ResearchCompanyQualificationStatus
+        }
+        companies: list[ResearchCompanyResultView] = []
         for snapshot, company in rows:
-            qualification_status = CompanyQualificationStatus(snapshot.status)
+            qualification_status = ResearchCompanyQualificationStatus(snapshot.status)
             qualification_counts[qualification_status] += 1
             criteria: list[CriterionResultView] = []
             summary_counts = {status: 0 for status in QualificationStatus}
@@ -190,7 +192,7 @@ class ResearchResultsService:
                     )
                     if item is not None:
                         evidence.append(
-                            CriterionEvidenceView(
+                            ResearchCriterionEvidenceView(
                                 id=item.id,
                                 claim=item.claim,
                                 evidence_text=item.evidence_text,
@@ -209,7 +211,7 @@ class ResearchResultsService:
                     )
                 )
             companies.append(
-                CompanyResultView(
+                ResearchCompanyResultView(
                     company_id=company.id,
                     name=company.name,
                     website=company.website,
@@ -250,12 +252,14 @@ class ResearchResultsService:
             ),
             summary=ResearchSummaryView(
                 researched=len(companies),
-                qualified=qualification_counts[CompanyQualificationStatus.QUALIFIED],
+                qualified=qualification_counts[
+                    ResearchCompanyQualificationStatus.QUALIFIED
+                ],
                 not_qualified=qualification_counts[
-                    CompanyQualificationStatus.NOT_QUALIFIED
+                    ResearchCompanyQualificationStatus.NOT_QUALIFIED
                 ],
                 insufficient_evidence=qualification_counts[
-                    CompanyQualificationStatus.INSUFFICIENT_EVIDENCE
+                    ResearchCompanyQualificationStatus.INSUFFICIENT_EVIDENCE
                 ],
             ),
             companies=companies,

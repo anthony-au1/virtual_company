@@ -151,7 +151,7 @@ class CompanyInvestigationState(BaseModel):
         )
 
 
-class ValidatedEvidence(BaseModel):
+class ValidatedResearchEvidence(BaseModel):
     """Evidence ready to persist, with application-assigned provenance."""
 
     company_id: UUID

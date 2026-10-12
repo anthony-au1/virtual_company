@@ -106,14 +106,14 @@ class ResearchWorkflow:
                         "company_fetch_batch_stats": {},
                         "company_web_pages": {},
                         "attributable_company_web_pages": {},
-                        "validated_evidence": [],
+                        "validated_research_evidence": [],
                         "investigations": {},
                         "active_company_ids": [],
                         "adaptive_mode": False,
                         "company_search_started": False,
                         "criterion_qualifications": {},
                         "qualification_facts": {},
-                        "company_qualifications": {},
+                        "research_company_qualifications": {},
                         "error": None,
                     },
                     config={"recursion_limit": 1_000},
@@ -256,7 +256,9 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
     )
     graph.add_node(
         "persist_evidence",
-        _with_failure_handling(nodes.persist_evidence, "persist_evidence", research),
+        _with_failure_handling(
+            nodes.persist_research_evidence, "persist_evidence", research
+        ),
     )
     graph.add_node(
         "check_evidence_coverage",
@@ -275,10 +277,10 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         _with_failure_handling(nodes.qualify_companies, "qualify_companies", research),
     )
     graph.add_node(
-        "persist_company_qualifications",
+        "persist_research_company_qualifications",
         _with_failure_handling(
-            nodes.persist_company_qualifications,
-            "persist_company_qualifications",
+            nodes.persist_research_company_qualifications,
+            "persist_research_company_qualifications",
             research,
         ),
     )
@@ -315,9 +317,9 @@ def build_research_graph(nodes: ResearchNodes, research: ResearchService):
         },
     )
     graph.add_edge("generate_followup_queries", "search_company_sources")
-    graph.add_edge("qualify_companies", "persist_company_qualifications")
+    graph.add_edge("qualify_companies", "persist_research_company_qualifications")
     graph.add_conditional_edges(
-        "persist_company_qualifications",
+        "persist_research_company_qualifications",
         route_candidate_pool,
         {
             "refill": "persist_companies",

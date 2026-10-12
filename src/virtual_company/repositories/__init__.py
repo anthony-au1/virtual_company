@@ -2,24 +2,24 @@
 
 from virtual_company.repositories.campaign import CampaignRepository
 from virtual_company.repositories.campaign_target import CampaignTargetRepository
-from virtual_company.repositories.company import CompanyRepository
-from virtual_company.repositories.company_qualification import (
-    CompanyQualificationRepository,
-)
 from virtual_company.repositories.dtos import (
     CampaignCreate,
     CampaignTargetCreate,
     CampaignTargetUpdate,
     CampaignUpdate,
-    CompanyCreate,
-    CompanyQualificationUpsert,
-    CompanyUpdate,
-    EvidenceCreate,
-    EvidenceUpdate,
+    ResearchCompanyCreate,
+    ResearchCompanyQualificationUpsert,
+    ResearchCompanyUpdate,
+    ResearchEvidenceCreate,
+    ResearchEvidenceUpdate,
     ResearchRunCreate,
     ResearchRunUpdate,
 )
-from virtual_company.repositories.evidence import EvidenceRepository
+from virtual_company.repositories.research_company import ResearchCompanyRepository
+from virtual_company.repositories.research_company_qualification import (
+    ResearchCompanyQualificationRepository,
+)
+from virtual_company.repositories.research_evidence import ResearchEvidenceRepository
 from virtual_company.repositories.research_run import ResearchRunRepository
 
 __all__ = [
@@ -29,14 +29,14 @@ __all__ = [
     "CampaignTargetRepository",
     "CampaignTargetUpdate",
     "CampaignUpdate",
-    "CompanyCreate",
-    "CompanyQualificationRepository",
-    "CompanyQualificationUpsert",
-    "CompanyRepository",
-    "CompanyUpdate",
-    "EvidenceCreate",
-    "EvidenceRepository",
-    "EvidenceUpdate",
+    "ResearchCompanyCreate",
+    "ResearchCompanyQualificationRepository",
+    "ResearchCompanyQualificationUpsert",
+    "ResearchCompanyRepository",
+    "ResearchCompanyUpdate",
+    "ResearchEvidenceCreate",
+    "ResearchEvidenceRepository",
+    "ResearchEvidenceUpdate",
     "ResearchRunCreate",
     "ResearchRunRepository",
     "ResearchRunUpdate",
