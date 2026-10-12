@@ -25,7 +25,10 @@ class ResearchRunNotFoundError(LookupError):
 
 
 class ActiveResearchRunError(ValueError):
-    """Raised when an active run cannot be safely deleted."""
+    """Raised when a non-terminal run cannot be safely deleted."""
+
+
+TERMINAL_RESEARCH_RUN_STATUSES = frozenset({"COMPLETED", "FAILED"})
 
 
 @dataclass(frozen=True)
@@ -263,8 +266,10 @@ class ResearchResultsService:
         run = await self._runs.get_by_id_for_update(research_run_id)
         if run is None:
             return False
-        if run.status == "RUNNING":
-            raise ActiveResearchRunError("A running research run cannot be deleted")
+        if run.status not in TERMINAL_RESEARCH_RUN_STATUSES:
+            raise ActiveResearchRunError(
+                "A non-terminal research run cannot be deleted"
+            )
         await self._evidence.delete_by_research_run_id(research_run_id)
         await self._qualifications.delete_by_research_run_id(research_run_id)
         await self._runs.delete(run)

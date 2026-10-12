@@ -76,10 +76,14 @@ function campaign(id: string, name: string): Campaign {
   };
 }
 
-function run(runId: string, campaignId: string): ResearchRunListItem {
+function run(
+  runId: string,
+  campaignId: string,
+  status: string = "COMPLETED",
+): ResearchRunListItem {
   return {
     run_id: runId,
-    status: "COMPLETED",
+    status,
     created_at: "2026-10-05T01:00:00Z",
     started_at: "2026-10-05T01:00:00Z",
     completed_at: "2026-10-05T01:10:00Z",
@@ -288,6 +292,7 @@ describe("CampaignDetailsPage", () => {
     );
     mockListRuns.mockResolvedValue([
       run("run-a1", "campaign-a"),
+      run("run-a2", "campaign-a", "RUNNING"),
       run("run-b1", "campaign-b"),
     ]);
     renderWithQuery(<CampaignDetailsPage campaignId="campaign-a" />);
@@ -301,7 +306,8 @@ describe("CampaignDetailsPage", () => {
     expect(screen.getByText("≥ 500 employees")).toBeInTheDocument();
     expect(screen.getByText("≤ 5000 employees")).toBeInTheDocument();
     expect(screen.getByText("run-a1")).toBeInTheDocument();
-    expect(screen.getByText(/Started/)).toBeInTheDocument();
+    expect(screen.getByText("run-a2")).toBeInTheDocument();
+    expect(screen.getAllByText(/Started/)).toHaveLength(2);
     expect(screen.queryByText("run-b1")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Edit Campaign" })).toHaveAttribute(
       "href",
@@ -310,6 +316,12 @@ describe("CampaignDetailsPage", () => {
     expect(
       screen.getByRole("link", { name: "Open research run run-a1" }),
     ).toHaveAttribute("href", "/research/run-a1");
+    expect(
+      screen.getByRole("button", { name: "Delete run run-a1" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete run run-a2" }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides campaign editing after the campaign is sealed", async () => {

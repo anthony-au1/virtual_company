@@ -9,6 +9,7 @@ import { CampaignStatusBadge } from "@/components/campaigns/campaigns-page";
 import {
   RunStatus,
   formatDate,
+  isTerminalRunStatus,
 } from "@/components/research/research-runs-page";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -261,7 +262,9 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
                       >
                         <ArrowRight aria-hidden="true" />
                       </Link>
-                      <DeleteRunAction runId={run.run_id} />
+                      {isTerminalRunStatus(run.status) ? (
+                        <DeleteRunAction runId={run.run_id} />
+                      ) : null}
                     </div>
                   </li>
                 ))}

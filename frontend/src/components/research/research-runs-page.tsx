@@ -129,7 +129,9 @@ export function ResearchRunsPage() {
                         Open{" "}
                         <ArrowRight aria-hidden="true" data-icon="inline-end" />
                       </Link>
-                      <DeleteRunAction runId={run.run_id} />
+                      {isTerminalRunStatus(run.status) ? (
+                        <DeleteRunAction runId={run.run_id} />
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -154,6 +156,10 @@ export function RunStatus({ status }: { status: string }) {
       {status.replaceAll("_", " ")}
     </Badge>
   );
+}
+
+export function isTerminalRunStatus(status: string) {
+  return status === "COMPLETED" || status === "FAILED";
 }
 
 export function formatDate(value: string | null) {

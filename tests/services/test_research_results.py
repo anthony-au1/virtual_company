@@ -167,7 +167,10 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
 
 
 @pytest.mark.asyncio
-async def test_deleting_one_terminal_run_removes_only_its_owned_data() -> None:
+@pytest.mark.parametrize("status", ["COMPLETED", "FAILED"])
+async def test_deleting_one_terminal_run_removes_only_its_owned_data(
+    status: str,
+) -> None:
     service, session = build_service()
     run_id = uuid4()
     sealed_at = datetime.now(UTC)
@@ -184,7 +187,7 @@ async def test_deleting_one_terminal_run_removes_only_its_owned_data() -> None:
         id=run_id,
         campaign_id=campaign.id,
         campaign=campaign,
-        status="COMPLETED",
+        status=status,
     )
     service._runs.get_by_id_for_update.return_value = run
 
@@ -198,13 +201,14 @@ async def test_deleting_one_terminal_run_removes_only_its_owned_data() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deleting_run_rejects_active_and_unknown_runs() -> None:
+async def test_deleting_run_rejects_non_terminal_and_unknown_runs() -> None:
     service, session = build_service()
-    service._runs.get_by_id_for_update.return_value = ResearchRun(
-        id=uuid4(), campaign_id=uuid4(), status="RUNNING"
-    )
-    with pytest.raises(ValueError, match="running research run cannot be deleted"):
-        await service.delete_run(uuid4())
+    for status in ("RUNNING", "PENDING"):
+        service._runs.get_by_id_for_update.return_value = ResearchRun(
+            id=uuid4(), campaign_id=uuid4(), status=status
+        )
+        with pytest.raises(ValueError, match="non-terminal research run"):
+            await service.delete_run(uuid4())
     service._evidence.delete_by_research_run_id.assert_not_awaited()
     service._qualifications.delete_by_research_run_id.assert_not_awaited()
     session.commit.assert_not_awaited()

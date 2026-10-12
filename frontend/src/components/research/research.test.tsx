@@ -175,6 +175,12 @@ describe("ResearchRunsPage", () => {
       screen.getByRole("link", { name: "Open Australian Payments Research" }),
     ).toHaveAttribute("href", "/research/run-b");
     expect(screen.getByText("RUNNING")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Delete run run-a" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete run run-b" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows loading, empty, and request error states", async () => {
