@@ -18,6 +18,7 @@ export type Campaign = {
   status: CampaignStatus;
   created_at: string;
   updated_at: string;
+  sealed_at: string | null;
 };
 
 export type CreateCampaignPayload = {
@@ -33,6 +34,17 @@ export type CreateCampaignPayload = {
   target_count: number;
   max_companies_to_research: number;
   status: "DRAFT";
+};
+
+export type UpdateCampaignPayload = {
+  name: string;
+  description: string;
+  target_market: string | null;
+  industry: string | null;
+  technologies: string[];
+  company_size: { min?: number; max?: number } | null;
+  target_count: number;
+  max_companies_to_research: number;
 };
 
 export function listCampaigns(): Promise<Campaign[]> {
@@ -52,4 +64,17 @@ export function createCampaign(
     method: "POST",
     body: payload,
   });
+}
+
+export function updateCampaign(
+  campaignId: string,
+  payload: UpdateCampaignPayload,
+): Promise<Campaign> {
+  return apiFetch<Campaign>(
+    `/api/v1/campaigns/${encodeURIComponent(campaignId)}`,
+    {
+      method: "PATCH",
+      body: payload,
+    },
+  );
 }

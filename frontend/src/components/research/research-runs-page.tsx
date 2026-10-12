@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { DeleteRunAction } from "@/components/research/delete-run-action";
 import { cn } from "@/lib/utils";
 import { listResearchRuns } from "@/lib/api/research";
 import { researchRunsQueryKey } from "@/lib/queries/query-keys";
@@ -27,7 +28,7 @@ export function ResearchRunsPage() {
             Research Runs
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Review persisted company research and qualification results.
+            View persisted company research and qualification results.
           </p>
         </div>
         {query.data && query.data.length > 0 ? (
@@ -83,7 +84,6 @@ export function ResearchRunsPage() {
                   <th className="px-4 py-3 font-medium">Campaign</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Results</th>
-                  <th className="px-4 py-3 font-medium">Review</th>
                   <th className="px-4 py-3 font-medium">Started</th>
                   <th className="px-4 py-3" />
                 </tr>
@@ -115,13 +115,6 @@ export function ResearchRunsPage() {
                         Target {run.campaign.target_count}
                       </span>
                     </td>
-                    <td className="px-4 py-3 tabular-nums">
-                      {run.summary.accepted} accepted
-                      <span className="text-muted-foreground mt-0.5 block text-xs">
-                        {run.summary.rejected} rejected ·{" "}
-                        {run.summary.unreviewed} unreviewed
-                      </span>
-                    </td>
                     <td className="text-muted-foreground px-4 py-3 whitespace-nowrap">
                       {formatDate(run.started_at)}
                     </td>
@@ -136,6 +129,7 @@ export function ResearchRunsPage() {
                         Open{" "}
                         <ArrowRight aria-hidden="true" data-icon="inline-end" />
                       </Link>
+                      <DeleteRunAction runId={run.run_id} />
                     </td>
                   </tr>
                 ))}

@@ -19,19 +19,19 @@ vi.mock("@/lib/api/research", async (importOriginal) => {
     ...actual,
     listResearchRuns: vi.fn(),
     getResearchRunResults: vi.fn(),
-    updateCompanyReview: vi.fn(),
+    deleteResearchRun: vi.fn(),
   };
 });
 
 import {
+  deleteResearchRun,
   getResearchRunResults,
   listResearchRuns,
-  updateCompanyReview,
 } from "@/lib/api/research";
 
 const mockedListRuns = vi.mocked(listResearchRuns);
 const mockedGetResults = vi.mocked(getResearchRunResults);
-const mockedUpdateReview = vi.mocked(updateCompanyReview);
+const mockedDeleteRun = vi.mocked(deleteResearchRun);
 
 function renderWithQuery(ui: React.ReactNode) {
   const client = new QueryClient({
@@ -60,17 +60,11 @@ function run(id: string, name: string): ResearchRunListItem {
       qualified: 1,
       not_qualified: 0,
       insufficient_evidence: 0,
-      accepted: 0,
-      rejected: 0,
-      unreviewed: 1,
     },
   };
 }
 
-function results(
-  runId: string,
-  reviewStatus: "UNREVIEWED" | "ACCEPTED" | "REJECTED" = "UNREVIEWED",
-): ResearchResults {
+function results(runId: string): ResearchResults {
   return {
     research_run: {
       id: runId,
@@ -110,7 +104,6 @@ function results(
         name: "Airwallex",
         website: "https://airwallex.com",
         qualification_status: "QUALIFIED",
-        review_status: reviewStatus,
         summary: {
           matched: 2,
           mismatched: 0,
@@ -205,6 +198,25 @@ describe("ResearchRunsPage", () => {
       "Backend unavailable",
     );
   });
+
+  it("confirms run deletion and removes the run from the list", async () => {
+    mockedListRuns
+      .mockResolvedValueOnce([run("run-a", "Research A")])
+      .mockResolvedValue([]);
+    mockedDeleteRun.mockResolvedValue(undefined);
+    renderWithQuery(<ResearchRunsPage />);
+    await screen.findByText("Research A");
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete run run-a" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "This permanently removes the run and its results.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete Run" }));
+    await waitFor(() => expect(mockedDeleteRun).toHaveBeenCalledWith("run-a"));
+    await waitFor(() =>
+      expect(screen.queryByText("Research A")).not.toBeInTheDocument(),
+    );
+  });
 });
 
 describe("ResearchResultsPage", () => {
@@ -221,7 +233,13 @@ describe("ResearchResultsPage", () => {
     expect(screen.getByText("Java")).toBeInTheDocument();
     expect(screen.getByText("≥ 500")).toBeInTheDocument();
     expect(screen.getByText("AI: QUALIFIED")).toBeInTheDocument();
-    expect(screen.getByText("Human review: UNREVIEWED")).toBeInTheDocument();
+    expect(screen.queryByText(/Human review/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Accept" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reject" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByText(/2 matched · 0 mismatched · 2 unknown/),
     ).toBeInTheDocument();
@@ -243,59 +261,33 @@ describe("ResearchResultsPage", () => {
     ).toHaveAttribute("href", "https://example.com/source");
   });
 
-  it("supports accept, reject, and reset using run and company IDs, then updates review state", async () => {
-    mockedGetResults.mockResolvedValue(results("run-a"));
-    mockedUpdateReview.mockImplementation(
-      async (_runId, companyId, status) => ({
-        company_id: companyId,
-        review_status: status,
-      }),
-    );
+  it("keeps automatic qualification statuses available as filters", async () => {
+    const base = results("run-a");
+    mockedGetResults.mockResolvedValue({
+      ...base,
+      companies: [
+        ...base.companies,
+        {
+          ...base.companies[0],
+          company_id: "company-b",
+          name: "Afterpay",
+          qualification_status: "INSUFFICIENT_EVIDENCE",
+        },
+        {
+          ...base.companies[0],
+          company_id: "company-c",
+          name: "Tyro",
+          qualification_status: "NOT_QUALIFIED",
+        },
+      ],
+    });
     renderWithQuery(<ResearchResultsPage runId="run-a" />);
-
-    const company = await screen.findByRole("article");
-    fireEvent.click(within(company).getByRole("button", { name: "Accept" }));
-    await waitFor(() =>
-      expect(
-        within(company).getByText("Human review: ACCEPTED"),
-      ).toBeInTheDocument(),
+    await screen.findByText("Airwallex");
+    fireEvent.click(
+      screen.getByRole("button", { name: /Insufficient evidence/i }),
     );
-    fireEvent.click(within(company).getByRole("button", { name: "Reject" }));
-    await waitFor(() =>
-      expect(
-        within(company).getByText("Human review: REJECTED"),
-      ).toBeInTheDocument(),
-    );
-    fireEvent.click(within(company).getByRole("button", { name: "Reset" }));
-    await waitFor(() =>
-      expect(
-        within(company).getByText("Human review: UNREVIEWED"),
-      ).toBeInTheDocument(),
-    );
-
-    expect(mockedUpdateReview.mock.calls).toEqual([
-      ["run-a", "same-company-id", "ACCEPTED"],
-      ["run-a", "same-company-id", "REJECTED"],
-      ["run-a", "same-company-id", "UNREVIEWED"],
-    ]);
-  });
-
-  it("keeps identical company IDs isolated between run result caches", async () => {
-    mockedGetResults.mockImplementation(async (runId) =>
-      results(runId, runId === "run-a" ? "ACCEPTED" : "REJECTED"),
-    );
-    renderWithQuery(
-      <>
-        <ResearchResultsPage runId="run-a" />
-        <ResearchResultsPage runId="run-b" />
-      </>,
-    );
-    await screen.findAllByText("Airwallex");
-
-    expect(screen.getAllByText("Human review: ACCEPTED")).toHaveLength(1);
-    expect(screen.getAllByText("Human review: REJECTED")).toHaveLength(1);
-    expect(mockedGetResults).toHaveBeenCalledWith("run-a");
-    expect(mockedGetResults).toHaveBeenCalledWith("run-b");
+    expect(screen.getByText("Afterpay")).toBeInTheDocument();
+    expect(screen.queryByText("Airwallex")).not.toBeInTheDocument();
   });
 
   it("renders empty and failed runs", async () => {

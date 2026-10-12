@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Check,
@@ -23,8 +23,6 @@ import {
   type CriterionResult,
   type ResearchCompany,
   type ResearchResults,
-  type ReviewStatus,
-  updateCompanyReview,
 } from "@/lib/api/research";
 import { cn } from "@/lib/utils";
 import { researchRunResultsQueryKey } from "@/lib/queries/query-keys";
@@ -34,9 +32,6 @@ const filters = [
   "QUALIFIED",
   "INSUFFICIENT_EVIDENCE",
   "NOT_QUALIFIED",
-  "ACCEPTED",
-  "REJECTED",
-  "UNREVIEWED",
 ] as const;
 type ResultFilter = (typeof filters)[number];
 
@@ -52,9 +47,7 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
     const normalizedSearch = search.trim().toLocaleLowerCase();
     return (query.data?.companies ?? []).filter((company) => {
       const statusMatch =
-        filter === "ALL" ||
-        company.qualification_status === filter ||
-        company.review_status === filter;
+        filter === "ALL" || company.qualification_status === filter;
       const searchMatch =
         !normalizedSearch ||
         company.name.toLocaleLowerCase().includes(normalizedSearch);
@@ -105,17 +98,6 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
   }
 
   const results = query.data;
-  const reviewCounts = results.companies.reduce(
-    (counts, company) => ({
-      ...counts,
-      [company.review_status.toLowerCase()]:
-        counts[
-          company.review_status.toLowerCase() as
-            "accepted" | "rejected" | "unreviewed"
-        ] + 1,
-    }),
-    { accepted: 0, rejected: 0, unreviewed: 0 },
-  );
 
   return (
     <section aria-labelledby="page-title" className="mx-auto max-w-6xl">
@@ -162,12 +144,9 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
             label="Insufficient"
             value={results.summary.insufficient_evidence}
           />
-          <Metric label="Accepted" value={reviewCounts.accepted} />
-          <Metric label="Rejected" value={reviewCounts.rejected} />
         </div>
         <p className="text-muted-foreground mt-2 text-xs">
-          Started {formatDate(results.research_run.started_at)} ·{" "}
-          {reviewCounts.unreviewed} unreviewed
+          Started {formatDate(results.research_run.started_at)}
         </p>
       </header>
 
@@ -178,7 +157,7 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
           <div>
             <h2 className="text-lg font-semibold">Companies</h2>
             <p className="text-muted-foreground mt-0.5 text-sm">
-              AI qualification and human review are shown separately.
+              Automatic qualification results and supporting evidence.
             </p>
           </div>
           <label className="relative block w-full sm:w-64">
@@ -226,11 +205,7 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
         ) : (
           <div className="space-y-3">
             {visibleCompanies.map((company) => (
-              <CompanyCard
-                company={company}
-                key={company.company_id}
-                runId={runId}
-              />
+              <CompanyCard company={company} key={company.company_id} />
             ))}
           </div>
         )}
@@ -345,38 +320,7 @@ function ConfiguredCriterion({
   );
 }
 
-function CompanyCard({
-  company,
-  runId,
-}: {
-  company: ResearchCompany;
-  runId: string;
-}) {
-  const queryClient = useQueryClient();
-  const queryKey = researchRunResultsQueryKey(runId);
-  const mutation = useMutation({
-    mutationKey: ["research-company-review", runId, company.company_id],
-    mutationFn: (status: ReviewStatus) =>
-      updateCompanyReview(runId, company.company_id, status),
-    onSuccess: (result) => {
-      queryClient.setQueryData<ResearchResults>(queryKey, (current) =>
-        current
-          ? {
-              ...current,
-              companies: current.companies.map((item) =>
-                item.company_id === result.company_id
-                  ? { ...item, review_status: result.review_status }
-                  : item,
-              ),
-            }
-          : current,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["research-runs"] });
-    },
-  });
-  const pending = mutation.isPending;
-  const reviewError = mutation.isError ? mutation.error.message : null;
-
+function CompanyCard({ company }: { company: ResearchCompany }) {
   return (
     <article className="rounded-lg border p-4 sm:p-5">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
@@ -397,52 +341,12 @@ function CompanyCard({
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             <QualificationBadge status={company.qualification_status} />
-            <ReviewBadge status={company.review_status} />
           </div>
           <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs">
             <SummaryCounts label="Criteria" counts={company.summary} />
           </div>
         </div>
-        <div className="flex flex-wrap gap-2 md:justify-end">
-          <Button
-            disabled={pending || company.review_status === "ACCEPTED"}
-            onClick={() => mutation.mutate("ACCEPTED")}
-            size="sm"
-            variant={
-              company.review_status === "ACCEPTED" ? "secondary" : "outline"
-            }
-          >
-            <Check aria-hidden="true" data-icon="inline-start" />
-            Accept
-          </Button>
-          <Button
-            disabled={pending || company.review_status === "REJECTED"}
-            onClick={() => mutation.mutate("REJECTED")}
-            size="sm"
-            variant={
-              company.review_status === "REJECTED" ? "secondary" : "outline"
-            }
-          >
-            <X aria-hidden="true" data-icon="inline-start" />
-            Reject
-          </Button>
-          {company.review_status !== "UNREVIEWED" ? (
-            <Button
-              disabled={pending}
-              onClick={() => mutation.mutate("UNREVIEWED")}
-              size="sm"
-              variant="ghost"
-            >
-              Reset
-            </Button>
-          ) : null}
-        </div>
       </div>
-      {reviewError ? (
-        <p role="alert" className="text-destructive mt-3 text-sm">
-          Review update failed: {reviewError}
-        </p>
-      ) : null}
       {company.criteria.length > 0 ? (
         <div className="mt-4 border-t pt-3">
           <h4 className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
@@ -557,14 +461,6 @@ function QualificationBadge({
   return (
     <Badge className={styles} variant="secondary">
       AI: {status.replaceAll("_", " ")}
-    </Badge>
-  );
-}
-
-function ReviewBadge({ status }: { status: ReviewStatus }) {
-  return (
-    <Badge variant={status === "UNREVIEWED" ? "outline" : "secondary"}>
-      Human review: {status}
     </Badge>
   );
 }

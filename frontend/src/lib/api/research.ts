@@ -2,14 +2,13 @@ import { apiFetch } from "@/lib/api/client";
 
 export type QualificationStatus =
   "QUALIFIED" | "NOT_QUALIFIED" | "INSUFFICIENT_EVIDENCE";
-export type ReviewStatus = "UNREVIEWED" | "ACCEPTED" | "REJECTED";
 export type CriterionStatus = "MATCH" | "MISMATCH" | "UNKNOWN";
 
 export type ResearchRunListItem = {
   run_id: string;
   status: string;
   created_at: string;
-  started_at: string;
+  started_at: string | null;
   completed_at: string | null;
   campaign: {
     id: string;
@@ -22,9 +21,6 @@ export type ResearchRunListItem = {
     qualified: number;
     not_qualified: number;
     insufficient_evidence: number;
-    accepted: number;
-    rejected: number;
-    unreviewed: number;
   };
 };
 
@@ -69,7 +65,6 @@ export type ResearchCompany = {
   name: string;
   website: string | null;
   qualification_status: QualificationStatus;
-  review_status: ReviewStatus;
   summary: {
     matched: number;
     mismatched: number;
@@ -101,15 +96,10 @@ export function getResearchRunResults(runId: string): Promise<ResearchResults> {
   return apiFetch(`/api/v1/research-runs/${encodeURIComponent(runId)}/results`);
 }
 
-export function updateCompanyReview(
-  runId: string,
-  companyId: string,
-  status: ReviewStatus,
-): Promise<{ company_id: string; review_status: ReviewStatus }> {
-  return apiFetch(
-    `/api/v1/research-runs/${encodeURIComponent(runId)}/companies/${encodeURIComponent(companyId)}/review`,
-    { method: "PATCH", body: { status } },
-  );
+export function deleteResearchRun(runId: string): Promise<void> {
+  return apiFetch(`/api/v1/research-runs/${encodeURIComponent(runId)}`, {
+    method: "DELETE",
+  });
 }
 
 export function startResearch(campaignId: string): Promise<{

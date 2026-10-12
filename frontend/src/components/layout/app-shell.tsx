@@ -72,7 +72,7 @@ export function AppShell({ children }: React.PropsWithChildren) {
         </nav>
         <Separator className="hidden md:block" />
         <p className="text-muted-foreground hidden px-5 py-4 text-xs leading-relaxed md:block">
-          Campaign setup, research runs, and human review.
+          Campaign setup and research qualification runs.
         </p>
       </aside>
 

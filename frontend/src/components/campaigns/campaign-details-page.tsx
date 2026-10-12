@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, RefreshCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, Pencil, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -12,6 +12,7 @@ import {
 } from "@/components/research/research-runs-page";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { DeleteRunAction } from "@/components/research/delete-run-action";
 import { getCampaign, type Campaign } from "@/lib/api/campaigns";
 import { apiErrorMessages } from "@/lib/api/client";
 import { listResearchRuns, startResearch } from "@/lib/api/research";
@@ -37,6 +38,9 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
     mutationFn: () => startResearch(campaignId),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: researchRunsQueryKey });
+      void queryClient.invalidateQueries({
+        queryKey: campaignQueryKey(campaignId),
+      });
       router.push(`/research/${result.research_run_id}`);
     },
   });
@@ -105,6 +109,15 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <CampaignStatusBadge status={campaign.status} />
+          {campaign.sealed_at === null ? (
+            <Link
+              className={cn(buttonVariants({ variant: "outline" }))}
+              href={`/campaigns/${campaignId}/edit`}
+            >
+              <Pencil aria-hidden="true" data-icon="inline-start" />
+              Edit Campaign
+            </Link>
+          ) : null}
           <Button
             disabled={startMutation.isPending}
             onClick={() => startMutation.mutate()}
@@ -221,7 +234,11 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
           ) : (
             <ul className="mt-4 divide-y">
               {[...campaignRuns]
-                .sort((a, b) => b.created_at.localeCompare(a.created_at))
+                .sort((a, b) =>
+                  (b.started_at || b.created_at).localeCompare(
+                    a.started_at || a.created_at,
+                  ),
+                )
                 .map((run) => (
                   <li
                     className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
@@ -230,7 +247,7 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
                     <div className="min-w-0">
                       <p className="truncate font-mono text-xs">{run.run_id}</p>
                       <p className="text-muted-foreground mt-1 text-xs">
-                        {formatDate(run.created_at)}
+                        Started {formatDate(run.started_at || run.created_at)}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -244,6 +261,7 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
                       >
                         <ArrowRight aria-hidden="true" />
                       </Link>
+                      <DeleteRunAction runId={run.run_id} />
                     </div>
                   </li>
                 ))}

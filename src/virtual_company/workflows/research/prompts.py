@@ -365,7 +365,7 @@ def extract_qualification_facts_system_prompt() -> str:
         "keep approximations approximate and retain conflicting observations instead of "
         "choosing one. A phrase such as 'global company' does not establish headcount. "
         "Return no unsupported employee facts. Do not apply campaign size bounds and do not "
-        "return MATCH, MISMATCH, INSUFFICIENT, QUALIFIED, REJECTED, or any final "
+        "return MATCH, MISMATCH, INSUFFICIENT, QUALIFIED, NOT_QUALIFIED, or any final "
         "qualification decision. Before marking supported, check the full technology name "
         "in evidence_text against the requested name. Matching a word inside a longer "
         "technology name fails this check; a familiar real-world synonym also fails. "

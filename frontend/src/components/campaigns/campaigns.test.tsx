@@ -72,6 +72,7 @@ function campaign(id: string, name: string): Campaign {
     status: "DRAFT",
     created_at: "2026-10-05T00:00:00Z",
     updated_at: "2026-10-05T00:00:00Z",
+    sealed_at: null,
   };
 }
 
@@ -93,9 +94,6 @@ function run(runId: string, campaignId: string): ResearchRunListItem {
       qualified: 1,
       not_qualified: 1,
       insufficient_evidence: 0,
-      accepted: 0,
-      rejected: 0,
-      unreviewed: 2,
     },
   };
 }
@@ -303,10 +301,29 @@ describe("CampaignDetailsPage", () => {
     expect(screen.getByText("≥ 500 employees")).toBeInTheDocument();
     expect(screen.getByText("≤ 5000 employees")).toBeInTheDocument();
     expect(screen.getByText("run-a1")).toBeInTheDocument();
+    expect(screen.getByText(/Started/)).toBeInTheDocument();
     expect(screen.queryByText("run-b1")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Edit Campaign" })).toHaveAttribute(
+      "href",
+      "/campaigns/campaign-a/edit",
+    );
     expect(
       screen.getByRole("link", { name: "Open research run run-a1" }),
     ).toHaveAttribute("href", "/research/run-a1");
+  });
+
+  it("hides campaign editing after the campaign is sealed", async () => {
+    mockGetCampaign.mockResolvedValue({
+      ...campaign("campaign-a", "Australian Fintech"),
+      sealed_at: "2026-10-05T01:00:00Z",
+    });
+    mockListRuns.mockResolvedValue([]);
+    renderWithQuery(<CampaignDetailsPage campaignId="campaign-a" />);
+
+    await screen.findByRole("heading", { name: "Australian Fintech" });
+    expect(
+      screen.queryByRole("link", { name: "Edit Campaign" }),
+    ).not.toBeInTheDocument();
   });
 
   it("prevents a duplicate pending start and navigates with each returned run ID", async () => {

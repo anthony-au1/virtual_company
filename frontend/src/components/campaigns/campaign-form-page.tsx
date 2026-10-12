@@ -1,11 +1,11 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 
@@ -14,7 +14,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   createCampaign,
+  getCampaign,
+  updateCampaign,
+  type Campaign,
   type CreateCampaignPayload,
+  type UpdateCampaignPayload,
 } from "@/lib/api/campaigns";
 import { apiErrorMessages } from "@/lib/api/client";
 import { campaignQueryKey, campaignsQueryKey } from "@/lib/queries/query-keys";
@@ -79,10 +83,15 @@ const defaultValues: CampaignFormValues = {
   max_employees: undefined,
 };
 
-export function CampaignFormPage() {
+export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [serverError, setServerError] = useState<string[] | null>(null);
+  const campaignQuery = useQuery({
+    queryKey: campaignQueryKey(campaignId ?? "new"),
+    queryFn: () => getCampaign(campaignId!),
+    enabled: Boolean(campaignId),
+  });
   const form = useForm<CampaignFormValues>({
     resolver: zodResolver(campaignFormSchema),
     defaultValues,
@@ -91,8 +100,17 @@ export function CampaignFormPage() {
     control: form.control,
     name: "technologies",
   });
+  useEffect(() => {
+    const campaign = campaignQuery.data;
+    if (!campaign) return;
+    if (campaign.sealed_at) return;
+    form.reset(campaignToFormValues(campaign));
+  }, [campaignQuery.data, form]);
   const mutation = useMutation({
-    mutationFn: createCampaign,
+    mutationFn: (payload: CreateCampaignPayload | UpdateCampaignPayload) =>
+      campaignId
+        ? updateCampaign(campaignId, payload as UpdateCampaignPayload)
+        : createCampaign(payload as CreateCampaignPayload),
     onSuccess: (campaign) => {
       queryClient.setQueryData(campaignQueryKey(campaign.id), campaign);
       void queryClient.invalidateQueries({ queryKey: campaignsQueryKey });
@@ -111,26 +129,66 @@ export function CampaignFormPage() {
         ? { max: values.max_employees }
         : {}),
     };
-    const payload: CreateCampaignPayload = {
+    const commonPayload = {
       name: values.name,
       description: values.description,
       target_count: values.target_count,
       max_companies_to_research: values.max_companies_to_research,
-      status: "DRAFT",
-      ...(values.target_market.trim()
-        ? { target_market: values.target_market.trim() }
-        : {}),
-      ...(values.industry.trim() ? { industry: values.industry.trim() } : {}),
       technologies: values.technologies,
       company_size:
         companySize.min !== undefined || companySize.max !== undefined
           ? companySize
           : null,
     };
+    const payload: CreateCampaignPayload | UpdateCampaignPayload = campaignId
+      ? {
+          ...commonPayload,
+          target_market: values.target_market.trim() || null,
+          industry: values.industry.trim() || null,
+        }
+      : {
+          ...commonPayload,
+          status: "DRAFT",
+          ...(values.target_market.trim()
+            ? { target_market: values.target_market.trim() }
+            : {}),
+          ...(values.industry.trim()
+            ? { industry: values.industry.trim() }
+            : {}),
+        };
     mutation.mutate(payload);
   });
 
   const disabled = form.formState.isSubmitting || mutation.isPending;
+
+  if (campaignId && campaignQuery.isPending) {
+    return (
+      <p role="status" className="mx-auto max-w-3xl p-8 text-center text-sm">
+        Loading Campaign…
+      </p>
+    );
+  }
+  if (campaignId && (campaignQuery.isError || campaignQuery.data?.sealed_at)) {
+    const sealed = campaignQuery.data?.sealed_at != null;
+    return (
+      <section className="mx-auto max-w-3xl rounded-lg border p-6">
+        <h1 className="text-lg font-semibold">
+          {sealed ? "Campaign is sealed" : "Campaign could not be loaded"}
+        </h1>
+        <p className="text-muted-foreground mt-1 text-sm">
+          {sealed
+            ? "Campaign criteria cannot be changed after research has started."
+            : campaignQuery.error?.message}
+        </p>
+        <Link
+          className="text-primary mt-4 inline-block text-sm underline"
+          href={`/campaigns/${campaignId}`}
+        >
+          Back to Campaign
+        </Link>
+      </section>
+    );
+  }
 
   return (
     <section aria-labelledby="page-title" className="mx-auto max-w-3xl">
@@ -146,7 +204,7 @@ export function CampaignFormPage() {
           Campaigns
         </p>
         <h1 id="page-title" className="text-2xl font-semibold tracking-tight">
-          Create Campaign
+          {campaignId ? "Edit Campaign" : "Create Campaign"}
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
           Set criteria for a reusable company research campaign.
@@ -300,7 +358,7 @@ export function CampaignFormPage() {
             className="border-destructive/30 rounded-lg border p-4"
           >
             <h2 className="text-sm font-semibold">
-              Campaign could not be created
+              Campaign could not be {campaignId ? "updated" : "created"}
             </h2>
             <ul className="text-destructive mt-2 list-inside list-disc space-y-1 text-sm">
               {serverError.map((message, index) => (
@@ -320,7 +378,13 @@ export function CampaignFormPage() {
             Cancel
           </Button>
           <Button disabled={disabled} type="submit">
-            {mutation.isPending ? "Creating campaign…" : "Create Campaign"}
+            {mutation.isPending
+              ? campaignId
+                ? "Saving changes…"
+                : "Creating campaign…"
+              : campaignId
+                ? "Save Changes"
+                : "Create Campaign"}
           </Button>
         </div>
       </form>
@@ -483,4 +547,18 @@ function removeTechnology(
 
 function parseOptionalNumber(value: string) {
   return value === "" ? undefined : Number(value);
+}
+
+function campaignToFormValues(campaign: Campaign): CampaignFormValues {
+  return {
+    name: campaign.name,
+    description: campaign.description ?? "",
+    target_count: campaign.target_count,
+    max_companies_to_research: campaign.max_companies_to_research,
+    target_market: campaign.target_market ?? "",
+    industry: campaign.industry ?? "",
+    technologies: campaign.technologies,
+    min_employees: campaign.company_size?.min ?? undefined,
+    max_employees: campaign.company_size?.max ?? undefined,
+  };
 }
