@@ -29,8 +29,8 @@ async def test_upsert_updates_only_snapshot_payload() -> None:
     statement = session.scalars.await_args.args[0]
     sql = str(statement.compile(dialect=postgresql.dialect()))
     assert (
-        "ON CONFLICT ON CONSTRAINT uq_research_company_qualifications_run_company DO UPDATE SET status = excluded.status, criteria_results = excluded.criteria_results"
+        "ON CONFLICT ON CONSTRAINT uq_research_company_qualification_run_company DO UPDATE SET status = excluded.status, criteria_results = excluded.criteria_results"
         in sql
     )
-    assert "RETURNING research_company_qualifications.id" in sql
+    assert "RETURNING research_company_qualification.id" in sql
     session.commit.assert_not_called()

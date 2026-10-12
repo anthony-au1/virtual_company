@@ -55,7 +55,7 @@ Indexes:
 
 - PK (id)
 
-Table: campaign_targets
+Table: `campaign_target`
 
 | Column        | Type        | Description                  |
 |---------------|-------------|------------------------------|
@@ -65,11 +65,11 @@ Table: campaign_targets
 | `status`      | VARCHAR     | candidate/qualified/rejected |
 | `created_at`  | TIMESTAMPTZ | created date                 |
 
-Indexes:
+Constraints:
 
-- UNIQUE (campaign_id, company_id)
-- FK (campaign_id) -> campaign (id)
-- FK (company_id) -> research_company (id)
+- PK `campaign_target_pkey` (`campaign_id`, `company_id`)
+- FK `campaign_target_campaign_id_fkey` (`campaign_id`) -> campaign (`id`)
+- FK `campaign_target_research_company_id_fkey` (`company_id`) -> research_company (`id`)
 
 Table: research_evidence
 
@@ -122,7 +122,7 @@ Indexes:
 
 ## Final qualification snapshots
 
-Table: `research_company_qualifications`
+Table: `research_company_qualification`
 
 | Column             | PostgreSQL type | Nullable | Description                                     |
 |--------------------|-----------------|----------|-------------------------------------------------|
@@ -134,7 +134,13 @@ Table: `research_company_qualifications`
 | `criteria_results` | JSONB           | NO       | Object containing a criteria array              |
 | `created_at`       | TIMESTAMPTZ     | NO       | Database timestamp, default now()               |
 
-Unique constraint: `uq_research_company_qualifications_run_company` on
+Constraints:
+
+- PK `research_company_qualification_pkey` (`id`)
+- FK `research_company_qualification_research_run_id_fkey` (`research_run_id`) -> research_run (`id`)
+- FK `research_company_qualification_campaign_id_fkey` (`campaign_id`) -> campaign (`id`)
+- FK `research_company_qualification_research_company_id_fkey` (`company_id`) -> research_company (`id`)
+- Unique constraint `uq_research_company_qualification_run_company` on
 `(research_run_id, company_id)`, also supporting lookups by run.
 Each criterion includes criterion, subject, status, evidence_ids (UUID strings),
 and reason. No Evidence content is copied. Retries replace status and JSON while

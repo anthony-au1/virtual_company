@@ -20,7 +20,7 @@ class ResearchCompanyQualificationRepository:
         """Replace a run/company snapshot without changing its identity or timestamp."""
         statement = insert(ResearchCompanyQualification).values(**data.model_dump())
         statement = statement.on_conflict_do_update(
-            constraint="uq_research_company_qualifications_run_company",
+            constraint="uq_research_company_qualification_run_company",
             set_={
                 "status": statement.excluded.status,
                 "criteria_results": statement.excluded.criteria_results,

@@ -103,16 +103,18 @@ class ResearchCompany(Base):
 class CampaignTarget(Base):
     """A candidate company within a campaign, pending future qualification."""
 
-    __tablename__ = "campaign_targets"
+    __tablename__ = "campaign_target"
 
     campaign_id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), ForeignKey("campaign.id"), primary_key=True
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("campaign.id", name="campaign_target_campaign_id_fkey"),
+        primary_key=True,
     )
     company_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey(
             "research_company.id",
-            name="campaign_targets_research_company_id_fkey",
+            name="campaign_target_research_company_id_fkey",
         ),
         primary_key=True,
     )
@@ -202,12 +204,12 @@ class ResearchRun(Base):
 class ResearchCompanyQualification(Base):
     """One final qualification result per company and research run."""
 
-    __tablename__ = "research_company_qualifications"
+    __tablename__ = "research_company_qualification"
     __table_args__ = (
         UniqueConstraint(
             "research_run_id",
             "company_id",
-            name="uq_research_company_qualifications_run_company",
+            name="uq_research_company_qualification_run_company",
         ),
     )
 
@@ -218,7 +220,7 @@ class ResearchCompanyQualification(Base):
         PostgreSQLUUID(as_uuid=True),
         ForeignKey(
             "research_run.id",
-            name="research_company_qualifications_research_run_id_fkey",
+            name="research_company_qualification_research_run_id_fkey",
         ),
         nullable=False,
     )
@@ -226,7 +228,7 @@ class ResearchCompanyQualification(Base):
         PostgreSQLUUID(as_uuid=True),
         ForeignKey(
             "campaign.id",
-            name="research_company_qualifications_campaign_id_fkey",
+            name="research_company_qualification_campaign_id_fkey",
         ),
         nullable=False,
     )
@@ -234,7 +236,7 @@ class ResearchCompanyQualification(Base):
         PostgreSQLUUID(as_uuid=True),
         ForeignKey(
             "research_company.id",
-            name="research_company_qualifications_research_company_id_fkey",
+            name="research_company_qualification_research_company_id_fkey",
         ),
         nullable=False,
     )

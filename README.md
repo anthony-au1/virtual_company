@@ -173,7 +173,7 @@ comparison over normalized employee-count facts and conservative bounds.
 
 Results and supporting evidence IDs remain in LangGraph's
 `research_company_qualifications` state and are persisted once all investigations terminate.
-The `research_company_qualifications` table stores one final snapshot per run/company; retries
+The `research_company_qualification` table stores one final snapshot per run/company; retries
 replace its status and criterion results without changing its ID or creation time.
 Snapshots commit with run completion. They do not change campaign-target records
 or the public research response. Company qualification spans contain status and criterion
@@ -187,7 +187,7 @@ Inspect a completed run using the Research-scoped tables:
 
 ```sql
 SELECT c.name, q.status, q.criteria_results
-FROM research_company_qualifications q
+FROM research_company_qualification q
 JOIN research_company c ON c.id = q.company_id
 WHERE q.research_run_id = :research_run_id
 ORDER BY c.name;

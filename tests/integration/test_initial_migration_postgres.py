@@ -45,39 +45,45 @@ async def test_initial_migration_creates_current_research_schema() -> None:
                     "campaign",
                     "research_company",
                     "research_run",
-                    "campaign_targets",
+                    "campaign_target",
                     "research_evidence",
-                    "research_company_qualifications",
+                    "research_company_qualification",
                 }
                 assert {
                     "company",
                     "evidence",
                     "company_qualifications",
+                    "campaign_targets",
+                    "research_company_qualifications",
                 }.isdisjoint(tables)
 
                 expected_primary_keys = {
                     "campaign": "campaign_pkey",
                     "research_company": "research_company_pkey",
                     "research_run": "research_run_pkey",
-                    "campaign_targets": "campaign_targets_pkey",
+                    "campaign_target": "campaign_target_pkey",
                     "research_evidence": "research_evidence_pkey",
-                    "research_company_qualifications": (
-                        "research_company_qualifications_pkey"
-                    ),
+                    "research_company_qualification": "research_company_qualification_pkey",
                 }
                 for table, expected_name in expected_primary_keys.items():
                     assert (
                         inspector.get_pk_constraint(table, schema=schema)["name"]
                         == expected_name
                     )
+                assert inspector.get_pk_constraint("campaign_target", schema=schema)[
+                    "constrained_columns"
+                ] == ["campaign_id", "company_id"]
+                assert inspector.get_pk_constraint(
+                    "research_company_qualification", schema=schema
+                )["constrained_columns"] == ["id"]
 
                 expected_foreign_keys = {
                     "research_run": {
                         "research_run_campaign_id_fkey": "campaign",
                     },
-                    "campaign_targets": {
-                        "campaign_targets_campaign_id_fkey": "campaign",
-                        "campaign_targets_research_company_id_fkey": (
+                    "campaign_target": {
+                        "campaign_target_campaign_id_fkey": "campaign",
+                        "campaign_target_research_company_id_fkey": (
                             "research_company"
                         ),
                     },
@@ -87,14 +93,12 @@ async def test_initial_migration_creates_current_research_schema() -> None:
                         ),
                         "research_evidence_research_run_id_fkey": "research_run",
                     },
-                    "research_company_qualifications": {
-                        "research_company_qualifications_research_run_id_fkey": (
+                    "research_company_qualification": {
+                        "research_company_qualification_research_run_id_fkey": (
                             "research_run"
                         ),
-                        "research_company_qualifications_campaign_id_fkey": (
-                            "campaign"
-                        ),
-                        "research_company_qualifications_research_company_id_fkey": (
+                        "research_company_qualification_campaign_id_fkey": ("campaign"),
+                        "research_company_qualification_research_company_id_fkey": (
                             "research_company"
                         ),
                     },
@@ -109,11 +113,11 @@ async def test_initial_migration_creates_current_research_schema() -> None:
                         assert references[constraint_name] == referred_table
 
                 unique_constraints = inspector.get_unique_constraints(
-                    "research_company_qualifications", schema=schema
+                    "research_company_qualification", schema=schema
                 )
                 assert any(
                     constraint["name"]
-                    == "uq_research_company_qualifications_run_company"
+                    == "uq_research_company_qualification_run_company"
                     and constraint["column_names"] == ["research_run_id", "company_id"]
                     for constraint in unique_constraints
                 )
@@ -138,7 +142,7 @@ async def test_initial_migration_creates_current_research_schema() -> None:
                 qualification_columns = {
                     column["name"]: column
                     for column in inspector.get_columns(
-                        "research_company_qualifications", schema=schema
+                        "research_company_qualification", schema=schema
                     )
                 }
                 assert "criteria_results" in qualification_columns

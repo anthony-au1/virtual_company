@@ -106,21 +106,21 @@ def upgrade() -> None:
         ),
     )
     op.create_table(
-        "campaign_targets",
+        "campaign_target",
         sa.Column(
             "campaign_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("campaign.id"),
-            primary_key=True,
+            sa.ForeignKey("campaign.id", name="campaign_target_campaign_id_fkey"),
+            nullable=False,
         ),
         sa.Column(
             "company_id",
             postgresql.UUID(as_uuid=True),
             sa.ForeignKey(
                 "research_company.id",
-                name="campaign_targets_research_company_id_fkey",
+                name="campaign_target_research_company_id_fkey",
             ),
-            primary_key=True,
+            nullable=False,
         ),
         sa.Column("score", sa.Numeric()),
         sa.Column("status", sa.String()),
@@ -129,6 +129,9 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),
             nullable=False,
+        ),
+        sa.PrimaryKeyConstraint(
+            "campaign_id", "company_id", name="campaign_target_pkey"
         ),
     )
     op.create_table(
@@ -178,14 +181,14 @@ def upgrade() -> None:
         ["research_run_id"],
     )
     op.create_table(
-        "research_company_qualifications",
+        "research_company_qualification",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column(
             "research_run_id",
             postgresql.UUID(as_uuid=True),
             sa.ForeignKey(
                 "research_run.id",
-                name="research_company_qualifications_research_run_id_fkey",
+                name="research_company_qualification_research_run_id_fkey",
             ),
             nullable=False,
         ),
@@ -194,7 +197,7 @@ def upgrade() -> None:
             postgresql.UUID(as_uuid=True),
             sa.ForeignKey(
                 "campaign.id",
-                name="research_company_qualifications_campaign_id_fkey",
+                name="research_company_qualification_campaign_id_fkey",
             ),
             nullable=False,
         ),
@@ -203,7 +206,7 @@ def upgrade() -> None:
             postgresql.UUID(as_uuid=True),
             sa.ForeignKey(
                 "research_company.id",
-                name="research_company_qualifications_research_company_id_fkey",
+                name="research_company_qualification_research_company_id_fkey",
             ),
             nullable=False,
         ),
@@ -218,19 +221,19 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "research_run_id",
             "company_id",
-            name="uq_research_company_qualifications_run_company",
+            name="uq_research_company_qualification_run_company",
         ),
-        sa.PrimaryKeyConstraint("id", name="research_company_qualifications_pkey"),
+        sa.PrimaryKeyConstraint("id", name="research_company_qualification_pkey"),
     )
 
 
 def downgrade() -> None:
-    op.drop_table("research_company_qualifications")
+    op.drop_table("research_company_qualification")
     op.drop_index(
         "ix_research_evidence_research_run_id", table_name="research_evidence"
     )
     op.drop_table("research_evidence")
-    op.drop_table("campaign_targets")
+    op.drop_table("campaign_target")
     op.drop_table("research_run")
     op.drop_table("research_company")
     op.drop_table("campaign")
