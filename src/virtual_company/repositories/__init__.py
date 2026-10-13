@@ -7,6 +7,19 @@ from virtual_company.repositories.dtos import (
     CampaignTargetCreate,
     CampaignTargetUpdate,
     CampaignUpdate,
+    ExplorationCompanyCreate,
+    ExplorationCreate,
+    ExplorationEvidenceCreate,
+    ExplorationEvidenceUpdate,
+    ExplorationFactCreate,
+    ExplorationFactUpdate,
+    ExplorationHypothesisCreate,
+    ExplorationHypothesisUpdate,
+    ExplorationObligationCreate,
+    ExplorationObligationUpdate,
+    ExplorationRunCreate,
+    ExplorationRunUpdate,
+    ExplorationUpdate,
     ResearchCompanyCreate,
     ResearchCompanyQualificationUpsert,
     ResearchCompanyUpdate,
@@ -15,6 +28,21 @@ from virtual_company.repositories.dtos import (
     ResearchRunCreate,
     ResearchRunUpdate,
 )
+from virtual_company.repositories.exploration import ExplorationRepository
+from virtual_company.repositories.exploration_company import (
+    ExplorationCompanyRepository,
+)
+from virtual_company.repositories.exploration_evidence import (
+    ExplorationEvidenceRepository,
+)
+from virtual_company.repositories.exploration_fact import ExplorationFactRepository
+from virtual_company.repositories.exploration_hypothesis import (
+    ExplorationHypothesisRepository,
+)
+from virtual_company.repositories.exploration_obligation import (
+    ExplorationObligationRepository,
+)
+from virtual_company.repositories.exploration_run import ExplorationRunRepository
 from virtual_company.repositories.research_company import ResearchCompanyRepository
 from virtual_company.repositories.research_company_qualification import (
     ResearchCompanyQualificationRepository,
@@ -29,6 +57,26 @@ __all__ = [
     "CampaignTargetRepository",
     "CampaignTargetUpdate",
     "CampaignUpdate",
+    "ExplorationCompanyCreate",
+    "ExplorationCompanyRepository",
+    "ExplorationCreate",
+    "ExplorationEvidenceCreate",
+    "ExplorationEvidenceRepository",
+    "ExplorationEvidenceUpdate",
+    "ExplorationFactCreate",
+    "ExplorationFactRepository",
+    "ExplorationFactUpdate",
+    "ExplorationHypothesisCreate",
+    "ExplorationHypothesisRepository",
+    "ExplorationHypothesisUpdate",
+    "ExplorationObligationCreate",
+    "ExplorationObligationRepository",
+    "ExplorationObligationUpdate",
+    "ExplorationRepository",
+    "ExplorationRunCreate",
+    "ExplorationRunRepository",
+    "ExplorationRunUpdate",
+    "ExplorationUpdate",
     "ResearchCompanyCreate",
     "ResearchCompanyQualificationRepository",
     "ResearchCompanyQualificationUpsert",

@@ -137,3 +137,72 @@ class ResearchCompanyQualificationUpsert(BaseModel):
     company_id: UUID
     status: str
     criteria_results: dict[str, Any]
+
+
+class ExplorationCreate(BaseModel):
+    business_context: str
+    status: str
+
+
+class ExplorationUpdate(BaseModel):
+    business_context: str | None = None
+    status: str | None = None
+
+
+class ExplorationObligationCreate(BaseModel):
+    exploration_id: UUID
+    description: str
+
+
+class ExplorationObligationUpdate(BaseModel):
+    description: str | None = None
+
+
+class ExplorationRunCreate(BaseModel):
+    exploration_id: UUID
+    status: str
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class ExplorationRunUpdate(BaseModel):
+    status: str | None = None
+    completed_at: datetime | None = None
+
+
+class ExplorationCompanyCreate(BaseModel):
+    exploration_run_id: UUID
+    company_id: UUID
+
+
+class ExplorationEvidenceCreate(BaseModel):
+    exploration_company_id: UUID
+    exploration_obligation_id: UUID
+    source_url: str | None = None
+    source_type: str | None = None
+    content: str | None = None
+
+
+class ExplorationEvidenceUpdate(BaseModel):
+    exploration_obligation_id: UUID | None = None
+    source_url: str | None = None
+    source_type: str | None = None
+    content: str | None = None
+
+
+class ExplorationFactCreate(BaseModel):
+    statement: str
+    evidence_ids: list[UUID] = Field(min_length=1)
+
+
+class ExplorationFactUpdate(BaseModel):
+    statement: str | None = None
+
+
+class ExplorationHypothesisCreate(BaseModel):
+    statement: str
+    fact_ids: list[UUID] = Field(min_length=1)
+
+
+class ExplorationHypothesisUpdate(BaseModel):
+    statement: str | None = None

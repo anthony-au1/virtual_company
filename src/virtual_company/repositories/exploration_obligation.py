@@ -1,0 +1,51 @@
+"""Persistence operations for Exploration obligations."""
+
+from __future__ import annotations
+
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from virtual_company.db.models import ExplorationObligation
+from virtual_company.repositories._helpers import apply_updates, create_values
+from virtual_company.repositories.dtos import (
+    ExplorationObligationCreate,
+    ExplorationObligationUpdate,
+)
+
+
+class ExplorationObligationRepository:
+    """Provide asynchronous persistence operations for obligations."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create(self, data: ExplorationObligationCreate) -> ExplorationObligation:
+        obligation = ExplorationObligation(**create_values(data))
+        self._session.add(obligation)
+        await self._session.flush()
+        await self._session.refresh(obligation)
+        return obligation
+
+    async def get_by_id(self, obligation_id: UUID) -> ExplorationObligation | None:
+        return await self._session.get(ExplorationObligation, obligation_id)
+
+    async def list_by_exploration_id(
+        self, exploration_id: UUID
+    ) -> list[ExplorationObligation]:
+        statement = select(ExplorationObligation).where(
+            ExplorationObligation.exploration_id == exploration_id
+        )
+        return list(await self._session.scalars(statement))
+
+    async def update(
+        self, obligation_id: UUID, data: ExplorationObligationUpdate
+    ) -> ExplorationObligation | None:
+        obligation = await self.get_by_id(obligation_id)
+        if obligation is None:
+            return None
+        apply_updates(obligation, data)
+        await self._session.flush()
+        await self._session.refresh(obligation)
+        return obligation

@@ -1,4 +1,4 @@
-"""Create the complete campaign research schema.
+"""Create the complete Research and Exploration schema.
 
 Revision ID: 0001_initial_schema
 Revises:
@@ -225,9 +225,247 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name="research_company_qualification_pkey"),
     )
+    op.create_table(
+        "exploration",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("business_context", sa.Text(), nullable=False),
+        sa.Column("status", sa.String(30), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.PrimaryKeyConstraint("id", name="exploration_pkey"),
+    )
+    op.create_table(
+        "exploration_obligation",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("exploration_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("description", sa.Text(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["exploration_id"],
+            ["exploration.id"],
+            name="exploration_obligation_exploration_id_fkey",
+        ),
+        sa.PrimaryKeyConstraint("id", name="exploration_obligation_pkey"),
+    )
+    op.create_index(
+        "ix_exploration_obligation_exploration_id",
+        "exploration_obligation",
+        ["exploration_id"],
+    )
+    op.create_table(
+        "exploration_run",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("exploration_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("status", sa.String(30), nullable=False),
+        sa.Column(
+            "started_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column("completed_at", sa.DateTime(timezone=True)),
+        sa.ForeignKeyConstraint(
+            ["exploration_id"],
+            ["exploration.id"],
+            name="exploration_run_exploration_id_fkey",
+        ),
+        sa.PrimaryKeyConstraint("id", name="exploration_run_pkey"),
+    )
+    op.create_index(
+        "ix_exploration_run_exploration_id", "exploration_run", ["exploration_id"]
+    )
+    op.create_table(
+        "exploration_company",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("exploration_run_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("company_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["exploration_run_id"],
+            ["exploration_run.id"],
+            name="exploration_company_exploration_run_id_fkey",
+        ),
+        sa.ForeignKeyConstraint(
+            ["company_id"],
+            ["research_company.id"],
+            name="exploration_company_company_id_fkey",
+        ),
+        sa.PrimaryKeyConstraint("id", name="exploration_company_pkey"),
+        sa.UniqueConstraint(
+            "exploration_run_id",
+            "company_id",
+            name="uq_exploration_company_run_company",
+        ),
+    )
+    op.create_index(
+        "ix_exploration_company_company_id", "exploration_company", ["company_id"]
+    )
+    op.create_table(
+        "exploration_evidence",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "exploration_company_id", postgresql.UUID(as_uuid=True), nullable=False
+        ),
+        sa.Column(
+            "exploration_obligation_id", postgresql.UUID(as_uuid=True), nullable=False
+        ),
+        sa.Column("source_url", sa.Text()),
+        sa.Column("source_type", sa.String(50)),
+        sa.Column("content", sa.Text()),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["exploration_company_id"],
+            ["exploration_company.id"],
+            name="exploration_evidence_exploration_company_id_fkey",
+        ),
+        sa.ForeignKeyConstraint(
+            ["exploration_obligation_id"],
+            ["exploration_obligation.id"],
+            name="exploration_evidence_exploration_obligation_id_fkey",
+        ),
+        sa.PrimaryKeyConstraint("id", name="exploration_evidence_pkey"),
+    )
+    op.create_index(
+        "ix_exploration_evidence_exploration_company_id",
+        "exploration_evidence",
+        ["exploration_company_id"],
+    )
+    op.create_index(
+        "ix_exploration_evidence_exploration_obligation_id",
+        "exploration_evidence",
+        ["exploration_obligation_id"],
+    )
+    op.create_table(
+        "exploration_fact",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("statement", sa.Text(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.PrimaryKeyConstraint("id", name="exploration_fact_pkey"),
+    )
+    op.create_table(
+        "exploration_hypothesis",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("statement", sa.Text(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.PrimaryKeyConstraint("id", name="exploration_hypothesis_pkey"),
+    )
+    op.create_table(
+        "exploration_fact_evidence",
+        sa.Column("exploration_fact_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "exploration_evidence_id", postgresql.UUID(as_uuid=True), nullable=False
+        ),
+        sa.ForeignKeyConstraint(
+            ["exploration_fact_id"],
+            ["exploration_fact.id"],
+            name="exploration_fact_evidence_fact_id_fkey",
+        ),
+        sa.ForeignKeyConstraint(
+            ["exploration_evidence_id"],
+            ["exploration_evidence.id"],
+            name="exploration_fact_evidence_evidence_id_fkey",
+        ),
+        sa.PrimaryKeyConstraint(
+            "exploration_fact_id",
+            "exploration_evidence_id",
+            name="exploration_fact_evidence_pkey",
+        ),
+    )
+    op.create_index(
+        "ix_exploration_fact_evidence_exploration_evidence_id",
+        "exploration_fact_evidence",
+        ["exploration_evidence_id"],
+    )
+    op.create_table(
+        "exploration_hypothesis_fact",
+        sa.Column(
+            "exploration_hypothesis_id", postgresql.UUID(as_uuid=True), nullable=False
+        ),
+        sa.Column("exploration_fact_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["exploration_hypothesis_id"],
+            ["exploration_hypothesis.id"],
+            name="exploration_hypothesis_fact_hypothesis_id_fkey",
+        ),
+        sa.ForeignKeyConstraint(
+            ["exploration_fact_id"],
+            ["exploration_fact.id"],
+            name="exploration_hypothesis_fact_fact_id_fkey",
+        ),
+        sa.PrimaryKeyConstraint(
+            "exploration_hypothesis_id",
+            "exploration_fact_id",
+            name="exploration_hypothesis_fact_pkey",
+        ),
+    )
+    op.create_index(
+        "ix_exploration_hypothesis_fact_exploration_fact_id",
+        "exploration_hypothesis_fact",
+        ["exploration_fact_id"],
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_exploration_hypothesis_fact_exploration_fact_id",
+        table_name="exploration_hypothesis_fact",
+    )
+    op.drop_table("exploration_hypothesis_fact")
+    op.drop_index(
+        "ix_exploration_fact_evidence_exploration_evidence_id",
+        table_name="exploration_fact_evidence",
+    )
+    op.drop_table("exploration_fact_evidence")
+    op.drop_table("exploration_hypothesis")
+    op.drop_table("exploration_fact")
+    op.drop_index(
+        "ix_exploration_evidence_exploration_obligation_id",
+        table_name="exploration_evidence",
+    )
+    op.drop_index(
+        "ix_exploration_evidence_exploration_company_id",
+        table_name="exploration_evidence",
+    )
+    op.drop_table("exploration_evidence")
+    op.drop_index("ix_exploration_company_company_id", table_name="exploration_company")
+    op.drop_table("exploration_company")
+    op.drop_index("ix_exploration_run_exploration_id", table_name="exploration_run")
+    op.drop_table("exploration_run")
+    op.drop_index(
+        "ix_exploration_obligation_exploration_id",
+        table_name="exploration_obligation",
+    )
+    op.drop_table("exploration_obligation")
+    op.drop_table("exploration")
     op.drop_table("research_company_qualification")
     op.drop_index(
         "ix_research_evidence_research_run_id", table_name="research_evidence"
