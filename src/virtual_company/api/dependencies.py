@@ -14,6 +14,7 @@ from virtual_company.llm import (
 )
 from virtual_company.services import (
     CampaignService,
+    ExplorationService,
     ResearchCompanyService,
     ResearchEvidenceService,
     ResearchResultsService,
@@ -33,6 +34,11 @@ SessionDependency = Annotated[AsyncSession, Depends(get_session)]
 def get_campaign_service(session: SessionDependency) -> CampaignService:
     """Build a campaign service for the current request."""
     return CampaignService(session)
+
+
+def get_exploration_service(session: SessionDependency) -> ExplorationService:
+    """Build an Exploration service for the current request."""
+    return ExplorationService(session)
 
 
 def get_research_company_service(session: SessionDependency) -> ResearchCompanyService:

@@ -73,6 +73,73 @@ class CampaignUpdateRequest(CampaignUpdate):
         return self
 
 
+class ExplorationCreateRequest(BaseModel):
+    """Client supplied fields for creating an Exploration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    business_context: str
+
+
+class ExplorationUpdateRequest(BaseModel):
+    """Editable Exploration fields accepted by PATCH."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    business_context: str | None = None
+
+    @model_validator(mode="after")
+    def reject_null_business_context(self) -> ExplorationUpdateRequest:
+        if "business_context" in self.model_fields_set and self.business_context is None:
+            raise ValueError("business_context cannot be null")
+        return self
+
+
+class ExplorationResponse(BaseModel):
+    """Exploration data returned by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    business_context: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ExplorationObligationCreateRequest(BaseModel):
+    """Client supplied fields for creating an Exploration Obligation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str
+
+
+class ExplorationObligationUpdateRequest(BaseModel):
+    """Editable Obligation fields accepted by PATCH."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str | None = None
+
+    @model_validator(mode="after")
+    def reject_null_description(self) -> ExplorationObligationUpdateRequest:
+        if "description" in self.model_fields_set and self.description is None:
+            raise ValueError("description cannot be null")
+        return self
+
+
+class ExplorationObligationResponse(BaseModel):
+    """Obligation data returned by the API."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    exploration_id: UUID
+    description: str
+    created_at: datetime
+
+
 class CampaignResponse(BaseModel):
     """Campaign data returned by the API."""
 

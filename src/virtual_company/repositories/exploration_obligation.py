@@ -49,3 +49,7 @@ class ExplorationObligationRepository:
         await self._session.flush()
         await self._session.refresh(obligation)
         return obligation
+
+    async def delete(self, obligation: ExplorationObligation) -> None:
+        await self._session.delete(obligation)
+        await self._session.flush()

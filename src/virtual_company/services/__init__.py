@@ -1,6 +1,7 @@
 """Application services coordinating repository operations."""
 
 from virtual_company.services.campaign import CampaignService
+from virtual_company.services.exploration import ExplorationService
 from virtual_company.services.research import (
     PersistedResearchCompanies,
     PersistedResearchEvidence,
@@ -17,6 +18,7 @@ from virtual_company.services.research_results import (
 __all__ = [
     "ActiveResearchRunError",
     "CampaignService",
+    "ExplorationService",
     "PersistedResearchCompanies",
     "PersistedResearchEvidence",
     "ResearchCompanyService",
