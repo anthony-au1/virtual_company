@@ -1047,8 +1047,16 @@ class ResearchNodes:
             }
             updated_query_traces = []
             for query_trace in investigation.search_queries:
+                if query_trace.investigation_round != investigation.round:
+                    updated_query_traces.append(query_trace)
+                    continue
                 updated_results = []
                 for result_trace in query_trace.results:
+                    # Only the merged survivor reaches source selection. Keep
+                    # duplicate/filtered occurrences as merge-only history.
+                    if result_trace.merge_outcome != "included":
+                        updated_results.append(result_trace)
+                        continue
                     try:
                         decision = decisions_by_url.get(
                             normalize_fetch_url(result_trace.url)
@@ -1213,7 +1221,10 @@ class ResearchNodes:
                     attempted_indices[company_id].add(index)
                     try:
                         source_refs = self._source_result_refs(
-                            investigations[company_id], source.url
+                            investigations[company_id],
+                            source.url,
+                            investigation_round=investigations[company_id].round,
+                            included_only=True,
                         )
                         with observability.context(
                             company_id=str(company_id),
@@ -1229,7 +1240,12 @@ class ResearchNodes:
                             query_ids=",".join(
                                 str(item[0])
                                 for item in self._query_result_refs(
-                                    investigations[company_id], source.url
+                                    investigations[company_id],
+                                    source.url,
+                                    investigation_round=investigations[
+                                        company_id
+                                    ].round,
+                                    included_only=True,
                                 )
                             ),
                             result_ranks=",".join(
@@ -1257,7 +1273,12 @@ class ResearchNodes:
                             query_ids=[
                                 str(item[0])
                                 for item in self._query_result_refs(
-                                    investigations[company_id], source.url
+                                    investigations[company_id],
+                                    source.url,
+                                    investigation_round=investigations[
+                                        company_id
+                                    ].round,
+                                    included_only=True,
                                 )
                             ],
                             result_ranks=[item.rank for item in source_refs],
@@ -1374,19 +1395,28 @@ class ResearchNodes:
                         "result_ids": [
                             str(item.result_id)
                             for item in self._source_result_refs(
-                                investigations[company_id], source.url
+                                investigations[company_id],
+                                source.url,
+                                investigation_round=investigations[company_id].round,
+                                included_only=True,
                             )
                         ],
                         "query_ids": [
                             str(item[0])
                             for item in self._query_result_refs(
-                                investigations[company_id], source.url
+                                investigations[company_id],
+                                source.url,
+                                investigation_round=investigations[company_id].round,
+                                included_only=True,
                             )
                         ],
                         "result_ranks": [
                             item.rank
                             for item in self._source_result_refs(
-                                investigations[company_id], source.url
+                                investigations[company_id],
+                                source.url,
+                                investigation_round=investigations[company_id].round,
+                                included_only=True,
                             )
                         ],
                         "fetch_attempt": attempt_numbers.get(key),
@@ -1398,6 +1428,9 @@ class ResearchNodes:
                 updated_results = []
                 for result_trace in query_trace.results:
                     if query_trace.investigation_round != investigation.round:
+                        updated_results.append(result_trace)
+                        continue
+                    if result_trace.merge_outcome != "included":
                         updated_results.append(result_trace)
                         continue
                     normalized = self._source_state_key(result_trace.url)
@@ -1803,6 +1836,7 @@ class ResearchNodes:
                 for result_trace in query_trace.results:
                     if (
                         query_trace.investigation_round == company_investigation.round
+                        and result_trace.merge_outcome == "included"
                         and result_trace.fetch_outcome == "ATTEMPTED_SUCCESS"
                         and self._source_state_key(result_trace.url)
                         == self._source_state_key(item.source_url)
@@ -1880,23 +1914,41 @@ class ResearchNodes:
 
     @staticmethod
     def _query_result_refs(
-        investigation: CompanyInvestigationState, url: str
+        investigation: CompanyInvestigationState,
+        url: str,
+        *,
+        investigation_round: int | None = None,
+        included_only: bool = False,
     ) -> list[tuple[UUID, CompanySearchResultTrace]]:
         key = ResearchNodes._source_state_key(url)
         return [
             (query_trace.query_id, result_trace)
             for query_trace in investigation.search_queries
+            if (
+                investigation_round is None
+                or query_trace.investigation_round == investigation_round
+            )
             for result_trace in query_trace.results
+            if not included_only or result_trace.merge_outcome == "included"
             if ResearchNodes._source_state_key(result_trace.url) == key
         ]
 
     @staticmethod
     def _source_result_refs(
-        investigation: CompanyInvestigationState, url: str
+        investigation: CompanyInvestigationState,
+        url: str,
+        *,
+        investigation_round: int | None = None,
+        included_only: bool = False,
     ) -> list[CompanySearchResultTrace]:
         return [
             result_trace
-            for _, result_trace in ResearchNodes._query_result_refs(investigation, url)
+            for _, result_trace in ResearchNodes._query_result_refs(
+                investigation,
+                url,
+                investigation_round=investigation_round,
+                included_only=included_only,
+            )
         ]
 
     async def check_evidence_coverage(

@@ -61,6 +61,7 @@ from virtual_company.workflows.research.models import (
     GeneratedSearchQueries,
     InvestigationStopReason,
     ResearchCompany,
+    ValidatedResearchEvidence,
 )
 from virtual_company.workflows.research.nodes import (
     CampaignNotFoundError,
@@ -464,7 +465,15 @@ async def test_company_search_trace_correlates_duplicate_results_by_query(
         research_llm=ResearchFake([]),
         extraction_llm=ExtractionFake({}),
         web_search=DuplicateResultSearch(),  # type: ignore[arg-type]
-        web_fetch=FetchFake({}),
+        web_fetch=FetchFake(
+            {
+                shared_url: WebPage(
+                    url=shared_url,
+                    content="Acme uses Java.",
+                    title="Java role",
+                )
+            }
+        ),
         web_search_max_total_results=5,
         company_research_max_results_per_company=5,
         company_research_max_results_per_query=7,
@@ -479,7 +488,7 @@ async def test_company_search_trace_correlates_duplicate_results_by_query(
                 company.id: ["initial query", "second initial query"]
             },
             "investigations": {
-                company.id: CompanyInvestigationState(company_id=company.id)
+                company.id: CompanyInvestigationState(company_id=company.id, round=1)
             },
         }
     )  # type: ignore[arg-type]
@@ -499,6 +508,77 @@ async def test_company_search_trace_correlates_duplicate_results_by_query(
         "duplicate_url",
     ]
     assert len(output["company_search_results"][company.id]) == 1
+
+    selection = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "company_search_results": output["company_search_results"],
+            "investigations": output["investigations"],
+            "criterion_qualifications": {company.id: []},
+        }
+    )  # type: ignore[arg-type]
+    fetched = await nodes.fetch_company_sources(
+        {
+            "research_companies": [company],
+            **selection,
+        }  # type: ignore[arg-type]
+    )
+    current_traces = fetched["investigations"][company.id].search_queries
+    assert [trace.results[0].selection_outcome for trace in current_traces] == [
+        "selected",
+        None,
+    ]
+    assert [trace.results[0].fetch_outcome for trace in current_traces] == [
+        "ATTEMPTED_SUCCESS",
+        None,
+    ]
+
+    evidence_id = uuid4()
+    evidence_item = SimpleNamespace(
+        id=evidence_id,
+        company_id=company.id,
+        source_url=shared_url,
+        criterion="keyword",
+        subject="Java",
+        claim="The role uses Java.",
+        evidence_text="Acme uses Java.",
+        source_title="Java role",
+        confidence=None,
+    )
+
+    async def persist_evidence(**_: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            created_count=1,
+            skipped_count=0,
+            created_by_company={company.id: 1},
+            items=[evidence_item],
+        )
+
+    monkeypatch.setattr(nodes._research, "persist_research_evidence", persist_evidence)
+    persisted = await nodes.persist_research_evidence(
+        {
+            "research_run_id": run_id,
+            "research_companies": [company],
+            "investigations": fetched["investigations"],
+            "validated_research_evidence": [
+                ValidatedResearchEvidence(
+                    company_id=company.id,
+                    research_run_id=run_id,
+                    criterion="keyword",
+                    subject="Java",
+                    claim="The role uses Java.",
+                    evidence_text="Acme uses Java.",
+                    source_url=shared_url,
+                    source_title="Java role",
+                )
+            ],
+        }  # type: ignore[arg-type]
+    )
+    persisted_traces = persisted["investigations"][company.id].search_queries
+    assert [trace.results[0].evidence_ids for trace in persisted_traces] == [
+        [evidence_id],
+        [],
+    ]
     completed = [
         fields
         for event_name, fields in telemetry.events
@@ -513,6 +593,94 @@ async def test_company_search_trace_correlates_duplicate_results_by_query(
     )
     assert "password" not in repr(completed)
     assert "secret" not in repr(completed)
+
+
+@pytest.mark.asyncio
+async def test_later_round_preserves_prior_result_occurrence_decisions() -> None:
+    model = campaign()
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    evidence_id = uuid4()
+    shared_url = "https://jobs.example/acme-role"
+    unrelated_url = "https://acme.example/company"
+    round_one_query = CompanySearchQueryTrace(
+        query_id=uuid4(),
+        query="Acme Java jobs",
+        provider="exa",
+        search_phase="initial",
+        investigation_round=1,
+        success=True,
+        result_count=1,
+        results=[
+            CompanySearchResultTrace(
+                result_id=uuid4(),
+                rank=2,
+                url=shared_url,
+                merge_outcome="included",
+                selection_outcome="selected",
+                fetch_outcome="ATTEMPTED_SUCCESS",
+                fetch_attempt=1,
+                evidence_ids=[evidence_id],
+            )
+        ],
+    )
+    round_two_query = CompanySearchQueryTrace(
+        query_id=uuid4(),
+        query="Acme Java engineering",
+        provider="exa",
+        search_phase="followup",
+        investigation_round=2,
+        success=True,
+        result_count=2,
+        results=[
+            CompanySearchResultTrace(
+                result_id=uuid4(),
+                rank=4,
+                url=shared_url,
+                merge_outcome="already_processed",
+            ),
+            CompanySearchResultTrace(
+                result_id=uuid4(),
+                rank=1,
+                url=unrelated_url,
+                merge_outcome="included",
+            ),
+        ],
+    )
+    fetch = FetchFake({})
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._web_fetch = fetch
+    investigation = CompanyInvestigationState(
+        company_id=company.id,
+        round=2,
+        attempted_urls={"https://jobs.example/acme-role"},
+        search_queries=[round_one_query, round_two_query],
+    )
+    selection = await nodes.select_company_sources(
+        {
+            "research_companies": [company],
+            "company_search_results": {
+                company.id: [SearchResult(title="Company", url=unrelated_url)]
+            },
+            "investigations": {company.id: investigation},
+            "criterion_qualifications": {company.id: []},
+        }
+    )  # type: ignore[arg-type]
+    fetched = await nodes.fetch_company_sources(
+        {"research_companies": [company], **selection}  # type: ignore[arg-type]
+    )
+    traces = fetched["investigations"][company.id].search_queries
+    first = traces[0].results[0]
+    repeated, unrelated = traces[1].results
+    assert first.selection_outcome == "selected"
+    assert first.fetch_outcome == "ATTEMPTED_SUCCESS"
+    assert first.evidence_ids == [evidence_id]
+    assert repeated.merge_outcome == "already_processed"
+    assert repeated.selection_outcome is None
+    assert repeated.fetch_outcome is None
+    assert repeated.evidence_ids == []
+    assert unrelated.selection_outcome == "selected"
+    assert unrelated.fetch_outcome == "ATTEMPTED_SUCCESS"
+    assert fetch.calls == [unrelated_url]
 
 
 def test_source_search_provenance_is_compact_and_url_sanitized() -> None:
