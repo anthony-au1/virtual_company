@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Sequence
 from urllib.parse import urlsplit
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from virtual_company.domain.criteria import campaign_criteria, normalize_subject
 from virtual_company.domain.qualification import (
@@ -59,7 +59,6 @@ from virtual_company.workflows.research.models import (
     CompanyInvestigationState,
     CompanyPageAttribution,
     CompanySearchQueryTrace,
-    CompanySearchResultTrace,
     CoverageStatus,
     DiscoveredCompanies,
     ExtractedCompanyCandidate,
@@ -70,11 +69,14 @@ from virtual_company.workflows.research.models import (
     ResearchCompany,
     ValidatedResearchEvidence,
 )
+from virtual_company.workflows.research.observability import (
+    QualificationObservability,
+    SearchProvenanceRecorder,
+)
 from virtual_company.workflows.research.prompts import (
     COMPANY_QUERY_PROMPT,
     EXTRACT_COMPANY_CANDIDATES_PROMPT,
     EXTRACT_COMPANY_EVIDENCE_PROMPT,
-    EXTRACT_QUALIFICATION_FACTS_PROMPT,
     FOLLOWUP_COMPANY_QUERY_PROMPT,
     RANK_COMPANY_CANDIDATES_PROMPT,
     SEARCH_QUERY_PROMPT,
@@ -130,12 +132,17 @@ class ResearchNodes:
     ) -> None:
         self._campaigns = campaigns
         self._research = research
+        telemetry = get_observability()
+        self._search_provenance = SearchProvenanceRecorder(telemetry)
+        self._qualification_observability = QualificationObservability(telemetry)
         self._research_llm = research_llm or llm
         self._extraction_llm = extraction_llm or llm
         if self._research_llm is None or self._extraction_llm is None:
             raise ValueError("Research and extraction LLM providers are required")
         self._qualification_extractor = QualificationEvidenceExtractor(
-            self._extraction_llm, concurrency=evidence_extraction_concurrency
+            self._extraction_llm,
+            concurrency=evidence_extraction_concurrency,
+            observability=self._qualification_observability,
         )
         self._web_search = web_search
         self._web_fetch = web_fetch
@@ -721,7 +728,7 @@ class ResearchNodes:
                     (
                         company,
                         query,
-                        uuid4(),
+                        self._search_provenance.new_query_id(),
                         max(investigation.round, 1),
                         "initial" if investigation.round <= 1 else "followup",
                     )
@@ -758,59 +765,29 @@ class ResearchNodes:
                 search_phase=search_phase,
                 investigation_round=str(round_number),
             ):
-                observability.event("company_search_query_started", **result_context)
+                self._search_provenance.query_started(result_context)
                 async with semaphore:
                     try:
                         response = await self._web_search.search(
                             query, limit=self._company_research_max_results_per_query
                         )
                     except Exception as error:
-                        observability.event(
-                            "company_search_query_failed",
-                            error_type=type(error).__name__,
-                            failure_category=getattr(error, "category", None),
-                            http_status=getattr(error, "status_code", None),
-                            **result_context,
-                        )
+                        self._search_provenance.query_failed(error, result_context)
                         raise
                 results = (
                     response.results
                     if isinstance(response, SearchResponse)
                     else response
                 )
-                traced_results = [
-                    CompanySearchResultTrace(
-                        result_id=uuid4(),
-                        rank=rank,
-                        url=result.url,
-                        title=result.title[:300] if result.title else None,
-                    )
-                    for rank, result in enumerate(results, start=1)
-                ]
-                trace = CompanySearchQueryTrace(
+                trace = self._search_provenance.create_query_trace(
                     query_id=query_id,
                     query=query,
                     provider=provider,
-                    search_phase=search_phase,  # type: ignore[arg-type]
+                    search_phase=search_phase,
                     investigation_round=round_number,
-                    success=True,
-                    result_count=len(results),
-                    results=traced_results,
+                    results=results,
                 )
-                observability.event(
-                    "company_search_query_completed",
-                    result_count=len(results),
-                    results=[
-                        {
-                            "result_id": str(item.result_id),
-                            "rank": item.rank,
-                            "url": sanitize_observability_url(item.url),
-                            "title": item.title,
-                        }
-                        for item in traced_results
-                    ],
-                    **result_context,
-                )
+                self._search_provenance.query_completed(trace, result_context)
                 return list(results), trace
 
         result_groups = await asyncio.gather(
@@ -858,62 +835,32 @@ class ResearchNodes:
                 included_origins=included_origins,
             )
             results_by_company[company.id] = results
-            included_origin_set = set(included_origins)
             included_urls = {normalize_fetch_url(item.url) for item in results}
-            updated_traces = traces_by_company[company.id]
-            for group_index, query_trace in enumerate(updated_traces):
-                updated_results = []
-                for result in query_trace.results:
-                    origin = (group_index, result.rank)
-                    try:
-                        normalized = normalize_fetch_url(result.url)
-                    except ValueError:
-                        outcome = "invalid_url"
-                    else:
-                        if normalized in seen_urls_by_company[company.id]:
-                            outcome = "already_processed"
-                        elif origin in included_origin_set:
-                            outcome = "included"
-                        elif normalized in included_urls:
-                            outcome = "duplicate_url"
-                        else:
-                            outcome = "result_limit"
-                    updated_results.append(
-                        result.model_copy(update={"merge_outcome": outcome})
-                    )
-                updated_traces[group_index] = query_trace.model_copy(
-                    update={"results": updated_results}
-                )
+            updated_traces = self._search_provenance.record_merge_outcomes(
+                traces_by_company[company.id],
+                included_origins=included_origins,
+                seen_urls=seen_urls_by_company[company.id],
+                included_urls=included_urls,
+            )
             investigation = investigations.get(
                 company.id, CompanyInvestigationState(company_id=company.id)
             )
-            investigations[company.id] = investigation.model_copy(
-                update={
-                    "search_queries": [*investigation.search_queries, *updated_traces]
-                }
+            investigations[company.id] = self._search_provenance.append_queries(
+                investigation, updated_traces
             )
-            with observability.context(
-                company_id=str(company.id), company_domain=company.domain
-            ):
-                observability.event(
-                    "company_search_results_merged",
-                    query_count=len(grouped_queries[company.id]),
-                    result_count=len(results),
-                    result_contributions=contributions,
-                )
+            self._search_provenance.record_merge_completed(
+                company_id=company.id,
+                company_domain=company.domain,
+                query_count=len(grouped_queries[company.id]),
+                result_count=len(results),
+                contributions=contributions,
+            )
         for company in active_companies:
-            with observability.context(
-                company_id=str(company.id), company_domain=company.domain
-            ):
-                count = len(results_by_company[company.id])
-                observability.record(
-                    "company_research_sources_found_total",
-                    count,
-                    workflow="company_research",
-                )
-                observability.event(
-                    "company_research_sources_found", result_count=count
-                )
+            self._search_provenance.record_sources_found(
+                company_id=company.id,
+                company_domain=company.domain,
+                result_count=len(results_by_company[company.id]),
+            )
         return {
             "company_search_results": results_by_company,
             "investigations": investigations,
@@ -925,7 +872,6 @@ class ResearchNodes:
         """Deterministically select a small, useful source set per company."""
         selected: dict[UUID, list[SearchResult]] = {}
         candidates: dict[UUID, list[SearchResult]] = {}
-        observability = get_observability()
         investigations = dict(state.get("investigations", {}))
         active_companies = self._active_companies(state)
         adaptive_mode = state.get("adaptive_mode", False)
@@ -1045,89 +991,40 @@ class ResearchNodes:
                     candidate_pool, candidate_decisions, strict=True
                 )
             }
-            updated_query_traces = []
-            for query_trace in investigation.search_queries:
-                if query_trace.investigation_round != investigation.round:
-                    updated_query_traces.append(query_trace)
-                    continue
-                updated_results = []
-                for result_trace in query_trace.results:
-                    # Only the merged survivor reaches source selection. Keep
-                    # duplicate/filtered occurrences as merge-only history.
-                    if result_trace.merge_outcome != "included":
-                        updated_results.append(result_trace)
-                        continue
-                    try:
-                        decision = decisions_by_url.get(
-                            normalize_fetch_url(result_trace.url)
-                        )
-                    except ValueError:
-                        decision = None
-                    if decision is None:
-                        updated_results.append(
-                            result_trace.model_copy(
-                                update={"selection_outcome": "not_selected"}
-                            )
-                        )
-                        continue
-                    updated_results.append(
-                        result_trace.model_copy(
-                            update={
-                                "selection_outcome": (
-                                    "selected"
-                                    if decision["preferred"]
-                                    else "backfill_candidate"
-                                ),
-                                "candidate_position": decision["candidate_position"],
-                                "preferred_position": decision["preferred_position"],
-                            }
-                        )
-                    )
-                updated_query_traces.append(
-                    query_trace.model_copy(update={"results": updated_results})
+            occurrence_by_key = {
+                self._source_state_key(occurrence.url): occurrence
+                for occurrence in self._search_provenance.included_occurrences(
+                    investigation, investigation.round
                 )
-            investigations[company.id] = investigation.model_copy(
-                update={"search_queries": updated_query_traces}
+            }
+            decisions_by_result_id = {
+                occurrence.result_id: decisions_by_url[url_key]
+                for url_key, occurrence in occurrence_by_key.items()
+                if url_key in decisions_by_url
+            }
+            investigations[company.id] = self._search_provenance.record_selection(
+                investigation,
+                investigation_round=investigation.round,
+                decisions_by_result_id=decisions_by_result_id,
             )
             selected[company.id] = sources
             candidates[company.id] = candidate_pool
-            with observability.context(
-                company_id=str(company.id), company_domain=company.domain
-            ):
-                selection_metadata = {
-                    "company_id": str(company.id),
-                    "company_name": company.name,
-                    "research_phase": telemetry_phase,
-                    "fetch_phase": fetch_phase,
-                    "fetch_target": fetch_target,
-                    "candidate_decisions": candidate_decisions,
-                }
-                with observability.span(
-                    "company_source_selection", **selection_metadata
-                ):
-                    pass
-                observability.event(
-                    "company_sources_selected",
-                    company_name=company.name,
-                    available_source_count=len(unique_results),
-                    selected_source_count=len(sources),
-                    fetch_target=fetch_target,
-                    fetch_phase=fetch_phase,
-                    research_phase=telemetry_phase,
-                    candidate_decisions=candidate_decisions,
-                )
-                observability.record(
-                    "company_research_sources_selected_total",
-                    len(sources),
-                    workflow="company_research",
-                )
-        context = {
-            "company_count": len(active_companies),
-            "selected_source_count": sum(len(sources) for sources in selected.values()),
-            "successful_fetch_target_per_company": fetch_target,
-        }
-        with observability.span("select_company_sources", **context):
-            observability.event("company_sources_selection_completed", **context)
+            self._search_provenance.record_selection_events(
+                company_id=company.id,
+                company_name=company.name,
+                company_domain=company.domain,
+                research_phase=telemetry_phase,
+                fetch_phase=fetch_phase,
+                fetch_target=fetch_target,
+                available_source_count=len(unique_results),
+                selected_source_count=len(sources),
+                candidate_decisions=candidate_decisions,
+            )
+        self._search_provenance.record_selection_completed(
+            company_count=len(active_companies),
+            total_selected_source_count=sum(len(items) for items in selected.values()),
+            fetch_target=fetch_target,
+        )
         return {
             "selected_company_sources": selected,
             "company_source_candidates": candidates,
@@ -1220,11 +1117,14 @@ class ResearchNodes:
                     attempt_numbers[(company_id, index)] = attempt_number
                     attempted_indices[company_id].add(index)
                     try:
-                        source_refs = self._source_result_refs(
+                        source_refs = self._search_provenance.occurrence_refs_for_url(
                             investigations[company_id],
                             source.url,
                             investigation_round=investigations[company_id].round,
                             included_only=True,
+                        )
+                        fetch_correlation = self._search_provenance.fetch_context(
+                            source_refs
                         )
                         with observability.context(
                             company_id=str(company_id),
@@ -1234,23 +1134,7 @@ class ResearchNodes:
                             ),
                             fetch_attempt=attempt_number,
                             fetch_retry=attempt_number > 1,
-                            result_ids=",".join(
-                                str(item.result_id) for item in source_refs
-                            ),
-                            query_ids=",".join(
-                                str(item[0])
-                                for item in self._query_result_refs(
-                                    investigations[company_id],
-                                    source.url,
-                                    investigation_round=investigations[
-                                        company_id
-                                    ].round,
-                                    included_only=True,
-                                )
-                            ),
-                            result_ranks=",".join(
-                                str(item.rank) for item in source_refs
-                            ),
+                            **fetch_correlation,
                         ):
                             page = await self._web_fetch.fetch(source.url)
                         successes[(company_id, index)] = page.model_copy(
@@ -1259,29 +1143,14 @@ class ResearchNodes:
                     except WebFetchError as error:
                         retryable = self._fetch_error_is_retryable(error)
                         retry_remaining = retryable and attempt_number < 2
-                        observability.event(
-                            "company_source_fetch_failed",
-                            company_id=str(company_id),
-                            url=sanitize_observability_url(source.url),
-                            failure_category=error.category,
-                            http_status=getattr(error, "status_code", None),
+                        self._search_provenance.record_fetch_failure(
+                            company_id=company_id,
+                            url=source.url,
+                            error=error,
                             attempt_number=attempt_number,
                             retryable=retryable,
                             retry_remaining=retry_remaining,
-                            exhausted=not retry_remaining,
-                            result_ids=[str(item.result_id) for item in source_refs],
-                            query_ids=[
-                                str(item[0])
-                                for item in self._query_result_refs(
-                                    investigations[company_id],
-                                    source.url,
-                                    investigation_round=investigations[
-                                        company_id
-                                    ].round,
-                                    included_only=True,
-                                )
-                            ],
-                            result_ranks=[item.rank for item in source_refs],
+                            refs=source_refs,
                         )
                         failures[(company_id, index)] = error
                     finally:
@@ -1363,11 +1232,9 @@ class ResearchNodes:
                 "additional_candidate_attempts": additional_attempts,
             }
             candidate_outcomes = []
-            outcome_by_url: dict[str, str] = {}
-            attempt_by_url: dict[str, int] = {}
-            failure_by_url: dict[str, WebFetchError] = {}
+            outcomes_by_result_id: dict[UUID, dict[str, object]] = {}
+            investigation = investigations[company_id]
             for index, source in enumerate(sources_by_company[company_id]):
-                normalized_url = self._source_state_key(source.url)
                 key = (company_id, index)
                 if key in successes:
                     outcome = "ATTEMPTED_SUCCESS"
@@ -1377,11 +1244,18 @@ class ResearchNodes:
                     outcome = "NOT_ATTEMPTED_TARGET_REACHED"
                 else:
                     outcome = "NOT_ATTEMPTED_CANDIDATES_EXHAUSTED"
-                outcome_by_url[normalized_url] = outcome
-                if key in attempt_numbers:
-                    attempt_by_url[normalized_url] = attempt_numbers[key]
-                if key in failures:
-                    failure_by_url[normalized_url] = failures[key]
+                refs = self._search_provenance.occurrence_refs_for_url(
+                    investigation,
+                    source.url,
+                    investigation_round=investigation.round,
+                    included_only=True,
+                )
+                for occurrence in refs:
+                    outcomes_by_result_id[occurrence.result_id] = {
+                        "outcome": outcome,
+                        "fetch_attempt": attempt_numbers.get(key),
+                        "error": failures.get(key),
+                    }
                 candidate_outcomes.append(
                     {
                         "normalized_url": sanitize_observability_url(source.url),
@@ -1392,111 +1266,35 @@ class ResearchNodes:
                         else None,
                         "fetch_target": fetch_target,
                         "outcome": outcome,
-                        "result_ids": [
-                            str(item.result_id)
-                            for item in self._source_result_refs(
-                                investigations[company_id],
-                                source.url,
-                                investigation_round=investigations[company_id].round,
-                                included_only=True,
-                            )
-                        ],
-                        "query_ids": [
-                            str(item[0])
-                            for item in self._query_result_refs(
-                                investigations[company_id],
-                                source.url,
-                                investigation_round=investigations[company_id].round,
-                                included_only=True,
-                            )
-                        ],
-                        "result_ranks": [
-                            item.rank
-                            for item in self._source_result_refs(
-                                investigations[company_id],
-                                source.url,
-                                investigation_round=investigations[company_id].round,
-                                included_only=True,
-                            )
-                        ],
+                        "result_ids": [str(item.result_id) for item in refs],
+                        "query_ids": [str(item.query_id) for item in refs],
+                        "result_ranks": [item.rank for item in refs],
                         "fetch_attempt": attempt_numbers.get(key),
                     }
                 )
-            investigation = investigations[company_id]
-            updated_traces = []
-            for query_trace in investigation.search_queries:
-                updated_results = []
-                for result_trace in query_trace.results:
-                    if query_trace.investigation_round != investigation.round:
-                        updated_results.append(result_trace)
-                        continue
-                    if result_trace.merge_outcome != "included":
-                        updated_results.append(result_trace)
-                        continue
-                    normalized = self._source_state_key(result_trace.url)
-                    outcome = outcome_by_url.get(normalized)
-                    if outcome is None:
-                        updated_results.append(result_trace)
-                        continue
-                    error = failure_by_url.get(normalized)
-                    updated_results.append(
-                        result_trace.model_copy(
-                            update={
-                                "fetch_outcome": outcome,
-                                "fetch_attempt": attempt_by_url.get(normalized),
-                                "failure_category": (
-                                    error.category if error is not None else None
-                                ),
-                                "http_status": (
-                                    getattr(error, "status_code", None)
-                                    if error is not None
-                                    else None
-                                ),
-                            }
-                        )
-                    )
-                updated_traces.append(
-                    query_trace.model_copy(update={"results": updated_results})
-                )
-            investigations[company_id] = investigation.model_copy(
-                update={"search_queries": updated_traces}
+            investigations[company_id] = self._search_provenance.record_fetch_outcomes(
+                investigation,
+                investigation_round=investigation.round,
+                outcomes_by_result_id=outcomes_by_result_id,
             )
             batch_stats[company_id] = stats
             company = companies_by_id[company_id]
-            with observability.context(
-                company_id=str(company_id),
+            self._search_provenance.record_fetch_batch_events(
+                company_id=company_id,
                 company_name=company.name,
                 company_domain=company.domain,
-            ):
-                fetch_metadata = {
-                    "company_id": str(company_id),
-                    "company_name": company.name,
-                    "research_phase": telemetry_phase,
-                    "fetch_phase": fetch_phase,
-                    "fetch_target": fetch_target,
-                    "candidate_outcomes": candidate_outcomes,
-                    "target_reached": target_reached,
-                    "candidates_exhausted": candidates_exhausted,
-                    "stop_reason": stop_reason,
-                }
-                with observability.span("company_source_fetch_batch", **fetch_metadata):
-                    pass
-            observability.event(
-                "company_sources_fetch_batch_completed",
-                company_id=str(company_id),
-                fetch_phase=fetch_phase,
                 research_phase=telemetry_phase,
+                fetch_phase=fetch_phase,
+                fetch_target=fetch_target,
                 candidate_outcomes=candidate_outcomes,
+                target_reached=target_reached,
+                candidates_exhausted=candidates_exhausted,
                 stop_reason=stop_reason,
-                **stats,
-            )
-            observability.event(
-                "company_sources_fetch_completed",
-                company_id=str(company_id),
+                stats=stats,
                 selected_source_count=preferred_counts[company_id],
                 candidate_count=candidate_count,
-                fetch_success_count=success_count,
-                fetch_failure_count=failure_count,
+                success_count=success_count,
+                failure_count=failure_count,
             )
         context = {
             "candidate_count": sum(len(items) for items in sources_by_company.values()),
@@ -1829,127 +1627,49 @@ class ResearchNodes:
                 item.company_id,
                 CompanyInvestigationState(company_id=item.company_id),
             )
-            evidence_traces = []
-            updated_query_traces = []
-            for query_trace in company_investigation.search_queries:
-                updated_results = []
-                for result_trace in query_trace.results:
-                    if (
-                        query_trace.investigation_round == company_investigation.round
-                        and result_trace.merge_outcome == "included"
-                        and result_trace.fetch_outcome == "ATTEMPTED_SUCCESS"
-                        and self._source_state_key(result_trace.url)
-                        == self._source_state_key(item.source_url)
-                    ):
-                        result_trace = result_trace.model_copy(
-                            update={
-                                "evidence_ids": list(
-                                    dict.fromkeys([*result_trace.evidence_ids, item.id])
-                                )
-                            }
-                        )
-                        evidence_traces.append((query_trace.query_id, result_trace))
-                    updated_results.append(result_trace)
-                updated_query_traces.append(
-                    query_trace.model_copy(update={"results": updated_results})
-                )
-            company_investigation = company_investigation.model_copy(
-                update={"search_queries": updated_query_traces}
+            evidence_refs = self._search_provenance.occurrence_refs_for_url(
+                company_investigation,
+                item.source_url,
+                investigation_round=company_investigation.round,
+                included_only=True,
             )
+            linked_refs = []
+            for evidence_ref in evidence_refs:
+                company_investigation, linked_ref = (
+                    self._search_provenance.link_evidence(
+                        company_investigation,
+                        result_id=evidence_ref.result_id,
+                        evidence_id=item.id,
+                        investigation_round=company_investigation.round,
+                    )
+                )
+                if linked_ref is not None:
+                    linked_refs.append(linked_ref)
             investigations[item.company_id] = company_investigation
-            with observability.context(
-                research_run_id=str(research_run_id),
-                company_id=str(item.company_id),
-                workflow_stage="evidence_extraction_persisted",
+            self._search_provenance.record_evidence_extracted(
+                research_run_id=research_run_id,
+                evidence_id=item.id,
+                company_id=item.company_id,
+                criterion=item.criterion,
+                subject=item.subject,
+                source_url=item.source_url,
+                source_title=item.source_title,
+                claim=item.claim,
+                excerpt=item.evidence_text,
+                confidence=(
+                    float(item.confidence) if item.confidence is not None else None
+                ),
+                refs=linked_refs,
                 prompt_name=EXTRACT_COMPANY_EVIDENCE_PROMPT.name,
                 prompt_version=EXTRACT_COMPANY_EVIDENCE_PROMPT.version,
                 model=str(getattr(self._extraction_llm, "model", "unknown")),
-            ):
-                observability.event(
-                    "research_evidence_extracted",
-                    evidence_id=str(item.id),
-                    criterion=item.criterion,
-                    subject=item.subject,
-                    source_url=self._safe_log_url(item.source_url),
-                    source_title=item.source_title,
-                    claim=item.claim[:300],
-                    excerpt=item.evidence_text[:500],
-                    confidence=(
-                        float(item.confidence) if item.confidence is not None else None
-                    ),
-                    company_attribution_validated=True,
-                    query_ids=[str(query_id) for query_id, _ in evidence_traces],
-                    result_ids=[
-                        str(result_trace.result_id)
-                        for _, result_trace in evidence_traces
-                    ],
-                    result_ranks=[
-                        result_trace.rank for _, result_trace in evidence_traces
-                    ],
-                )
+            )
         return {"investigations": investigations}
 
     @staticmethod
     def _safe_log_url(value: str) -> str:
         """Remove URL credentials and sensitive query details before logging."""
         return sanitize_observability_url(value)
-
-    @staticmethod
-    def _source_search_provenance(
-        investigation: CompanyInvestigationState,
-    ) -> dict[str, object]:
-        """Persist the compact query/result/fetch trail with final qualification."""
-        queries = []
-        for query_trace in investigation.search_queries:
-            query_data = query_trace.model_dump(mode="json")
-            query_data["results"] = [
-                {
-                    **result.model_dump(mode="json"),
-                    "url": sanitize_observability_url(result.url),
-                }
-                for result in query_trace.results
-            ]
-            queries.append(query_data)
-        return {"queries": queries}
-
-    @staticmethod
-    def _query_result_refs(
-        investigation: CompanyInvestigationState,
-        url: str,
-        *,
-        investigation_round: int | None = None,
-        included_only: bool = False,
-    ) -> list[tuple[UUID, CompanySearchResultTrace]]:
-        key = ResearchNodes._source_state_key(url)
-        return [
-            (query_trace.query_id, result_trace)
-            for query_trace in investigation.search_queries
-            if (
-                investigation_round is None
-                or query_trace.investigation_round == investigation_round
-            )
-            for result_trace in query_trace.results
-            if not included_only or result_trace.merge_outcome == "included"
-            if ResearchNodes._source_state_key(result_trace.url) == key
-        ]
-
-    @staticmethod
-    def _source_result_refs(
-        investigation: CompanyInvestigationState,
-        url: str,
-        *,
-        investigation_round: int | None = None,
-        included_only: bool = False,
-    ) -> list[CompanySearchResultTrace]:
-        return [
-            result_trace
-            for _, result_trace in ResearchNodes._query_result_refs(
-                investigation,
-                url,
-                investigation_round=investigation_round,
-                included_only=included_only,
-            )
-        ]
 
     async def check_evidence_coverage(
         self, state: ResearchWorkflowState
@@ -2196,14 +1916,6 @@ class ResearchNodes:
             for item in criteria
         ]
 
-    @staticmethod
-    def _criterion_label(criterion: CriterionQualification) -> str:
-        return (
-            f"{criterion.criterion}:{criterion.subject}"
-            if criterion.subject
-            else criterion.criterion
-        )
-
     async def qualify_companies(
         self, state: ResearchWorkflowState
     ) -> dict[str, object]:
@@ -2215,7 +1927,6 @@ class ResearchNodes:
             raise ValueError("Qualification requires all investigations to be terminal")
         campaign = self._campaign(state)
         results: dict[UUID, ResearchCompanyQualification] = {}
-        observability = get_observability()
         run_id = state["research_run_id"]
         if run_id is None:
             raise ValueError("Research run was not created")
@@ -2271,121 +1982,20 @@ class ResearchNodes:
                 company_id=result.company_id,
                 status=result.status,
                 criteria=result.criteria,
-                provenance={
-                    "evaluation_stage": "final",
-                    "available_evidence_ids": [
-                        str(value) for value in facts_entry.evidence_ids
-                    ],
-                    "qualification_facts": (
-                        facts_entry.facts.model_dump(mode="json")
-                        if facts_entry.facts is not None
-                        else None
-                    ),
-                    "fact_extraction_by_criterion": facts_entry.provenance_by_criterion,
-                    "source_search_observability": self._source_search_provenance(
+                provenance=self._qualification_observability.final_provenance(
+                    facts_entry,
+                    self._search_provenance.snapshot(
                         state["investigations"][company.id]
                     ),
-                },
+                ),
             )
             criterion_qualifications[company.id] = criteria
-            metadata = {
-                "company_id": str(company.id),
-                "company_name": company.name,
-                "qualification_status": result.status.value,
-                "criteria_total": len(result.criteria),
-                "criteria_match": sum(
-                    item.status is QualificationStatus.MATCH for item in result.criteria
-                ),
-                "criteria_mismatch": sum(
-                    item.status is QualificationStatus.MISMATCH
-                    for item in result.criteria
-                ),
-                "criteria_unknown": sum(
-                    item.status is QualificationStatus.UNKNOWN
-                    for item in result.criteria
-                ),
-            }
-            with (
-                observability.context(
-                    research_run_id=str(run_id),
-                    company_id=str(company.id),
-                    company_name=company.name,
-                    workflow_stage="final_company_qualification",
-                    evaluation_stage="final",
-                ),
-                observability.span("company_qualification", **metadata),
-            ):
-                for index, item in enumerate(result.criteria):
-                    fact = next(
-                        (
-                            value
-                            for value in (
-                                facts_entry.facts.categorical
-                                if facts_entry.facts
-                                else []
-                            )
-                            if value.criterion_id == f"criterion_{index}"
-                        ),
-                        None,
-                    )
-                    if item.criterion == "company_size":
-                        fact_output = {
-                            "employee_counts": [
-                                value.model_dump(mode="json")
-                                for value in (
-                                    facts_entry.facts.employee_counts
-                                    if facts_entry.facts
-                                    else []
-                                )
-                            ]
-                        }
-                    else:
-                        fact_output = fact.model_dump(mode="json") if fact else None
-                    observability.event(
-                        "research_criterion_evaluated",
-                        criterion=item.criterion,
-                        subject=item.subject,
-                        criterion_id=f"criterion_{index}",
-                        result=item.status.value,
-                        reason=item.reason[:300],
-                        evidence_ids=[str(value) for value in item.evidence_ids],
-                        evaluation_evidence_ids=(
-                            facts_entry.provenance_by_criterion.get(
-                                f"criterion_{index}", {}
-                            ).get("input_evidence_ids", [])
-                        ),
-                        qualification_fact=fact_output,
-                        extraction_provenance=facts_entry.provenance_by_criterion.get(
-                            f"criterion_{index}"
-                        ),
-                        model=(
-                            facts_entry.provenance_by_criterion.get(
-                                f"criterion_{index}", {}
-                            ).get("model")
-                        ),
-                        prompt_name=EXTRACT_QUALIFICATION_FACTS_PROMPT.name,
-                        prompt_version=EXTRACT_QUALIFICATION_FACTS_PROMPT.version,
-                    )
-                observability.event(
-                    "research_company_qualification_finalized",
-                    **metadata,
-                    matched_criteria=[
-                        self._criterion_label(item)
-                        for item in result.criteria
-                        if item.status is QualificationStatus.MATCH
-                    ],
-                    mismatched_criteria=[
-                        self._criterion_label(item)
-                        for item in result.criteria
-                        if item.status is QualificationStatus.MISMATCH
-                    ],
-                    unknown_criteria=[
-                        self._criterion_label(item)
-                        for item in result.criteria
-                        if item.status is QualificationStatus.UNKNOWN
-                    ],
-                )
-                observability.event("company_qualified", **metadata)
+            self._qualification_observability.record_final_evaluation(
+                research_run_id=run_id,
+                result=result,
+                facts_entry=facts_entry,
+                company_name=company.name,
+            )
             results[company.id] = result
         return {
             "research_company_qualifications": results,

@@ -16,14 +16,15 @@ from virtual_company.domain.criteria import (
     normalize_subject,
 )
 from virtual_company.llm.base import LLMProvider
-from virtual_company.observability import get_observability
 from virtual_company.research.models import (
     QualificationFacts,
     QualificationFactsCacheEntry,
     QualificationFactsCacheStatus,
 )
+from virtual_company.workflows.research.observability.qualification import (
+    QualificationObservability,
+)
 from virtual_company.workflows.research.prompts import (
-    EXTRACT_QUALIFICATION_FACTS_PROMPT,
     extract_qualification_facts_system_prompt,
     extract_qualification_facts_user_prompt,
 )
@@ -46,10 +47,12 @@ class QualificationEvidenceExtractor:
         *,
         concurrency: int = 3,
         timeout_seconds: float = 30,
+        observability: QualificationObservability | None = None,
     ) -> None:
         self._provider = provider
         self._semaphore = asyncio.Semaphore(concurrency)
         self._timeout_seconds = timeout_seconds
+        self._observability = observability or QualificationObservability()
 
     async def extract(
         self,
@@ -150,34 +153,30 @@ class QualificationEvidenceExtractor:
         }
         allowed_evidence_ids = set(evidence_ids)
         evidence_by_id = {item.id: item for item in evidence}
-        observability = get_observability()
-        metadata = {
-            "prompt_name": EXTRACT_QUALIFICATION_FACTS_PROMPT.name,
-            "prompt_version": EXTRACT_QUALIFICATION_FACTS_PROMPT.version,
-            "evidence_count": len(evidence_ids),
-            "research_run_id": str(research_run_id) if research_run_id else None,
-            "company_id": str(company_id) if company_id else None,
-            "company_name": company_name,
-            "workflow_stage": "qualification_fact_extraction",
-            "evaluation_stage": evaluation_stage,
-            "investigation_round": investigation_round,
-            "criterion_ids": [
-                f"criterion_{index}"
-                for index, criterion in enumerate(configured_criteria)
-                if target_criterion_ids is None
-                or f"criterion_{index}" in target_criterion_ids
-            ],
-            "input_evidence_ids": [str(item.id) for item in prompt_evidence],
-            "model": str(getattr(self._provider, "model", "unknown")),
-        }
+        criterion_ids = [
+            f"criterion_{index}"
+            for index, criterion in enumerate(configured_criteria)
+            if target_criterion_ids is None
+            or f"criterion_{index}" in target_criterion_ids
+        ]
+        metadata = self._observability.extraction_metadata(
+            evidence_ids=evidence_ids,
+            prompt_evidence_ids=[item.id for item in prompt_evidence],
+            criterion_ids=criterion_ids,
+            research_run_id=research_run_id,
+            company_id=company_id,
+            company_name=company_name,
+            evaluation_stage=evaluation_stage,
+            investigation_round=investigation_round,
+            model=str(getattr(self._provider, "model", "unknown")),
+        )
         if attempt_number > 1:
-            observability.event(
-                "qualification_fact_extraction_retry",
+            self._observability.record_extraction_retry(
                 attempt_number=attempt_number,
-                **metadata,
+                metadata=metadata,
             )
         try:
-            with observability.context(**metadata):
+            with self._observability.context(**metadata):
                 async with self._semaphore, asyncio.timeout(self._timeout_seconds):
                     response = await self._provider.generate_structured(
                         system_prompt=extract_qualification_facts_system_prompt(),
@@ -200,14 +199,11 @@ class QualificationEvidenceExtractor:
                 if attempt_number < 2
                 else QualificationFactsCacheStatus.FAILED_EXHAUSTED
             )
-            observability.event(
-                "qualification_fact_extraction_failed",
-                error_type=type(error).__name__,
-                outcome=status.value,
+            self._observability.record_extraction_failure(
+                error=error,
+                status=status,
                 attempt_number=attempt_number,
-                retry_remaining=attempt_number < 2,
-                retry_exhausted=attempt_number >= 2,
-                **metadata,
+                metadata=metadata,
             )
             return QualificationFactsCacheEntry(
                 evidence_ids=evidence_ids,
@@ -221,45 +217,25 @@ class QualificationEvidenceExtractor:
                 ),
             )
 
-        observability.event(
-            "qualification_facts_extracted",
-            categorical_count=len(facts.categorical),
-            employee_count_fact_count=len(facts.employee_counts),
-            attempt_number=attempt_number,
-            **metadata,
-        )
         provenance = (
             dict(previous_entry.provenance_by_criterion)
             if previous_entry is not None
             else {}
         )
-        extraction_metadata: dict[str, object] = {
-            "prompt_name": EXTRACT_QUALIFICATION_FACTS_PROMPT.name,
-            "prompt_version": EXTRACT_QUALIFICATION_FACTS_PROMPT.version,
-            "model": str(getattr(self._provider, "model", "unknown")),
-            "evaluation_stage": evaluation_stage,
-            "investigation_round": str(investigation_round or ""),
-            "input_evidence_ids": [str(item.id) for item in prompt_evidence],
-        }
-        for criterion_id in metadata["criterion_ids"]:
-            provenance[criterion_id] = extraction_metadata
-        with observability.context(**metadata):
-            for fact in facts.categorical:
-                observability.event(
-                    "qualification_fact_extracted",
-                    criterion_id=fact.criterion_id,
-                    fact_state=fact.state,
-                    evidence_ids=[str(value) for value in fact.evidence_ids],
-                )
-            for fact in facts.employee_counts:
-                observability.event(
-                    "qualification_employee_count_fact_extracted",
-                    value=fact.value,
-                    relation=fact.relation,
-                    year=fact.year,
-                    scope=fact.scope,
-                    evidence_ids=[str(value) for value in fact.evidence_ids],
-                )
+        provenance.update(
+            self._observability.extraction_provenance(
+                evaluation_stage=evaluation_stage,
+                investigation_round=investigation_round,
+                prompt_evidence_ids=[item.id for item in prompt_evidence],
+                model=str(getattr(self._provider, "model", "unknown")),
+                criterion_ids=criterion_ids,
+            )
+        )
+        self._observability.record_extracted_facts(
+            facts=facts,
+            attempt_number=attempt_number,
+            metadata=metadata,
+        )
         return QualificationFactsCacheEntry(
             evidence_ids=evidence_ids,
             facts=facts,

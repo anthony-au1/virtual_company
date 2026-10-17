@@ -67,6 +67,7 @@ from virtual_company.workflows.research.nodes import (
     CampaignNotFoundError,
     ResearchNodes,
 )
+from virtual_company.workflows.research.observability import SearchProvenanceRecorder
 from virtual_company.workflows.research.prompts import (
     EXTRACT_COMPANY_CANDIDATES_PROMPT,
     EXTRACT_COMPANY_EVIDENCE_PROMPT,
@@ -710,7 +711,7 @@ def test_source_search_provenance_is_compact_and_url_sanitized() -> None:
             )
         ],
     )
-    provenance = ResearchNodes._source_search_provenance(
+    provenance = SearchProvenanceRecorder.snapshot(
         CompanyInvestigationState(company_id=uuid4(), search_queries=[trace])
     )
 
