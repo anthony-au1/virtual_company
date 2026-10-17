@@ -88,13 +88,12 @@ async def test_instrumented_search_records_low_cardinality_metrics() -> None:
             "rank": 1,
             "title": "Acme",
             "url": "https://acme.example",
-            "snippet": None,
         }
     ]
 
 
 @pytest.mark.asyncio
-async def test_search_trace_preserves_provider_order_and_bounds_snippets() -> None:
+async def test_search_trace_preserves_order_and_omits_full_snippets() -> None:
     long_snippet = "x" * 900
     returned = SearchResponse(
         results=[
@@ -117,7 +116,8 @@ async def test_search_trace_preserves_provider_order_and_bounds_snippets() -> No
 
     observability = ObservabilityFake()
     tool = InstrumentedWebSearchTool(
-        ResultsToolFake(), observability=observability  # type: ignore[arg-type]
+        ResultsToolFake(),
+        observability=observability,  # type: ignore[arg-type]
     )
 
     response = await tool.search("exact Tavily query", limit=7)
@@ -135,8 +135,8 @@ async def test_search_trace_preserves_provider_order_and_bounds_snippets() -> No
         "https://example.com/second",
     ]
     assert [item["title"] for item in traced_results] == ["First", "Second"]
-    assert traced_results[0]["snippet"] == "x" * 800
-    assert traced_results[1]["snippet"] == "Second snippet"
+    assert "snippet" not in traced_results[0]
+    assert "snippet" not in traced_results[1]
 
 
 @pytest.mark.asyncio
@@ -147,7 +147,8 @@ async def test_empty_search_results_are_recorded_as_empty_json_list() -> None:
 
     observability = ObservabilityFake()
     tool = InstrumentedWebSearchTool(
-        EmptyToolFake(), observability=observability  # type: ignore[arg-type]
+        EmptyToolFake(),
+        observability=observability,  # type: ignore[arg-type]
     )
 
     response = await tool.search("no matching results")
@@ -193,3 +194,57 @@ async def test_instrumented_fetch_records_low_cardinality_metrics() -> None:
         "web_pages_truncated_total",
         {"provider": "httpx", "content_type": "html"},
     ) in observability.metrics
+
+
+@pytest.mark.asyncio
+async def test_search_trace_sanitizes_result_urls_without_persisting_snippets() -> None:
+    class UnsafeResultTool(ToolFake):
+        async def search(self, _query: str, _limit: int) -> list[SearchResult]:
+            return [
+                SearchResult(
+                    title="Job",
+                    url="https://user:password@example.com/job?access_token=secret#details",
+                    snippet="private body-like provider highlight",
+                )
+            ]
+
+    observability = ObservabilityFake()
+    tool = InstrumentedWebSearchTool(
+        UnsafeResultTool(),
+        observability=observability,  # type: ignore[arg-type]
+    )
+
+    await tool.search("query")
+
+    trace_json = str(observability.spans[0][2]["search_results_json"])
+    assert "password" not in trace_json
+    assert "secret" not in trace_json
+    assert "private body-like" not in trace_json
+    assert "https://example.com/job" in trace_json
+
+
+@pytest.mark.asyncio
+async def test_fetch_failure_records_status_and_sanitized_url() -> None:
+    from virtual_company.tools.web_fetch import WebFetchHttpError
+
+    class FailedFetchTool:
+        provider = "httpx"
+
+        async def fetch(self, _url: str) -> WebPage:
+            raise WebFetchHttpError(403)
+
+    observability = ObservabilityFake()
+    tool = InstrumentedWebFetchTool(
+        FailedFetchTool(),
+        observability=observability,  # type: ignore[arg-type]
+    )
+    unsafe_url = "https://user:password@example.com/job?token=secret#details"
+
+    with pytest.raises(WebFetchHttpError):
+        await tool.fetch(unsafe_url)
+
+    name, event = observability.event_contexts[-1]
+    assert name == "web_fetch_failed"
+    assert event["http_status"] == 403
+    assert event["url"] == "https://example.com/job"
+    assert "secret" not in repr(observability.event_contexts)

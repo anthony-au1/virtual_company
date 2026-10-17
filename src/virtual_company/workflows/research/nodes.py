@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
-from urllib.parse import urlsplit, urlunsplit
-from uuid import UUID
+from urllib.parse import urlsplit
+from uuid import UUID, uuid4
 
 from virtual_company.domain.criteria import campaign_criteria, normalize_subject
 from virtual_company.domain.qualification import (
@@ -33,6 +33,7 @@ from virtual_company.research.normalization import (
     normalize_domain,
     normalize_fetch_url,
     normalize_url,
+    sanitize_observability_url,
 )
 from virtual_company.services import CampaignService, ResearchService
 from virtual_company.services.coverage import assess_evidence_coverage
@@ -57,6 +58,8 @@ from virtual_company.workflows.research.models import (
     CampaignCriteria,
     CompanyInvestigationState,
     CompanyPageAttribution,
+    CompanySearchQueryTrace,
+    CompanySearchResultTrace,
     CoverageStatus,
     DiscoveredCompanies,
     ExtractedCompanyCandidate,
@@ -707,34 +710,114 @@ class ResearchNodes:
         semaphore = asyncio.Semaphore(self._web_search_concurrency)
         company_queries = state["company_research_queries"]
         active_companies = self._active_companies(state)
-        work = [
-            (company, query)
-            for company in active_companies
-            for query in company_queries.get(company.id, [])
-        ]
+        investigations = dict(state.get("investigations", {}))
+        work: list[tuple[ResearchCompany, str, UUID, int, str]] = []
+        for company in active_companies:
+            investigation = investigations.get(
+                company.id, CompanyInvestigationState(company_id=company.id)
+            )
+            for query in company_queries.get(company.id, []):
+                work.append(
+                    (
+                        company,
+                        query,
+                        uuid4(),
+                        max(investigation.round, 1),
+                        "initial" if investigation.round <= 1 else "followup",
+                    )
+                )
 
         async def search_company_query(
-            company: ResearchCompany, query: str
-        ) -> list[SearchResult]:
-            investigation = state.get("investigations", {}).get(company.id)
-            round_number = investigation.round if investigation is not None else 1
-            search_phase = "investigation" if round_number <= 1 else "followup"
+            company: ResearchCompany,
+            query: str,
+            query_id: UUID,
+            round_number: int,
+            search_phase: str,
+        ) -> tuple[list[SearchResult], CompanySearchQueryTrace]:
+            run_id = state.get("research_run_id")
+            provider = str(getattr(self._web_search, "provider", "unknown"))
+            result_context = {
+                "research_run_id": str(run_id) if run_id is not None else None,
+                "company_id": str(company.id),
+                "company_name": company.name,
+                "company_domain": company.domain,
+                "query_id": str(query_id),
+                "query": query,
+                "provider": provider,
+                "search_phase": search_phase,
+                "investigation_round": round_number,
+            }
             with observability.context(
+                research_run_id=str(run_id) if run_id is not None else None,
                 company_id=str(company.id),
                 company_name=company.name,
                 company_domain=company.domain,
+                query_id=str(query_id),
+                query=query,
+                provider=provider,
                 search_phase=search_phase,
+                investigation_round=str(round_number),
             ):
+                observability.event("company_search_query_started", **result_context)
                 async with semaphore:
-                    response = await self._web_search.search(
-                        query, limit=self._company_research_max_results_per_query
+                    try:
+                        response = await self._web_search.search(
+                            query, limit=self._company_research_max_results_per_query
+                        )
+                    except Exception as error:
+                        observability.event(
+                            "company_search_query_failed",
+                            error_type=type(error).__name__,
+                            failure_category=getattr(error, "category", None),
+                            http_status=getattr(error, "status_code", None),
+                            **result_context,
+                        )
+                        raise
+                results = (
+                    response.results
+                    if isinstance(response, SearchResponse)
+                    else response
+                )
+                traced_results = [
+                    CompanySearchResultTrace(
+                        result_id=uuid4(),
+                        rank=rank,
+                        url=result.url,
+                        title=result.title[:300] if result.title else None,
                     )
-            return (
-                response.results if isinstance(response, SearchResponse) else response
-            )
+                    for rank, result in enumerate(results, start=1)
+                ]
+                trace = CompanySearchQueryTrace(
+                    query_id=query_id,
+                    query=query,
+                    provider=provider,
+                    search_phase=search_phase,  # type: ignore[arg-type]
+                    investigation_round=round_number,
+                    success=True,
+                    result_count=len(results),
+                    results=traced_results,
+                )
+                observability.event(
+                    "company_search_query_completed",
+                    result_count=len(results),
+                    results=[
+                        {
+                            "result_id": str(item.result_id),
+                            "rank": item.rank,
+                            "url": sanitize_observability_url(item.url),
+                            "title": item.title,
+                        }
+                        for item in traced_results
+                    ],
+                    **result_context,
+                )
+                return list(results), trace
 
         result_groups = await asyncio.gather(
-            *(search_company_query(company, query) for company, query in work)
+            *(
+                search_company_query(company, query, query_id, round_number, phase)
+                for company, query, query_id, round_number, phase in work
+            )
         )
         results_by_company: dict[UUID, list[SearchResult]] = {
             company.id: [] for company in active_companies
@@ -753,17 +836,62 @@ class ResearchNodes:
         grouped_queries: dict[UUID, list[str]] = {
             company.id: [] for company in active_companies
         }
-        for (company, query), result_group in zip(work, result_groups, strict=True):
+        for (company, _query, _query_id, _round, _phase), (result_group, _trace) in zip(
+            work, result_groups, strict=True
+        ):
             grouped_results[company.id].append(result_group)
-            grouped_queries[company.id].append(query)
+            grouped_queries[company.id].append(_query)
+        traces_by_company: dict[UUID, list[CompanySearchQueryTrace]] = {
+            company.id: [] for company in active_companies
+        }
+        for (company, _query, _query_id, _round, _phase), (_results, trace) in zip(
+            work, result_groups, strict=True
+        ):
+            traces_by_company[company.id].append(trace)
         for company in active_companies:
+            included_origins: list[tuple[int, int]] = []
             results, contributions = self._fair_merge_search_results(
                 grouped_results[company.id],
                 self._company_research_max_results_per_company,
                 normalize_fetch_url,
                 excluded_urls=seen_urls_by_company[company.id],
+                included_origins=included_origins,
             )
             results_by_company[company.id] = results
+            included_origin_set = set(included_origins)
+            included_urls = {normalize_fetch_url(item.url) for item in results}
+            updated_traces = traces_by_company[company.id]
+            for group_index, query_trace in enumerate(updated_traces):
+                updated_results = []
+                for result in query_trace.results:
+                    origin = (group_index, result.rank)
+                    try:
+                        normalized = normalize_fetch_url(result.url)
+                    except ValueError:
+                        outcome = "invalid_url"
+                    else:
+                        if normalized in seen_urls_by_company[company.id]:
+                            outcome = "already_processed"
+                        elif origin in included_origin_set:
+                            outcome = "included"
+                        elif normalized in included_urls:
+                            outcome = "duplicate_url"
+                        else:
+                            outcome = "result_limit"
+                    updated_results.append(
+                        result.model_copy(update={"merge_outcome": outcome})
+                    )
+                updated_traces[group_index] = query_trace.model_copy(
+                    update={"results": updated_results}
+                )
+            investigation = investigations.get(
+                company.id, CompanyInvestigationState(company_id=company.id)
+            )
+            investigations[company.id] = investigation.model_copy(
+                update={
+                    "search_queries": [*investigation.search_queries, *updated_traces]
+                }
+            )
             with observability.context(
                 company_id=str(company.id), company_domain=company.domain
             ):
@@ -786,7 +914,10 @@ class ResearchNodes:
                 observability.event(
                     "company_research_sources_found", result_count=count
                 )
-        return {"company_search_results": results_by_company}
+        return {
+            "company_search_results": results_by_company,
+            "investigations": investigations,
+        }
 
     async def select_company_sources(
         self, state: ResearchWorkflowState
@@ -888,7 +1019,7 @@ class ResearchNodes:
                 normalized_url = normalize_fetch_url(result.url)
                 candidate_decisions.append(
                     {
-                        "normalized_url": normalized_url,
+                        "normalized_url": sanitize_observability_url(result.url),
                         "merged_pool_position": merged_positions[normalized_url],
                         "selection_score": self._source_selection_score(
                             result, company, targets
@@ -908,6 +1039,48 @@ class ResearchNodes:
                         "fetch_target": fetch_target,
                     }
                 )
+            decisions_by_url = {
+                normalize_fetch_url(result.url): decision
+                for result, decision in zip(
+                    candidate_pool, candidate_decisions, strict=True
+                )
+            }
+            updated_query_traces = []
+            for query_trace in investigation.search_queries:
+                updated_results = []
+                for result_trace in query_trace.results:
+                    try:
+                        decision = decisions_by_url.get(
+                            normalize_fetch_url(result_trace.url)
+                        )
+                    except ValueError:
+                        decision = None
+                    if decision is None:
+                        updated_results.append(
+                            result_trace.model_copy(
+                                update={"selection_outcome": "not_selected"}
+                            )
+                        )
+                        continue
+                    updated_results.append(
+                        result_trace.model_copy(
+                            update={
+                                "selection_outcome": (
+                                    "selected"
+                                    if decision["preferred"]
+                                    else "backfill_candidate"
+                                ),
+                                "candidate_position": decision["candidate_position"],
+                                "preferred_position": decision["preferred_position"],
+                            }
+                        )
+                    )
+                updated_query_traces.append(
+                    query_trace.model_copy(update={"results": updated_results})
+                )
+            investigations[company.id] = investigation.model_copy(
+                update={"search_queries": updated_query_traces}
+            )
             selected[company.id] = sources
             candidates[company.id] = candidate_pool
             with observability.context(
@@ -995,6 +1168,7 @@ class ResearchNodes:
         attempted_indices: dict[UUID, set[int]] = {
             company.id: set() for company in active_companies
         }
+        attempt_numbers: dict[tuple[UUID, int], int] = {}
         next_candidate = {company.id: 0 for company in active_companies}
 
         while True:
@@ -1035,14 +1209,32 @@ class ResearchNodes:
                         )
                         + 1
                     )
+                    attempt_numbers[(company_id, index)] = attempt_number
                     attempted_indices[company_id].add(index)
                     try:
+                        source_refs = self._source_result_refs(
+                            investigations[company_id], source.url
+                        )
                         with observability.context(
                             company_id=str(company_id),
-                            source_url=source.url,
-                            normalized_source_url=normalized_url,
+                            source_url=sanitize_observability_url(source.url),
+                            normalized_source_url=sanitize_observability_url(
+                                source.url
+                            ),
                             fetch_attempt=attempt_number,
                             fetch_retry=attempt_number > 1,
+                            result_ids=",".join(
+                                str(item.result_id) for item in source_refs
+                            ),
+                            query_ids=",".join(
+                                str(item[0])
+                                for item in self._query_result_refs(
+                                    investigations[company_id], source.url
+                                )
+                            ),
+                            result_ranks=",".join(
+                                str(item.rank) for item in source_refs
+                            ),
                         ):
                             page = await self._web_fetch.fetch(source.url)
                         successes[(company_id, index)] = page.model_copy(
@@ -1054,13 +1246,21 @@ class ResearchNodes:
                         observability.event(
                             "company_source_fetch_failed",
                             company_id=str(company_id),
-                            url=source.url,
+                            url=sanitize_observability_url(source.url),
                             failure_category=error.category,
                             http_status=getattr(error, "status_code", None),
                             attempt_number=attempt_number,
                             retryable=retryable,
                             retry_remaining=retry_remaining,
                             exhausted=not retry_remaining,
+                            result_ids=[str(item.result_id) for item in source_refs],
+                            query_ids=[
+                                str(item[0])
+                                for item in self._query_result_refs(
+                                    investigations[company_id], source.url
+                                )
+                            ],
+                            result_ranks=[item.rank for item in source_refs],
                         )
                         failures[(company_id, index)] = error
                     finally:
@@ -1142,6 +1342,9 @@ class ResearchNodes:
                 "additional_candidate_attempts": additional_attempts,
             }
             candidate_outcomes = []
+            outcome_by_url: dict[str, str] = {}
+            attempt_by_url: dict[str, int] = {}
+            failure_by_url: dict[str, WebFetchError] = {}
             for index, source in enumerate(sources_by_company[company_id]):
                 normalized_url = self._source_state_key(source.url)
                 key = (company_id, index)
@@ -1153,9 +1356,14 @@ class ResearchNodes:
                     outcome = "NOT_ATTEMPTED_TARGET_REACHED"
                 else:
                     outcome = "NOT_ATTEMPTED_CANDIDATES_EXHAUSTED"
+                outcome_by_url[normalized_url] = outcome
+                if key in attempt_numbers:
+                    attempt_by_url[normalized_url] = attempt_numbers[key]
+                if key in failures:
+                    failure_by_url[normalized_url] = failures[key]
                 candidate_outcomes.append(
                     {
-                        "normalized_url": normalized_url,
+                        "normalized_url": sanitize_observability_url(source.url),
                         "candidate_position": index + 1,
                         "preferred": index < preferred_counts[company_id],
                         "preferred_position": index + 1
@@ -1163,8 +1371,63 @@ class ResearchNodes:
                         else None,
                         "fetch_target": fetch_target,
                         "outcome": outcome,
+                        "result_ids": [
+                            str(item.result_id)
+                            for item in self._source_result_refs(
+                                investigations[company_id], source.url
+                            )
+                        ],
+                        "query_ids": [
+                            str(item[0])
+                            for item in self._query_result_refs(
+                                investigations[company_id], source.url
+                            )
+                        ],
+                        "result_ranks": [
+                            item.rank
+                            for item in self._source_result_refs(
+                                investigations[company_id], source.url
+                            )
+                        ],
+                        "fetch_attempt": attempt_numbers.get(key),
                     }
                 )
+            investigation = investigations[company_id]
+            updated_traces = []
+            for query_trace in investigation.search_queries:
+                updated_results = []
+                for result_trace in query_trace.results:
+                    if query_trace.investigation_round != investigation.round:
+                        updated_results.append(result_trace)
+                        continue
+                    normalized = self._source_state_key(result_trace.url)
+                    outcome = outcome_by_url.get(normalized)
+                    if outcome is None:
+                        updated_results.append(result_trace)
+                        continue
+                    error = failure_by_url.get(normalized)
+                    updated_results.append(
+                        result_trace.model_copy(
+                            update={
+                                "fetch_outcome": outcome,
+                                "fetch_attempt": attempt_by_url.get(normalized),
+                                "failure_category": (
+                                    error.category if error is not None else None
+                                ),
+                                "http_status": (
+                                    getattr(error, "status_code", None)
+                                    if error is not None
+                                    else None
+                                ),
+                            }
+                        )
+                    )
+                updated_traces.append(
+                    query_trace.model_copy(update={"results": updated_results})
+                )
+            investigations[company_id] = investigation.model_copy(
+                update={"search_queries": updated_traces}
+            )
             batch_stats[company_id] = stats
             company = companies_by_id[company_id]
             with observability.context(
@@ -1320,7 +1583,7 @@ class ResearchNodes:
                 observability.context(
                     company_id=str(company.id),
                     company_domain=company.domain,
-                    source_url=page.url,
+                    source_url=self._safe_log_url(page.url),
                 ),
                 observability.span(
                     "validate_company_evidence",
@@ -1529,6 +1792,37 @@ class ResearchNodes:
                 evidence_persisted_count=count,
             )
         for item in getattr(outcome, "items", None) or []:
+            company_investigation = investigations.get(
+                item.company_id,
+                CompanyInvestigationState(company_id=item.company_id),
+            )
+            evidence_traces = []
+            updated_query_traces = []
+            for query_trace in company_investigation.search_queries:
+                updated_results = []
+                for result_trace in query_trace.results:
+                    if (
+                        query_trace.investigation_round == company_investigation.round
+                        and result_trace.fetch_outcome == "ATTEMPTED_SUCCESS"
+                        and self._source_state_key(result_trace.url)
+                        == self._source_state_key(item.source_url)
+                    ):
+                        result_trace = result_trace.model_copy(
+                            update={
+                                "evidence_ids": list(
+                                    dict.fromkeys([*result_trace.evidence_ids, item.id])
+                                )
+                            }
+                        )
+                        evidence_traces.append((query_trace.query_id, result_trace))
+                    updated_results.append(result_trace)
+                updated_query_traces.append(
+                    query_trace.model_copy(update={"results": updated_results})
+                )
+            company_investigation = company_investigation.model_copy(
+                update={"search_queries": updated_query_traces}
+            )
+            investigations[item.company_id] = company_investigation
             with observability.context(
                 research_run_id=str(research_run_id),
                 company_id=str(item.company_id),
@@ -1550,17 +1844,60 @@ class ResearchNodes:
                         float(item.confidence) if item.confidence is not None else None
                     ),
                     company_attribution_validated=True,
+                    query_ids=[str(query_id) for query_id, _ in evidence_traces],
+                    result_ids=[
+                        str(result_trace.result_id)
+                        for _, result_trace in evidence_traces
+                    ],
+                    result_ranks=[
+                        result_trace.rank for _, result_trace in evidence_traces
+                    ],
                 )
         return {"investigations": investigations}
 
     @staticmethod
     def _safe_log_url(value: str) -> str:
-        """Remove query strings and fragments before a source URL enters logs."""
-        try:
-            parsed = urlsplit(value)
-        except ValueError:
-            return value[:300]
-        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))[:500]
+        """Remove URL credentials and sensitive query details before logging."""
+        return sanitize_observability_url(value)
+
+    @staticmethod
+    def _source_search_provenance(
+        investigation: CompanyInvestigationState,
+    ) -> dict[str, object]:
+        """Persist the compact query/result/fetch trail with final qualification."""
+        queries = []
+        for query_trace in investigation.search_queries:
+            query_data = query_trace.model_dump(mode="json")
+            query_data["results"] = [
+                {
+                    **result.model_dump(mode="json"),
+                    "url": sanitize_observability_url(result.url),
+                }
+                for result in query_trace.results
+            ]
+            queries.append(query_data)
+        return {"queries": queries}
+
+    @staticmethod
+    def _query_result_refs(
+        investigation: CompanyInvestigationState, url: str
+    ) -> list[tuple[UUID, CompanySearchResultTrace]]:
+        key = ResearchNodes._source_state_key(url)
+        return [
+            (query_trace.query_id, result_trace)
+            for query_trace in investigation.search_queries
+            for result_trace in query_trace.results
+            if ResearchNodes._source_state_key(result_trace.url) == key
+        ]
+
+    @staticmethod
+    def _source_result_refs(
+        investigation: CompanyInvestigationState, url: str
+    ) -> list[CompanySearchResultTrace]:
+        return [
+            result_trace
+            for _, result_trace in ResearchNodes._query_result_refs(investigation, url)
+        ]
 
     async def check_evidence_coverage(
         self, state: ResearchWorkflowState
@@ -1893,6 +2230,9 @@ class ResearchNodes:
                         else None
                     ),
                     "fact_extraction_by_criterion": facts_entry.provenance_by_criterion,
+                    "source_search_observability": self._source_search_provenance(
+                        state["investigations"][company.id]
+                    ),
                 },
             )
             criterion_qualifications[company.id] = criteria
@@ -2396,6 +2736,7 @@ class ResearchNodes:
         normalize: Callable[[str], str],
         *,
         excluded_urls: set[str] | None = None,
+        included_origins: list[tuple[int, int]] | None = None,
     ) -> tuple[list[SearchResult], list[int]]:
         results: list[SearchResult] = []
         contributions = [0 for _ in result_groups]
@@ -2416,6 +2757,8 @@ class ResearchNodes:
                     seen.add(url)
                     results.append(result)
                     contributions[group_index] += 1
+                    if included_origins is not None:
+                        included_origins.append((group_index, cursors[group_index]))
                     progressed = True
                     break
                 if len(results) >= limit:

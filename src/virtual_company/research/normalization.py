@@ -66,6 +66,25 @@ def normalize_fetch_url(value: str) -> str:
     return urlunsplit((scheme, netloc, parsed.path.rstrip("/"), query, ""))
 
 
+def sanitize_observability_url(value: str) -> str:
+    """Return a bounded URL without user information, query values, or fragments."""
+    try:
+        parsed = urlsplit(value.strip())
+        hostname = parsed.hostname
+        if hostname is None:
+            return value.split("?", 1)[0].split("#", 1)[0][:500]
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        port = parsed.port
+        if port is not None and (parsed.scheme.lower(), port) not in {
+            ("http", 80),
+            ("https", 443),
+        }:
+            host = f"{host}:{port}"
+        return urlunsplit((parsed.scheme.lower(), host, parsed.path, "", ""))[:500]
+    except ValueError:
+        return value.split("?", 1)[0].split("#", 1)[0][:500]
+
+
 def normalize_company_name(value: str) -> str:
     """Return a conservative comparison key for obvious company-name variants."""
     normalized = " ".join(value.strip().casefold().split())

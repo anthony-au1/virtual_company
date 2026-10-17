@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
@@ -129,6 +129,58 @@ class InvestigationStopReason(StrEnum):
     NO_PROGRESS = "no_progress"
 
 
+class CompanySearchResultTrace(BaseModel):
+    """One provider result occurrence, retaining the query-specific rank."""
+
+    result_id: UUID
+    rank: int = Field(ge=1)
+    url: str
+    title: str | None = None
+    merge_outcome: Literal[
+        "included",
+        "duplicate_url",
+        "already_processed",
+        "result_limit",
+        "invalid_url",
+    ] = "included"
+    selection_outcome: (
+        Literal[
+            "selected",
+            "backfill_candidate",
+            "not_selected",
+        ]
+        | None
+    ) = None
+    candidate_position: int | None = None
+    preferred_position: int | None = None
+    fetch_outcome: (
+        Literal[
+            "ATTEMPTED_SUCCESS",
+            "ATTEMPTED_FAILED",
+            "NOT_ATTEMPTED_TARGET_REACHED",
+            "NOT_ATTEMPTED_CANDIDATES_EXHAUSTED",
+        ]
+        | None
+    ) = None
+    fetch_attempt: int | None = None
+    failure_category: str | None = None
+    http_status: int | None = None
+    evidence_ids: list[UUID] = Field(default_factory=list)
+
+
+class CompanySearchQueryTrace(BaseModel):
+    """Compact search request and its provider-ordered result occurrences."""
+
+    query_id: UUID
+    query: str
+    provider: str
+    search_phase: Literal["initial", "followup"]
+    investigation_round: int = Field(ge=1)
+    success: bool
+    result_count: int = Field(ge=0)
+    results: list[CompanySearchResultTrace] = Field(default_factory=list)
+
+
 class CompanyInvestigationState(BaseModel):
     company_id: UUID
     round: int = Field(default=0, ge=0)
@@ -137,6 +189,7 @@ class CompanyInvestigationState(BaseModel):
     transient_fetch_failures: dict[str, int] = Field(default_factory=dict)
     attempted_queries: list[str] = Field(default_factory=list, max_length=60)
     attempted_strategy_focuses: list[str] = Field(default_factory=list, max_length=4)
+    search_queries: list[CompanySearchQueryTrace] = Field(default_factory=list)
     unresolved_before: set[str] = Field(default_factory=set)
     alternative_strategy_attempted: bool = False
     new_evidence_count: int = 0

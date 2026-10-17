@@ -6,24 +6,18 @@ import json
 from time import perf_counter
 
 from virtual_company.observability import Observability, get_observability
+from virtual_company.research.normalization import sanitize_observability_url
 from virtual_company.tools.web_search import SearchResponse, WebSearchTool
-
-TRACE_SNIPPET_MAX_CHARACTERS = 800
 
 
 def _trace_search_results(response: SearchResponse) -> str:
-    """Serialize bounded result details without changing application results."""
+    """Serialize compact, sanitized result details without changing results."""
     return json.dumps(
         [
             {
                 "rank": rank,
                 "title": result.title,
-                "url": result.url,
-                "snippet": (
-                    result.snippet[:TRACE_SNIPPET_MAX_CHARACTERS]
-                    if result.snippet is not None
-                    else None
-                ),
+                "url": sanitize_observability_url(result.url),
             }
             for rank, result in enumerate(response.results, start=1)
         ],

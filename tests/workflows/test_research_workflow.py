@@ -49,6 +49,8 @@ from virtual_company.workflows.research.models import (
     CampaignCriteria,
     CompanyInvestigationState,
     CompanyPageAttribution,
+    CompanySearchQueryTrace,
+    CompanySearchResultTrace,
     CoverageStatus,
     CriterionCoverage,
     DiscoveredCompanies,
@@ -433,6 +435,127 @@ async def test_search_result_caps_fairly_retain_later_query_groups() -> None:
     assert [
         item.title for item in company_results["company_search_results"][company.id]
     ] == queries
+
+
+@pytest.mark.asyncio
+async def test_company_search_trace_correlates_duplicate_results_by_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    run_id = uuid4()
+    shared_url = "https://user:password@jobs.example/acme?token=secret#role"
+
+    class DuplicateResultSearch:
+        provider = "exa"
+
+        async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
+            assert limit == 7
+            title = "Java role" if query == "initial query" else "Kafka role"
+            return [SearchResult(title=title, url=shared_url)]
+
+    telemetry = ObservabilityFake()
+    monkeypatch.setattr(
+        "virtual_company.workflows.research.nodes.get_observability",
+        lambda: telemetry,
+    )
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(campaign()),
+        research=ResearchServiceFake(),
+        research_llm=ResearchFake([]),
+        extraction_llm=ExtractionFake({}),
+        web_search=DuplicateResultSearch(),  # type: ignore[arg-type]
+        web_fetch=FetchFake({}),
+        web_search_max_total_results=5,
+        company_research_max_results_per_company=5,
+        company_research_max_results_per_query=7,
+    )
+
+    output = await nodes.search_company_sources(
+        {
+            "research_run_id": run_id,
+            "research_companies": [company],
+            "active_company_ids": [company.id],
+            "company_research_queries": {
+                company.id: ["initial query", "second initial query"]
+            },
+            "investigations": {
+                company.id: CompanyInvestigationState(company_id=company.id)
+            },
+        }
+    )  # type: ignore[arg-type]
+
+    traces = output["investigations"][company.id].search_queries
+    assert len(traces) == 2
+    assert traces[0].query_id != traces[1].query_id
+    assert [trace.search_phase for trace in traces] == ["initial", "initial"]
+    assert [trace.investigation_round for trace in traces] == [1, 1]
+    assert [trace.results[0].rank for trace in traces] == [1, 1]
+    assert [trace.results[0].title for trace in traces] == [
+        "Java role",
+        "Kafka role",
+    ]
+    assert [trace.results[0].merge_outcome for trace in traces] == [
+        "included",
+        "duplicate_url",
+    ]
+    assert len(output["company_search_results"][company.id]) == 1
+    completed = [
+        fields
+        for event_name, fields in telemetry.events
+        if event_name == "company_search_query_completed"
+    ]
+    assert len(completed) == 2
+    assert {fields["research_run_id"] for fields in completed} == {str(run_id)}
+    assert {fields["company_id"] for fields in completed} == {str(company.id)}
+    assert all(
+        fields["results"][0]["url"] == "https://jobs.example/acme"
+        for fields in completed
+    )
+    assert "password" not in repr(completed)
+    assert "secret" not in repr(completed)
+
+
+def test_source_search_provenance_is_compact_and_url_sanitized() -> None:
+    from virtual_company.workflows.research.models import (
+        CompanySearchQueryTrace,
+        CompanySearchResultTrace,
+    )
+
+    trace = CompanySearchQueryTrace(
+        query_id=uuid4(),
+        query="Acme Java careers",
+        provider="exa",
+        search_phase="followup",
+        investigation_round=2,
+        success=True,
+        result_count=1,
+        results=[
+            CompanySearchResultTrace(
+                result_id=uuid4(),
+                rank=1,
+                url="https://user:password@example.com/jobs?token=secret#role",
+                title="Java role",
+                selection_outcome="selected",
+                fetch_outcome="ATTEMPTED_SUCCESS",
+                fetch_attempt=1,
+                evidence_ids=[uuid4()],
+            )
+        ],
+    )
+    provenance = ResearchNodes._source_search_provenance(
+        CompanyInvestigationState(company_id=uuid4(), search_queries=[trace])
+    )
+
+    query = provenance["queries"][0]
+    assert query["search_phase"] == "followup"
+    assert query["investigation_round"] == 2
+    result = query["results"][0]
+    assert result["url"] == "https://example.com/jobs"
+    assert result["selection_outcome"] == "selected"
+    assert result["fetch_outcome"] == "ATTEMPTED_SUCCESS"
+    assert result["evidence_ids"]
+    assert "password" not in repr(provenance)
+    assert "secret" not in repr(provenance)
 
 
 def test_fair_result_merge_deduplicates_overlapping_urls() -> None:
@@ -1900,6 +2023,34 @@ async def test_source_selection_and_fetch_emit_correlated_candidate_diagnostics(
     state = {
         "research_companies": [company],
         "company_search_results": {company.id: [preferred, backfill, unattempted]},
+        "investigations": {
+            company.id: CompanyInvestigationState(
+                company_id=company.id,
+                round=1,
+                search_queries=[
+                    CompanySearchQueryTrace(
+                        query_id=uuid4(),
+                        query="Acme Java jobs",
+                        provider="exa",
+                        search_phase="initial",
+                        investigation_round=1,
+                        success=True,
+                        result_count=3,
+                        results=[
+                            CompanySearchResultTrace(
+                                result_id=uuid4(),
+                                rank=rank,
+                                url=result.url,
+                                title=result.title,
+                            )
+                            for rank, result in enumerate(
+                                [preferred, backfill, unattempted], start=1
+                            )
+                        ],
+                    )
+                ],
+            )
+        },
         "criterion_qualifications": {
             company.id: [
                 CriterionQualification(
@@ -1922,7 +2073,7 @@ async def test_source_selection_and_fetch_emit_correlated_candidate_diagnostics(
     decisions = selection_event["candidate_decisions"]
     assert isinstance(decisions, list)
     assert decisions[0] == {
-        "normalized_url": "https://acme.example/java",
+        "normalized_url": "https://acme.example/java/",
         "merged_pool_position": 1,
         "selection_score": nodes._source_selection_score(
             preferred,
@@ -1939,7 +2090,7 @@ async def test_source_selection_and_fetch_emit_correlated_candidate_diagnostics(
     assert decisions[1]["candidate_position"] == 2
     assert decisions[2]["preferred"] is False
 
-    await nodes.fetch_company_sources(
+    fetched = await nodes.fetch_company_sources(
         {"research_companies": [company], **selection}  # type: ignore[arg-type]
     )
     fetch_event = next(
@@ -1950,7 +2101,7 @@ async def test_source_selection_and_fetch_emit_correlated_candidate_diagnostics(
     outcomes = fetch_event["candidate_outcomes"]
     assert isinstance(outcomes, list)
     assert [item["normalized_url"] for item in outcomes] == [
-        "https://acme.example/java",
+        "https://acme.example/java/",
         "https://other.example/profile",
         "https://third.example/overview",
     ]
@@ -1960,6 +2111,23 @@ async def test_source_selection_and_fetch_emit_correlated_candidate_diagnostics(
         "NOT_ATTEMPTED_TARGET_REACHED",
     ]
     assert fetch_event["stop_reason"] == "SUCCESS_TARGET_REACHED"
+    traced_results = fetched["investigations"][company.id].search_queries[0].results
+    assert [result.selection_outcome for result in traced_results] == [
+        "selected",
+        "backfill_candidate",
+        "backfill_candidate",
+    ]
+    assert [result.fetch_outcome for result in traced_results] == [
+        "ATTEMPTED_FAILED",
+        "ATTEMPTED_SUCCESS",
+        "NOT_ATTEMPTED_TARGET_REACHED",
+    ]
+    assert traced_results[0].http_status == 403
+    assert outcomes[0]["result_ids"] == [str(traced_results[0].result_id)]
+    assert outcomes[0]["query_ids"] == [
+        str(fetched["investigations"][company.id].search_queries[0].query_id)
+    ]
+    assert outcomes[0]["result_ranks"] == [1]
     assert any(name == "company_source_selection" for name, _ in telemetry.spans)
     assert any(name == "company_source_fetch_batch" for name, _ in telemetry.spans)
 
@@ -3982,7 +4150,33 @@ async def test_final_qualification_persists_and_logs_criterion_provenance(
         "research_run_id": run_id,
         "research_companies": [company],
         "investigations": {
-            company.id: CompanyInvestigationState(company_id=company.id, stopped=True)
+            company.id: CompanyInvestigationState(
+                company_id=company.id,
+                round=1,
+                stopped=True,
+                search_queries=[
+                    CompanySearchQueryTrace(
+                        query_id=uuid4(),
+                        query="Acme Java engineering",
+                        provider="exa",
+                        search_phase="initial",
+                        investigation_round=1,
+                        success=True,
+                        result_count=1,
+                        results=[
+                            CompanySearchResultTrace(
+                                result_id=uuid4(),
+                                rank=1,
+                                url="https://user:secret@acme.example/jobs?token=hidden",
+                                title="Engineering role",
+                                selection_outcome="selected",
+                                fetch_outcome="ATTEMPTED_SUCCESS",
+                                evidence_ids=[item.id],
+                            )
+                        ],
+                    )
+                ],
+            )
         },
         "active_company_ids": [],
     }
@@ -4002,6 +4196,12 @@ async def test_final_qualification_persists_and_logs_criterion_provenance(
     ]
     assert result.provenance is not None
     assert result.provenance["evaluation_stage"] == "final"
+    result_trace = result.provenance["source_search_observability"]["queries"][0][
+        "results"
+    ][0]
+    assert result_trace["url"] == "https://acme.example/jobs"
+    assert result_trace["evidence_ids"] == [str(item.id)]
+    assert "secret" not in repr(result.provenance["source_search_observability"])
     assert set(result.provenance["available_evidence_ids"]) == {
         str(item.id),
         str(size_item.id),
@@ -4068,7 +4268,14 @@ async def test_persisted_evidence_event_is_correlated_and_redacts_url_query(
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     evidence_id = uuid4()
+    result_id = uuid4()
+    query_id = uuid4()
     source_url = "https://acme.example/jobs?access_token=private#section"
+    from virtual_company.workflows.research.models import (
+        CompanySearchQueryTrace,
+        CompanySearchResultTrace,
+    )
+
     stored = SimpleNamespace(
         id=evidence_id,
         company_id=company.id,
@@ -4094,7 +4301,32 @@ async def test_persisted_evidence_event_is_correlated_and_redacts_url_query(
         "research_companies": [company],
         "active_company_ids": [company.id],
         "investigations": {
-            company.id: CompanyInvestigationState(company_id=company.id)
+            company.id: CompanyInvestigationState(
+                company_id=company.id,
+                round=1,
+                search_queries=[
+                    CompanySearchQueryTrace(
+                        query_id=query_id,
+                        query="Acme Java jobs",
+                        provider="exa",
+                        search_phase="initial",
+                        investigation_round=1,
+                        success=True,
+                        result_count=1,
+                        results=[
+                            CompanySearchResultTrace(
+                                result_id=result_id,
+                                rank=2,
+                                url=source_url,
+                                title="Engineering role",
+                                merge_outcome="included",
+                                selection_outcome="selected",
+                                fetch_outcome="ATTEMPTED_SUCCESS",
+                            )
+                        ],
+                    )
+                ],
+            )
         },
         "validated_research_evidence": [
             SimpleNamespace(
@@ -4112,7 +4344,7 @@ async def test_persisted_evidence_event_is_correlated_and_redacts_url_query(
     get_observability().clear_context()
 
     with caplog.at_level(logging.INFO, logger="virtual_company.observability.runtime"):
-        await nodes.persist_research_evidence(state)
+        output = await nodes.persist_research_evidence(state)
 
     event = next(
         record
@@ -4127,6 +4359,13 @@ async def test_persisted_evidence_event_is_correlated_and_redacts_url_query(
     assert event.context["company_attribution_validated"] is True
     assert "private" not in caplog.text
     assert "access_token" not in caplog.text
+    result_trace = output["investigations"][company.id].search_queries[0].results[0]
+    assert result_trace.result_id == result_id
+    assert result_trace.evidence_ids == [evidence_id]
+    evidence_event = event.context
+    assert evidence_event["query_ids"] == [str(query_id)]
+    assert evidence_event["result_ids"] == [str(result_id)]
+    assert evidence_event["result_ranks"] == [2]
 
 
 @pytest.mark.asyncio
