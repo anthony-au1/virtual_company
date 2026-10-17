@@ -48,7 +48,7 @@ async def test_campaign_criteria_survive_repository_and_workflow_loading() -> No
             "status": "DRAFT",
             "target_market": "Australia",
             "industry": "fin tech",
-            "technologies": ["java", "kafka"],
+            "keywords": ["java", "kafka"],
             "company_size": {
                 "min": 100,
                 "max": 500,
@@ -57,13 +57,13 @@ async def test_campaign_criteria_survive_repository_and_workflow_loading() -> No
     )
     campaign = await CampaignRepository(session).create(payload)
     campaign.id = uuid4()
-    assert campaign.technologies == ["java", "kafka"]
+    assert campaign.keywords == ["java", "kafka"]
     assert campaign.company_size == {
         "min": 100,
         "max": 500,
     }
     loaded = CampaignCriteria.model_validate(campaign)
-    assert loaded.technologies == ["java", "kafka"]
+    assert loaded.keywords == ["java", "kafka"]
     assert loaded.company_size.max == 500
 
     legacy_campaign = Campaign(
@@ -72,7 +72,7 @@ async def test_campaign_criteria_survive_repository_and_workflow_loading() -> No
         target_count=1,
         max_companies_to_research=1,
         status="DRAFT",
-        technologies=[],
+        keywords=[],
         company_size={"min": {"value": 250}},
     )
     legacy_loaded = CampaignCriteria.model_validate(legacy_campaign)

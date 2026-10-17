@@ -72,7 +72,7 @@ def research_results() -> SimpleNamespace:
             criteria=SimpleNamespace(
                 target_market="Australia",
                 industry="fin tech",
-                technologies=["java", "kafka"],
+                keywords=["java", "kafka"],
                 company_size={"min": 500},
             ),
         ),
@@ -91,7 +91,7 @@ def research_results() -> SimpleNamespace:
                 summary=counts,
                 criteria=[
                     SimpleNamespace(
-                        criterion="technology",
+                        criterion="keyword",
                         subject="java",
                         status="MATCH",
                         reason="Supported",

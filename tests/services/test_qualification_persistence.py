@@ -26,7 +26,7 @@ async def test_serializes_existing_results_without_committing(
     company_id, run_id, campaign_id, evidence_id = (uuid4() for _ in range(4))
     criteria = [
         CriterionQualification(
-            "technology",
+            "keyword",
             "java",
             QualificationStatus.MATCH,
             [evidence_id],
@@ -54,7 +54,7 @@ async def test_serializes_existing_results_without_committing(
     assert data.criteria_results == {
         "criteria": [
             {
-                "criterion": "technology",
+                "criterion": "keyword",
                 "subject": "java",
                 "status": "MATCH",
                 "evidence_ids": [str(evidence_id)],

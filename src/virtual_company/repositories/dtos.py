@@ -20,7 +20,7 @@ class CampaignCreate(BaseModel):
     description: str | None = None
     target_market: str | None = None
     industry: str | None = None
-    technologies: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
     company_size: CompanySizeCriteria | None = None
 
     @model_validator(mode="before")
@@ -47,7 +47,7 @@ class CampaignUpdate(BaseModel):
     description: str | None = None
     target_market: str | None = None
     industry: str | None = None
-    technologies: list[str] | None = None
+    keywords: list[str] | None = None
     company_size: CompanySizeCriteria | None = None
     target_count: int | None = None
     max_companies_to_research: int | None = Field(default=None, ge=1)

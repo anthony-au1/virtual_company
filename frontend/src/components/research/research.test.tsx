@@ -85,7 +85,7 @@ function results(runId: string): ResearchResults {
       criteria: {
         target_market: "Australia",
         industry: "Fin tech",
-        technologies: ["Java", "Spring", "Kafka"],
+        keywords: ["Java", "Spring", "Kafka"],
         company_size: {
           min: 500,
           max: null,
@@ -127,7 +127,7 @@ function results(runId: string): ResearchResults {
             ],
           },
           {
-            criterion: "technology",
+            criterion: "keyword",
             subject: "Spring",
             status: "UNKNOWN",
             reason: "No reliable evidence found.",

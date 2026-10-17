@@ -21,7 +21,7 @@ def campaign(*, sealed_at: datetime | None = None) -> Campaign:
         target_count=2,
         max_companies_to_research=10,
         status="DRAFT",
-        technologies=["Java"],
+        keywords=["Java"],
         created_at=now,
         updated_at=now,
         sealed_at=sealed_at,
@@ -69,7 +69,7 @@ async def test_sealed_campaign_rejects_definition_changes_but_allows_status() ->
     service = service_with(model)
 
     with pytest.raises(CampaignSealedError, match="research definition is sealed"):
-        await service.update(model.id, CampaignUpdate(technologies=["Go"]))
+        await service.update(model.id, CampaignUpdate(keywords=["Go"]))
     service._campaigns.update.assert_not_awaited()
 
     result = await service.update(model.id, CampaignUpdate(status="PAUSED"))

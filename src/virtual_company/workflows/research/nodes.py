@@ -1686,7 +1686,15 @@ class ResearchNodes:
 
         if any(
             token in path or token in text
-            for token in ("technology", "tech-stack", "developer")
+            for token in (
+                "case-study",
+                "capability",
+                "transformation",
+                "operations",
+                "technology",
+                "tech-stack",
+                "developer",
+            )
         ):
             score += 10
 
@@ -2303,16 +2311,16 @@ class ResearchNodes:
             return campaign.industry
         if item.criterion is EvidenceCriterion.COMPANY_SIZE:
             return item.subject
-        technologies = self._campaign_technologies(campaign)
-        subject_key = normalize_subject("technology", item.subject)
-        for technology in technologies:
-            if normalize_subject("technology", technology) == subject_key:
-                return technology
+        keywords = self._campaign_keywords(campaign)
+        subject_key = normalize_subject("keyword", item.subject)
+        for keyword in keywords:
+            if normalize_subject("keyword", keyword) == subject_key:
+                return keyword
         return None
 
     @staticmethod
-    def _campaign_technologies(campaign: CampaignCriteria) -> list[str]:
-        return campaign.technologies
+    def _campaign_keywords(campaign: CampaignCriteria) -> list[str]:
+        return campaign.keywords
 
     @staticmethod
     def _compact(value: str) -> str:

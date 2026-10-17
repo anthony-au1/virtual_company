@@ -34,7 +34,7 @@ const campaignFormSchema = z
     max_companies_to_research: z.number().int().min(1),
     target_market: z.string().max(255),
     industry: z.string().max(255),
-    technologies: z.array(z.string().trim().min(1)),
+    keywords: z.array(z.string().trim().min(1)),
     min_employees: z
       .number()
       .int("Enter a whole number.")
@@ -69,7 +69,7 @@ const campaignFormSchema = z
   });
 
 type CampaignFormValues = z.infer<typeof campaignFormSchema>;
-type TechnologyField = "technologies";
+type KeywordField = "keywords";
 
 const defaultValues: CampaignFormValues = {
   name: "",
@@ -78,7 +78,7 @@ const defaultValues: CampaignFormValues = {
   max_companies_to_research: 15,
   target_market: "",
   industry: "",
-  technologies: [],
+  keywords: [],
   min_employees: undefined,
   max_employees: undefined,
 };
@@ -96,9 +96,9 @@ export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
     resolver: zodResolver(campaignFormSchema),
     defaultValues,
   });
-  const technologies = useWatch({
+  const keywords = useWatch({
     control: form.control,
-    name: "technologies",
+    name: "keywords",
   });
   useEffect(() => {
     const campaign = campaignQuery.data;
@@ -134,7 +134,7 @@ export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
       description: values.description,
       target_count: values.target_count,
       max_companies_to_research: values.max_companies_to_research,
-      technologies: values.technologies,
+      keywords: values.keywords,
       company_size:
         companySize.min !== undefined || companySize.max !== undefined
           ? companySize
@@ -310,21 +310,21 @@ export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
 
         <Card>
           <CardHeader>
-            <CardTitle>Technologies</CardTitle>
+            <CardTitle>Keywords</CardTitle>
             <p className="text-muted-foreground text-xs">
-              Enter any technology label. The backend validates and normalizes
-              criteria.
+              Keywords relevant to the companies you want to find. Examples:
+              Java, cloud migration, process automation, omnichannel.
             </p>
           </CardHeader>
           <CardContent className="space-y-5">
-            <TechnologyInput
-              error={form.formState.errors.technologies?.message}
-              label="Technologies"
-              onAdd={(value) => addTechnology(form, "technologies", value)}
+            <KeywordInput
+              error={form.formState.errors.keywords?.message}
+              label="Keywords"
+              onAdd={(value) => addKeyword(form, "keywords", value)}
               onRemove={(index) =>
-                removeTechnology(form, "technologies", index)
+                removeKeyword(form, "keywords", index)
               }
-              values={technologies}
+              values={keywords}
             />
           </CardContent>
         </Card>
@@ -419,7 +419,7 @@ function Field({
   );
 }
 
-function TechnologyInput({
+function KeywordInput({
   label,
   values,
   onAdd,
@@ -475,7 +475,7 @@ function TechnologyInput({
               add();
             }
           }}
-          placeholder="Type a technology"
+          placeholder="Add a keyword or concept"
           value={draft}
         />
         <Button
@@ -522,9 +522,9 @@ function SizeBoundFields({
   );
 }
 
-function addTechnology(
+function addKeyword(
   form: ReturnType<typeof useForm<CampaignFormValues>>,
-  field: TechnologyField,
+  field: KeywordField,
   value: string,
 ) {
   form.setValue(field, [...form.getValues(field), value], {
@@ -533,9 +533,9 @@ function addTechnology(
   });
 }
 
-function removeTechnology(
+function removeKeyword(
   form: ReturnType<typeof useForm<CampaignFormValues>>,
-  field: TechnologyField,
+  field: KeywordField,
   index: number,
 ) {
   form.setValue(
@@ -557,7 +557,7 @@ function campaignToFormValues(campaign: Campaign): CampaignFormValues {
     max_companies_to_research: campaign.max_companies_to_research,
     target_market: campaign.target_market ?? "",
     industry: campaign.industry ?? "",
-    technologies: campaign.technologies,
+    keywords: campaign.keywords,
     min_employees: campaign.company_size?.min ?? undefined,
     max_employees: campaign.company_size?.max ?? undefined,
   };

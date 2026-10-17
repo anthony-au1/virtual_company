@@ -47,7 +47,7 @@ class ResearchRunView:
 class CampaignCriteriaView:
     target_market: str | None
     industry: str | None
-    technologies: list[str]
+    keywords: list[str]
     company_size: CompanySizeCriteria | None
 
 
@@ -242,7 +242,7 @@ class ResearchResultsService:
                 criteria=CampaignCriteriaView(
                     target_market=campaign.target_market,
                     industry=campaign.industry,
-                    technologies=list(campaign.technologies or []),
+                    keywords=list(campaign.keywords or []),
                     company_size=(
                         CompanySizeCriteria.model_validate(campaign.company_size)
                         if campaign.company_size is not None

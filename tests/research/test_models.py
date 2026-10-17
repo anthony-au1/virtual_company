@@ -21,7 +21,7 @@ def test_research_models_accept_expected_data() -> None:
         supporting_urls=["https://example.com"],
     )
     evidence = ExtractedEvidence(
-        criterion=EvidenceCriterion.TECHNOLOGY,
+        criterion=EvidenceCriterion.KEYWORD,
         subject="Python",
         claim="Example claim",
         evidence_text="Supporting text",

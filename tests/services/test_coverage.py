@@ -10,14 +10,14 @@ from virtual_company.workflows.research.models import (
 )
 
 
-def make_campaign(*, technologies: list[str] | None = None) -> CampaignCriteria:
+def make_campaign(*, keywords: list[str] | None = None) -> CampaignCriteria:
     return CampaignCriteria(
         id=uuid4(),
         name="Research",
         description=None,
         target_market="Australia",
         industry="fin tech",
-        technologies=technologies or ["java", "spring", "spring boot", "kafka"],
+        keywords=keywords or ["java", "spring", "spring boot", "kafka"],
         company_size={
             "min": 100,
             "max": 500,
@@ -47,10 +47,10 @@ def test_full_coverage_retains_matching_evidence_ids() -> None:
     evidence = [
         item(company_id, run_id, "target_market", "Australia"),
         item(company_id, run_id, "industry", "fin tech"),
-        item(company_id, run_id, "technology", "Java"),
-        item(company_id, run_id, "technology", "Spring"),
-        item(company_id, run_id, "technology", "SpringBoot"),
-        item(company_id, run_id, "technology", "Kafka"),
+        item(company_id, run_id, "keyword", "Java"),
+        item(company_id, run_id, "keyword", "Spring"),
+        item(company_id, run_id, "keyword", "SpringBoot"),
+        item(company_id, run_id, "keyword", "Kafka"),
         item(company_id, run_id, "company_size", "2300+ employees"),
     ]
     coverage = assess_evidence_coverage(
@@ -90,45 +90,45 @@ def test_sparse_and_zero_evidence_are_missing_without_qualification() -> None:
 
 def test_criteria_are_dynamic_and_evidence_is_run_and_company_scoped() -> None:
     company_id, run_id = uuid4(), uuid4()
-    campaign = make_campaign(technologies=["python", "django", "postgresql"])
+    campaign = make_campaign(keywords=["python", "django", "postgresql"])
     evidence = [
-        item(company_id, uuid4(), "technology", "python"),
-        item(uuid4(), run_id, "technology", "django"),
+        item(company_id, uuid4(), "keyword", "python"),
+        item(uuid4(), run_id, "keyword", "django"),
     ]
     coverage = assess_evidence_coverage(
         campaign, evidence, company_id=company_id, research_run_id=run_id
     )
-    technologies = [
-        result.subject for result in coverage if result.criterion == "technology"
+    keywords = [
+        result.subject for result in coverage if result.criterion == "keyword"
     ]
-    assert technologies == ["python", "django", "postgresql"]
+    assert keywords == ["python", "django", "postgresql"]
     assert all(
         result.status is CoverageStatus.MISSING
         for result in coverage
-        if result.criterion == "technology"
+        if result.criterion == "keyword"
     )
 
 
 def test_technology_criteria_are_independent_and_normalized() -> None:
     company_id, run_id = uuid4(), uuid4()
-    spring_boot = item(company_id, run_id, "technology", "SpringBoot")
+    spring_boot = item(company_id, run_id, "keyword", "SpringBoot")
     coverage = assess_evidence_coverage(
-        make_campaign(technologies=["Spring", "Spring Boot"]),
+        make_campaign(keywords=["Spring", "Spring Boot"]),
         [spring_boot],
         company_id=company_id,
         research_run_id=run_id,
     )
-    technologies = [result for result in coverage if result.criterion == "technology"]
-    assert [result.status for result in technologies] == [
+    keywords = [result for result in coverage if result.criterion == "keyword"]
+    assert [result.status for result in keywords] == [
         CoverageStatus.MISSING,
         CoverageStatus.FOUND,
     ]
-    assert technologies[0].evidence_ids == []
-    assert technologies[1].evidence_ids == [spring_boot.id]
+    assert keywords[0].evidence_ids == []
+    assert keywords[1].evidence_ids == [spring_boot.id]
 
-    kafka_evidence = item(company_id, run_id, "technology", "Apache Kafka")
+    kafka_evidence = item(company_id, run_id, "keyword", "Apache Kafka")
     kafka_coverage = assess_evidence_coverage(
-        make_campaign(technologies=["Kafka"]),
+        make_campaign(keywords=["Kafka"]),
         [kafka_evidence],
         company_id=company_id,
         research_run_id=run_id,
@@ -139,9 +139,9 @@ def test_technology_criteria_are_independent_and_normalized() -> None:
 def test_case_and_format_variants_match_technology_coverage() -> None:
     company_id, run_id = uuid4(), uuid4()
     for label in ("Java", "java", " JAVA "):
-        source = item(company_id, run_id, "technology", label)
+        source = item(company_id, run_id, "keyword", label)
         coverage = assess_evidence_coverage(
-            make_campaign(technologies=["java"]),
+            make_campaign(keywords=["java"]),
             [source],
             company_id=company_id,
             research_run_id=run_id,
@@ -149,9 +149,9 @@ def test_case_and_format_variants_match_technology_coverage() -> None:
         assert coverage[2].status is CoverageStatus.FOUND
 
     for label in ("Spring Boot", "spring-boot", "spring_boot", "springboot"):
-        source = item(company_id, run_id, "technology", label)
+        source = item(company_id, run_id, "keyword", label)
         coverage = assess_evidence_coverage(
-            make_campaign(technologies=["Spring Boot"]),
+            make_campaign(keywords=["Spring Boot"]),
             [source],
             company_id=company_id,
             research_run_id=run_id,

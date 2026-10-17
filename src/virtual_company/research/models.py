@@ -43,7 +43,7 @@ class EvidenceCriterion(StrEnum):
 
     TARGET_MARKET = "target_market"
     INDUSTRY = "industry"
-    TECHNOLOGY = "technology"
+    KEYWORD = "keyword"
     COMPANY_SIZE = "company_size"
 
 

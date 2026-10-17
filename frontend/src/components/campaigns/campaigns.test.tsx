@@ -62,7 +62,7 @@ function campaign(id: string, name: string): Campaign {
     description: "Find Australian fintech companies.",
     target_market: "Australia",
     industry: "Fin tech",
-    technologies: ["Java", "Kafka"],
+    keywords: ["Java", "cloud migration", "process automation", "omnichannel"],
     company_size: {
       min: 500,
       max: 5000,
@@ -149,7 +149,7 @@ describe("CampaignsPage", () => {
 });
 
 describe("CampaignFormPage", () => {
-  it("validates campaign fields and accepts technologies from one list", async () => {
+  it("validates campaign fields and accepts keywords from one list", async () => {
     mockCreateCampaign.mockResolvedValue(campaign("created", "Campaign"));
     renderWithQuery(<CampaignFormPage />);
 
@@ -169,25 +169,25 @@ describe("CampaignFormPage", () => {
       target: { value: "Fintech" },
     });
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Add technologies" }),
+      screen.getByRole("textbox", { name: "Add keywords" }),
       {
         target: { value: "Java" },
       },
     );
     fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add technologies" }),
+      screen.getByRole("textbox", { name: "Add keywords" }),
       {
         key: "Enter",
       },
     );
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Add technologies" }),
+      screen.getByRole("textbox", { name: "Add keywords" }),
       {
         target: { value: " java " },
       },
     );
     fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add technologies" }),
+      screen.getByRole("textbox", { name: "Add keywords" }),
       {
         key: "Enter",
       },
@@ -216,25 +216,25 @@ describe("CampaignFormPage", () => {
       target: { value: "Fin tech" },
     });
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Add technologies" }),
+      screen.getByRole("textbox", { name: "Add keywords" }),
       {
         target: { value: "Java" },
       },
     );
     fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add technologies" }),
+      screen.getByRole("textbox", { name: "Add keywords" }),
       {
         key: "Enter",
       },
     );
     fireEvent.change(
-      screen.getByRole("textbox", { name: "Add technologies" }),
+      screen.getByRole("textbox", { name: "Add keywords" }),
       {
         target: { value: "Kafka" },
       },
     );
     fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add technologies" }),
+      screen.getByRole("textbox", { name: "Add keywords" }),
       {
         key: "Enter",
       },
@@ -254,7 +254,7 @@ describe("CampaignFormPage", () => {
         status: "DRAFT",
         target_market: "Australia",
         industry: "Fin tech",
-        technologies: ["Java", "Kafka"],
+        keywords: ["Java", "Kafka"],
         company_size: { min: 500 },
       }),
     );
@@ -268,8 +268,8 @@ describe("CampaignFormPage", () => {
       new ApiError("Request failed", 422, {
         detail: [
           {
-            loc: ["body", "technologies", 1],
-            msg: "Duplicate technology",
+            loc: ["body", "keywords", 1],
+            msg: "Duplicate keyword",
           },
         ],
       }),
@@ -280,7 +280,7 @@ describe("CampaignFormPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Create Campaign" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "technologies → 1: Duplicate technology",
+      "keywords → 1: Duplicate keyword",
     );
   });
 });

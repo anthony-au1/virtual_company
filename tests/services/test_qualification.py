@@ -27,7 +27,7 @@ def campaign(
     return SimpleNamespace(
         target_market="Australia",
         industry="fintech",
-        technologies=["Kafka"],
+        keywords=["Kafka"],
         company_size=CompanySizeCriteria(
             min=minimum,
             max=maximum,

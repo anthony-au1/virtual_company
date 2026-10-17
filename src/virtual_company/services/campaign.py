@@ -52,7 +52,7 @@ class CampaignService:
                 "description",
                 "target_market",
                 "industry",
-                "technologies",
+                "keywords",
                 "company_size",
                 "target_count",
                 "max_companies_to_research",

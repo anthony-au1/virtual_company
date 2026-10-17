@@ -44,7 +44,7 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         description="",
         target_market="Australia",
         industry="fin tech",
-        technologies=["java", "spring", "spring boot", "kafka"],
+        keywords=["java", "spring", "spring boot", "kafka"],
         company_size={"min": 500},
         target_count=5,
         max_companies_to_research=10,
@@ -97,21 +97,21 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         criteria_results={
             "criteria": [
                 {
-                    "criterion": "technology",
+                    "criterion": "keyword",
                     "subject": "java",
                     "status": "MATCH",
                     "reason": "Supported",
                     "evidence_ids": [str(java_evidence.id), str(unrelated.id)],
                 },
                 {
-                    "criterion": "technology",
+                    "criterion": "keyword",
                     "subject": "spring",
                     "status": "UNKNOWN",
                     "reason": "Not established",
                     "evidence_ids": [],
                 },
                 {
-                    "criterion": "technology",
+                    "criterion": "keyword",
                     "subject": "kafka",
                     "status": "MISMATCH",
                     "reason": "Contradicted",
@@ -148,7 +148,7 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
     assert result.campaign.max_companies_to_research == 10
     assert result.campaign.criteria.target_market == "Australia"
     assert result.campaign.criteria.industry == "fin tech"
-    assert result.campaign.criteria.technologies == campaign.technologies
+    assert result.campaign.criteria.keywords == campaign.keywords
     assert result.campaign.criteria.company_size.model_dump() == {
         **campaign.company_size,
         "max": None,
@@ -180,7 +180,7 @@ async def test_deleting_one_terminal_run_removes_only_its_owned_data(
         target_count=1,
         max_companies_to_research=10,
         status="COMPLETED",
-        technologies=[],
+        keywords=[],
         sealed_at=sealed_at,
     )
     run = ResearchRun(

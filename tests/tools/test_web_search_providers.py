@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from pydantic import SecretStr
 from tavily import InvalidAPIKeyError, UsageLimitExceededError
@@ -18,6 +19,7 @@ from virtual_company.tools.web_search import (
     SearchResponse,
     WebSearchAuthenticationError,
     WebSearchConfigurationError,
+    WebSearchError,
     WebSearchRateLimitError,
 )
 
@@ -44,6 +46,40 @@ class ExaClientFake:
         if isinstance(self.response, Exception):
             raise self.response
         return self.response
+
+
+class SequencedExaClientFake:
+    def __init__(self, responses: list[object | Exception]) -> None:
+        self.responses = list(responses)
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    async def search(self, query: str, **kwargs: object) -> object:
+        self.calls.append((query, kwargs))
+        result = self.responses.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def exa_success_response() -> SimpleNamespace:
+    return SimpleNamespace(
+        results=[
+            SimpleNamespace(
+                title="Acme", url="https://acme.example", highlights=["Relevant"]
+            )
+        ]
+    )
+
+
+async def install_no_wait_retry(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("virtual_company.tools.exa_web_search.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("virtual_company.tools.exa_web_search.random.uniform", lambda *_: 0.05)
+    return delays
 
 
 @pytest.mark.asyncio
@@ -115,7 +151,7 @@ async def test_exa_maps_highlights_and_forwards_limit() -> None:
         (
             "Australian fintech",
             {
-                "type": "auto",
+                "type": "instant",
                 "num_results": 6,
                 "contents": {"highlights": {"max_characters": 500}},
             },
@@ -143,6 +179,120 @@ async def test_exa_empty_response_and_known_failures() -> None:
     )
     with pytest.raises(WebSearchRateLimitError, match="rate limit"):
         await limited.search("query")
+
+
+@pytest.mark.asyncio
+async def test_exa_success_on_first_attempt_makes_one_provider_call() -> None:
+    client = SequencedExaClientFake([exa_success_response()])
+    tool = ExaWebSearchTool(api_key="test-key", client=client)
+
+    response = await tool.search("query")
+
+    assert len(response.results) == 1
+    assert len(client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_exa_retries_transient_gateway_error_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    delays = await install_no_wait_retry(monkeypatch)
+    client = SequencedExaClientFake(
+        [ValueError("Request failed with status code 504: gateway body"), exa_success_response()]
+    )
+    tool = ExaWebSearchTool(api_key="test-key", client=client)
+
+    response = await tool.search("query")
+
+    assert len(response.results) == 1
+    assert len(client.calls) == 2
+    assert delays == [0.3]
+    retry_record = next(
+        record for record in caplog.records if record.getMessage() == "web_search_retry"
+    )
+    assert retry_record.context == {
+        "provider": "exa",
+        "attempt": 1,
+        "max_attempts": 3,
+        "failure_category": "http_5xx",
+        "status_code": 504,
+        "backoff_seconds": 0.3,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [502, 503])
+async def test_exa_retries_502_and_503_provider_errors(
+    monkeypatch: pytest.MonkeyPatch, status_code: int
+) -> None:
+    await install_no_wait_retry(monkeypatch)
+    client = SequencedExaClientFake(
+        [ValueError(f"Request failed with status code {status_code}"), exa_success_response()]
+    )
+    tool = ExaWebSearchTool(api_key="test-key", client=client)
+
+    await tool.search("query")
+
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_exa_transient_gateway_error_exhausts_three_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delays = await install_no_wait_retry(monkeypatch)
+    failure = ValueError("Request failed with status code 504: gateway body")
+    client = SequencedExaClientFake([failure, failure, failure])
+    tool = ExaWebSearchTool(api_key="test-key", client=client)
+
+    with pytest.raises(WebSearchError, match="Exa web search failed") as raised:
+        await tool.search("query")
+
+    assert len(client.calls) == 3
+    assert delays == [0.3, 0.55]
+    assert raised.value.__cause__ is failure
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.ReadTimeout("timed out"), httpx.ConnectError("connection failed")],
+)
+async def test_exa_retries_timeout_and_network_errors(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    await install_no_wait_retry(monkeypatch)
+    client = SequencedExaClientFake([failure, exa_success_response()])
+    tool = ExaWebSearchTool(api_key="test-key", client=client)
+
+    await tool.search("query")
+
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "error_type"),
+    [
+        ("Request failed with status code 401", WebSearchAuthenticationError),
+        ("Request failed with status code 403", WebSearchAuthenticationError),
+        ("Request failed with status code 400", WebSearchError),
+        ("Request failed with status code 429", WebSearchRateLimitError),
+        ("Unsupported HTTP method: PUT", WebSearchError),
+    ],
+)
+async def test_exa_does_not_retry_permanent_or_rate_limited_errors(
+    monkeypatch: pytest.MonkeyPatch, message: str, error_type: type[Exception]
+) -> None:
+    delays = await install_no_wait_retry(monkeypatch)
+    client = SequencedExaClientFake([ValueError(message)])
+    tool = ExaWebSearchTool(api_key="test-key", client=client)
+
+    with pytest.raises(error_type):
+        await tool.search("query")
+
+    assert len(client.calls) == 1
+    assert delays == []
 
 
 @pytest.mark.asyncio

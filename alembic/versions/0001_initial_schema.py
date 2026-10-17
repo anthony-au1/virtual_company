@@ -25,7 +25,7 @@ def upgrade() -> None:
         sa.Column("description", sa.Text()),
         sa.Column("target_market", sa.String(255)),
         sa.Column("industry", sa.String(255)),
-        sa.Column("technologies", postgresql.JSONB(), nullable=False),
+        sa.Column("keywords", postgresql.JSONB(), nullable=False),
         sa.Column("company_size", postgresql.JSONB()),
         sa.Column("target_count", sa.Integer(), nullable=False),
         sa.Column(

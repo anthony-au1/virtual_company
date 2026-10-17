@@ -261,7 +261,7 @@ def qualification_facts_from_prompt(prompt: str) -> QualificationFacts:
         for item in evidence_items:
             if item["criterion"] != configured["criterion"]:
                 continue
-            if configured["criterion"] == "technology":
+            if configured["criterion"] == "keyword":
                 actual = " ".join((item["subject"] or "").casefold().split())
                 expected = " ".join((configured["subject"] or "").casefold().split())
                 if actual != expected and not (
@@ -349,7 +349,7 @@ def campaign() -> Campaign:
         description=None,
         target_market="Australia",
         industry="Fintech",
-        technologies=["Java", "Spring Boot", "Kafka"],
+        keywords=["Java", "Spring Boot", "Kafka"],
         company_size=None,
         target_count=3,
         max_companies_to_research=15,
@@ -465,7 +465,7 @@ async def test_source_selection_reserves_available_sources_for_unknown_criteria(
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = [
+    model.keywords = [
         "Java",
         "Spring Boot",
     ]
@@ -498,7 +498,7 @@ async def test_source_selection_reserves_available_sources_for_unknown_criteria(
             "criterion_qualifications": {
                 company.id: [
                     CriterionQualification(
-                        "technology",
+                        "keyword",
                         subject,
                         QualificationStatus.UNKNOWN,
                         [],
@@ -523,14 +523,14 @@ def test_staged_prompt_semantics() -> None:
         rank_company_candidates_system_prompt().lower(),
     )
     assert (
-        EXTRACT_COMPANY_CANDIDATES_PROMPT.version == "v1"
-        and RANK_COMPANY_CANDIDATES_PROMPT.version == "v5"
+        EXTRACT_COMPANY_CANDIDATES_PROMPT.version == "v2"
+        and RANK_COMPANY_CANDIDATES_PROMPT.version == "v6"
     )
     assert (
         "optimizes for recall" in extraction and "do not rank companies" in extraction
     )
     assert (
-        "technology criteria and exact employee count are not required" in extraction
+        "keyword criteria and exact employee count are not required" in extraction
         and "article publishers" in extraction
     )
     assert (
@@ -710,35 +710,29 @@ def test_ranking_payload_keeps_same_url_records_with_different_content_distinct(
     assert _expand_ranking_payload(prompt) == [candidate.model_dump()]
 
 
-def test_evidence_extraction_prompt_requires_exact_technology_support() -> None:
+def test_evidence_extraction_prompt_requires_company_specific_keyword_support() -> None:
     prompt = extract_company_evidence_system_prompt().lower()
 
-    assert EXTRACT_COMPANY_EVIDENCE_PROMPT.version == "v3"
-    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v3"
-    assert "exact technology requested" in prompt
-    assert "different or longer technology name is not independent support" in prompt
+    assert EXTRACT_COMPANY_EVIDENCE_PROMPT.version == "v4"
+    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v4"
+    assert "company meaningfully engages with the requested concept" in prompt
+    assert "a topical mention alone is not enough" in prompt
+    assert "an unrelated article containing the keyword does not qualify" in prompt
+    assert "the same exact-concept discipline to all keyword types" in prompt
     assert "normalize spelling and formatting only, not meaning" in prompt
     assert (
-        "related technologies, parent/child technologies, products, frameworks"
-        in prompt
+        "do not infer a related or broader concept" in prompt
     )
     assert "spring boot alone does not establish spring" in prompt
     assert "apache kafka alone does not establish kafka" in prompt
-    assert "java ee alone does not establish java" in prompt
-    assert "when uncertain, emit no evidence for that technology" in prompt
-    assert "springboot/spring-boot/spring_boot for spring boot" in prompt
+    assert "apply the same exact-concept discipline to all keyword types" in prompt
     assert "review the page exhaustively" in prompt
     assert (
         "emit a separate evidence item for every requested criterion or subject"
         in prompt
     )
     assert "reusing the same exact excerpt is allowed" in prompt
-    assert (
-        "an explicit mention of spring framework supports a requested spring criterion"
-        in prompt
-    )
     assert "spring boot alone does not establish spring" in prompt
-    assert "kafka streams alone does not establish kafka" in prompt
 
 
 @pytest.mark.asyncio
@@ -784,7 +778,7 @@ async def test_evidence_extraction_preserves_all_explicit_technology_subjects(
     expected: set[str],
 ) -> None:
     model = campaign()
-    model.technologies = requested
+    model.keywords = requested
     company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
     page = WebPage(
         url="https://acme.example/engineering",
@@ -793,7 +787,7 @@ async def test_evidence_extraction_preserves_all_explicit_technology_subjects(
     )
     extracted = [
         ExtractedEvidence(
-            criterion=EvidenceCriterion.TECHNOLOGY,
+            criterion=EvidenceCriterion.KEYWORD,
             subject=subject,
             claim=f"Acme uses {subject}.",
             evidence_text=source_text,
@@ -833,7 +827,7 @@ async def test_evidence_extraction_prompt_negative_exact_technology_cases(
     requested: str, page_text: str
 ) -> None:
     model = campaign()
-    model.technologies = [requested]
+    model.keywords = [requested]
     company = ResearchCompany(
         id=uuid4(), name="Acme", website=None, domain="acme.example"
     )
@@ -855,7 +849,8 @@ async def test_evidence_extraction_prompt_negative_exact_technology_cases(
     assert requested in fake.prompts[0]
     assert page_text in fake.prompts[0]
     assert (
-        "exact technology requested" in extract_company_evidence_system_prompt().lower()
+        "company meaningfully engages with the requested concept"
+        in extract_company_evidence_system_prompt().lower()
     )
 
 
@@ -869,11 +864,11 @@ async def test_evidence_extraction_prompt_negative_exact_technology_cases(
         (".NET", "NET", "Acme builds its application on NET."),
     ],
 )
-async def test_evidence_extraction_rejects_punctuation_colliding_technologies(
+async def test_evidence_extraction_rejects_punctuation_colliding_keywords(
     requested: str, subject: str, evidence_text: str
 ) -> None:
     model = campaign()
-    model.technologies = [requested]
+    model.keywords = [requested]
     company = ResearchCompany(
         id=uuid4(), name="Acme", website=None, domain="acme.example"
     )
@@ -882,7 +877,7 @@ async def test_evidence_extraction_rejects_punctuation_colliding_technologies(
         {
             page.url: [
                 ExtractedEvidence(
-                    criterion=EvidenceCriterion.TECHNOLOGY,
+                    criterion=EvidenceCriterion.KEYWORD,
                     subject=subject,
                     claim=f"Acme uses {subject}.",
                     evidence_text=evidence_text,
@@ -929,7 +924,7 @@ async def test_evidence_extraction_accepts_exact_technology_and_format_variants(
     requested: str, subject: str, page_text: str, excerpt: str
 ) -> None:
     model = campaign()
-    model.technologies = [requested]
+    model.keywords = [requested]
     company = ResearchCompany(
         id=uuid4(), name="Acme", website=None, domain="acme.example"
     )
@@ -938,7 +933,7 @@ async def test_evidence_extraction_accepts_exact_technology_and_format_variants(
         {
             page.url: [
                 ExtractedEvidence(
-                    criterion=EvidenceCriterion.TECHNOLOGY,
+                    criterion=EvidenceCriterion.KEYWORD,
                     subject=subject,
                     claim=f"Acme uses {requested}.",
                     evidence_text=excerpt,
@@ -1910,7 +1905,7 @@ async def test_source_selection_and_fetch_emit_correlated_candidate_diagnostics(
         "criterion_qualifications": {
             company.id: [
                 CriterionQualification(
-                    "technology",
+                    "keyword",
                     "Java",
                     QualificationStatus.UNKNOWN,
                     [],
@@ -1936,7 +1931,7 @@ async def test_source_selection_and_fetch_emit_correlated_candidate_diagnostics(
             company,
             state["criterion_qualifications"][company.id],
         ),
-        "matched_unresolved_targets": ["technology/Java"],
+        "matched_unresolved_targets": ["keyword/Java"],
         "preferred": True,
         "preferred_position": 1,
         "candidate_position": 1,
@@ -2195,7 +2190,7 @@ async def test_evidence_extraction_validates_provenance_whitespace_and_duplicate
         content="We use Java\nand Spring Boot for backend services.",
     )
     extracted = ExtractedEvidence(
-        criterion=EvidenceCriterion.TECHNOLOGY,
+        criterion=EvidenceCriterion.KEYWORD,
         subject="Java",
         claim="Acme uses Java for backend services.",
         evidence_text="We use Java and Spring Boot for backend services.",
@@ -2217,7 +2212,7 @@ async def test_evidence_extraction_validates_provenance_whitespace_and_duplicate
     assert evidence[0].source_url == page.url
     assert evidence[0].source_title == page.title
     assert evidence[0].subject == "Java"
-    assert '"technologies":["Java","Spring Boot","Kafka"]' in fake.prompts[0]
+    assert '"keywords":["Java","Spring Boot","Kafka"]' in fake.prompts[0]
 
 
 @pytest.mark.asyncio
@@ -2233,7 +2228,7 @@ async def test_evidence_extraction_rejects_absent_excerpt_and_continues_after_fa
     )
     failed_page = WebPage(url="https://acme.example/two", content="Unused")
     invalid = ExtractedEvidence(
-        criterion=EvidenceCriterion.TECHNOLOGY,
+        criterion=EvidenceCriterion.KEYWORD,
         subject="Kafka",
         claim="Acme uses Kafka.",
         evidence_text="Our platform is built with Java and Kafka.",
@@ -2342,7 +2337,7 @@ async def test_evidence_persistence_is_idempotent_within_one_research_run() -> N
     item = ResearchEvidenceCreate(
         company_id=uuid4(),
         research_run_id=run_id,
-        criterion="technology",
+        criterion="keyword",
         subject="Java",
         claim="Acme uses Java.",
         evidence_text="We use Java.",
@@ -2382,7 +2377,7 @@ async def test_evidence_persistence_collapses_same_statement_across_sources() ->
     first = ResearchEvidenceCreate(
         company_id=company_id,
         research_run_id=run_id,
-        criterion="technology",
+        criterion="keyword",
         subject="Java",
         claim="Acme uses Java.",
         evidence_text="Strong proficiency in Java.",
@@ -2403,7 +2398,7 @@ async def test_evidence_persistence_collapses_same_statement_across_sources() ->
 
 def test_followup_prompt_requires_diverse_company_attributable_strategies() -> None:
     prompt = followup_company_query_system_prompt()
-    assert FOLLOWUP_COMPANY_QUERY_PROMPT.version == "v4"
+    assert FOLLOWUP_COMPANY_QUERY_PROMPT.version == "v5"
     for instruction in (
         "Use complementary research strategies across the query set",
         "Do not target all queries at the same site, domain, or source family",
@@ -2411,15 +2406,14 @@ def test_followup_prompt_requires_diverse_company_attributable_strategies() -> N
         "These are examples, not mandatory sources",
         "A single query may cover multiple related unresolved criteria",
         "Prefer evidence attributable to this company",
-        "unrelated tutorials, generic repositories, or other companies",
+        "avoid generic topical searches likely to return unrelated material",
         "Include the company name in every query",
         "Target only UNKNOWN criteria",
         "MATCH and MISMATCH criteria are already resolved",
         "must not be targeted again except as necessary context",
-        "Preserve exact requested technology names",
+        "Preserve each exact requested keyword",
         "do not introduce aliases or implications",
-        "Spring Boot does not imply Spring",
-        "Apache Kafka must not replace Kafka when the criterion requests Kafka",
+        "Choose sources relevant to each keyword",
         "when the query limit allows",
         "Do not repeat prior queries",
     ):
@@ -2440,7 +2434,7 @@ async def test_followup_queries_contain_only_missing_criteria() -> None:
             evidence_ids=[uuid4()],
         ),
         CriterionCoverage(
-            criterion=EvidenceCriterion.TECHNOLOGY,
+            criterion=EvidenceCriterion.KEYWORD,
             subject="Kafka",
             status=CoverageStatus.MISSING,
         ),
@@ -2453,7 +2447,7 @@ async def test_followup_queries_contain_only_missing_criteria() -> None:
             "criterion_qualifications": {
                 company.id: [
                     CriterionQualification(
-                        "technology",
+                        "keyword",
                         "Kafka",
                         QualificationStatus.UNKNOWN,
                         [],
@@ -2485,7 +2479,7 @@ async def test_followup_filters_duplicates_and_resolved_criteria() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = [
+    model.keywords = [
         "Java",
         "Spring Boot",
     ]
@@ -2509,14 +2503,14 @@ async def test_followup_filters_duplicates_and_resolved_criteria() -> None:
             "criterion_qualifications": {
                 company.id: [
                     CriterionQualification(
-                        "technology",
+                        "keyword",
                         "Java",
                         QualificationStatus.MATCH,
                         [uuid4()],
                         "Matched",
                     ),
                     CriterionQualification(
-                        "technology",
+                        "keyword",
                         "Spring Boot",
                         QualificationStatus.UNKNOWN,
                         [],
@@ -2555,7 +2549,7 @@ async def test_unresolved_criteria_receive_query_coverage_when_queries_exist() -
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = [
+    model.keywords = [
         "Java",
         "Spring Boot",
     ]
@@ -2571,7 +2565,7 @@ async def test_unresolved_criteria_receive_query_coverage_when_queries_exist() -
     nodes = make_nodes(ExtractionFake({}), research, model)
     qualifications = [
         CriterionQualification(
-            "technology", subject, QualificationStatus.UNKNOWN, [], "Missing"
+            "keyword", subject, QualificationStatus.UNKNOWN, [], "Missing"
         )
         for subject in ("Java", "Spring Boot")
     ]
@@ -2718,7 +2712,7 @@ async def test_transient_fetch_failure_remains_available_for_one_later_retry() -
         {
             url: [
                 ExtractedEvidence(
-                    criterion=EvidenceCriterion.TECHNOLOGY,
+                    criterion=EvidenceCriterion.KEYWORD,
                     subject="Java",
                     claim="Acme uses Java.",
                     evidence_text="Acme uses Java.",
@@ -2834,7 +2828,7 @@ async def test_coverage_retries_failed_fact_extraction_but_caches_semantic_unkno
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = [
+    model.keywords = [
         "Java",
     ]
     company = ResearchCompany(id=uuid4(), name="Acme")
@@ -2843,7 +2837,7 @@ async def test_coverage_retries_failed_fact_extraction_but_caches_semantic_unkno
         id=uuid4(),
         company_id=company.id,
         research_run_id=run_id,
-        criterion="technology",
+        criterion="keyword",
         subject="Java",
         claim="Uses Java.",
         evidence_text="Uses Java.",
@@ -2938,7 +2932,7 @@ def _criteria_from_semantic_prompt(prompt: str) -> list[dict[str, object]]:
 @pytest.mark.asyncio
 async def test_airwallex_followup_only_extracts_unknown_and_preserves_matches() -> None:
     model = campaign()
-    model.technologies = ["Java", "Spring", "Kafka"]
+    model.keywords = ["Java", "Spring", "Kafka"]
     model.company_size = {"min": 100}
     company = ResearchCompany(id=uuid4(), name="Airwallex Pty Ltd")
     run_id = uuid4()
@@ -2948,8 +2942,8 @@ async def test_airwallex_followup_only_extracts_unknown_and_preserves_matches() 
             company, run_id, "target_market", "Australia", "Australia"
         ),
         _qualification_evidence(company, run_id, "industry", "Fintech", "Fintech"),
-        _qualification_evidence(company, run_id, "technology", "Java", "Uses Java"),
-        _qualification_evidence(company, run_id, "technology", "Spring", "Uses Spring"),
+        _qualification_evidence(company, run_id, "keyword", "Java", "Uses Java"),
+        _qualification_evidence(company, run_id, "keyword", "Spring", "Uses Spring"),
     ]
     provider = SemanticFactsProvider()
     nodes = ResearchNodes(
@@ -2980,7 +2974,7 @@ async def test_airwallex_followup_only_extracts_unknown_and_preserves_matches() 
         QualificationStatus.UNKNOWN,
     ]
     service.evidence.append(
-        _qualification_evidence(company, run_id, "technology", "Kafka", "Uses Kafka")
+        _qualification_evidence(company, run_id, "keyword", "Kafka", "Uses Kafka")
     )
 
     state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
@@ -3015,7 +3009,7 @@ async def test_mismatch_does_not_block_unknown_followup_or_get_re_evaluated() ->
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Kafka"]
+    model.keywords = ["Kafka"]
     model.company_size = {"min": 100}
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
@@ -3047,7 +3041,7 @@ async def test_mismatch_does_not_block_unknown_followup_or_get_re_evaluated() ->
     assert state["active_company_ids"] == [company.id]
     assert state["investigations"][company.id].stop_reason is None
     service.evidence.append(
-        _qualification_evidence(company, run_id, "technology", "Kafka", "Uses Kafka")
+        _qualification_evidence(company, run_id, "keyword", "Kafka", "Uses Kafka")
     )
 
     state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
@@ -3073,7 +3067,7 @@ async def test_semantic_targets_shrink_as_criteria_resolve_across_rounds() -> No
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Java", "Spring", "Kafka"]
+    model.keywords = ["Java", "Spring", "Kafka"]
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     service = ResearchServiceFake()
@@ -3097,9 +3091,9 @@ async def test_semantic_targets_shrink_as_criteria_resolve_across_rounds() -> No
     state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
     service.evidence.extend(
         [
-            _qualification_evidence(company, run_id, "technology", "Java", "Uses Java"),
+            _qualification_evidence(company, run_id, "keyword", "Java", "Uses Java"),
             _qualification_evidence(
-                company, run_id, "technology", "Spring", "Uses Spring"
+                company, run_id, "keyword", "Spring", "Uses Spring"
             ),
         ]
     )
@@ -3112,7 +3106,7 @@ async def test_semantic_targets_shrink_as_criteria_resolve_across_rounds() -> No
         "criterion_2",
     ]
     service.evidence.append(
-        _qualification_evidence(company, run_id, "technology", "Kafka", "Uses Kafka")
+        _qualification_evidence(company, run_id, "keyword", "Kafka", "Uses Kafka")
     )
 
     state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
@@ -3131,7 +3125,7 @@ async def test_coverage_stops_companies_independently() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = [
+    model.keywords = [
         "Kafka",
     ]
     complete = ResearchCompany(id=uuid4(), name="Complete")
@@ -3145,7 +3139,7 @@ async def test_coverage_stops_companies_independently() -> None:
             id=uuid4(),
             company_id=complete.id,
             research_run_id=run_id,
-            criterion="technology",
+            criterion="keyword",
             subject="Kafka",
             claim="Uses Kafka.",
             evidence_text="Uses Kafka.",
@@ -3170,7 +3164,7 @@ async def test_coverage_stops_companies_independently() -> None:
                 stalled.id: CompanyInvestigationState(
                     company_id=stalled.id,
                     round=1,
-                    unresolved_before={"technology|kafka"},
+                    unresolved_before={"keyword|kafka"},
                     new_evidence_count=3,
                 ),
                 progressing.id: CompanyInvestigationState(
@@ -3181,7 +3175,7 @@ async def test_coverage_stops_companies_independently() -> None:
                 exhausted.id: CompanyInvestigationState(
                     company_id=exhausted.id,
                     round=2,
-                    unresolved_before={"technology|kafka"},
+                    unresolved_before={"keyword|kafka"},
                     alternative_strategy_attempted=True,
                 ),
             },
@@ -3200,7 +3194,7 @@ async def test_coverage_stops_at_maximum_adaptive_rounds() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = [
+    model.keywords = [
         "Kafka",
     ]
     company = ResearchCompany(id=uuid4(), name="Acme")
@@ -3281,7 +3275,7 @@ async def test_qualification_reads_current_run_evidence_without_external_calls()
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = [
+    model.keywords = [
         "spring",
         "spring boot",
     ]
@@ -3292,7 +3286,7 @@ async def test_qualification_reads_current_run_evidence_without_external_calls()
         id=uuid4(),
         company_id=company_id,
         research_run_id=run_id,
-        criterion="technology",
+        criterion="keyword",
         subject="Spring Boot",
         claim="Uses Spring Boot.",
         evidence_text="Uses Spring Boot.",
@@ -3499,7 +3493,7 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = []
+    model.keywords = []
     model.company_size = {"min": 500}
     company_id = uuid4()
     run_id = uuid4()
@@ -3634,7 +3628,7 @@ async def test_discovery_evidence_resolving_all_criteria_avoids_company_search()
                             evidence_text="A fin tech company.",
                         ),
                         ExtractedEvidence(
-                            criterion=EvidenceCriterion.TECHNOLOGY,
+                            criterion=EvidenceCriterion.KEYWORD,
                             subject="Java",
                             claim="Uses Java.",
                             evidence_text="Uses Java.",
@@ -3649,7 +3643,7 @@ async def test_discovery_evidence_resolving_all_criteria_avoids_company_search()
             return await super().generate_structured(**kwargs)
 
     model = campaign()
-    model.technologies = [
+    model.keywords = [
         "Java",
     ]
     model.company_size = {"min": 100}
@@ -3685,7 +3679,7 @@ async def test_all_unknown_criteria_are_targeted_for_followup() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Java", "Kafka"]
+    model.keywords = ["Java", "Kafka"]
     company = ResearchCompany(id=uuid4(), name="Acme")
     research = ResearchFake([])
     nodes = make_nodes(ExtractionFake({}), research, model)
@@ -3712,7 +3706,7 @@ async def test_all_unknown_criteria_are_scheduled_equally() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Java", "Spring", "Kafka"]
+    model.keywords = ["Java", "Spring", "Kafka"]
     complete = ResearchCompany(id=uuid4(), name="Complete")
     unresolved = ResearchCompany(id=uuid4(), name="Unresolved")
     run_id = uuid4()
@@ -3722,7 +3716,7 @@ async def test_all_unknown_criteria_are_scheduled_equally() -> None:
             id=uuid4(),
             company_id=complete.id,
             research_run_id=run_id,
-            criterion="technology",
+            criterion="keyword",
             subject=subject,
             claim=f"Uses {subject}.",
             evidence_text=f"Uses {subject}.",
@@ -3750,7 +3744,7 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = [
+    model.keywords = [
         "Spring",
     ]
     company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
@@ -3773,7 +3767,7 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
             "criterion_qualifications": {
                 company.id: [
                     CriterionQualification(
-                        "technology",
+                        "keyword",
                         "Spring",
                         QualificationStatus.UNKNOWN,
                         [uuid4()],
@@ -3786,7 +3780,7 @@ async def test_source_selection_scores_unresolved_qualification_not_raw_coverage
                     company_id=company.id,
                     coverage=[
                         CriterionCoverage(
-                            criterion=EvidenceCriterion.TECHNOLOGY,
+                            criterion=EvidenceCriterion.KEYWORD,
                             subject="Spring",
                             status=CoverageStatus.FOUND,
                             evidence_ids=[uuid4()],
@@ -3804,7 +3798,7 @@ async def test_source_selection_prioritizes_company_specific_unknown_subjects() 
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Java", "Spring", "Kafka"]
+    model.keywords = ["Java", "Spring", "Kafka"]
     company = ResearchCompany(id=uuid4(), name="Iress")
     generic = SearchResult(
         title="Iress careers", url="https://www.iress.com/careers", snippet="Join us"
@@ -3821,7 +3815,7 @@ async def test_source_selection_prioritizes_company_specific_unknown_subjects() 
     )
     unknown = [
         CriterionQualification(
-            "technology",
+            "keyword",
             subject,
             QualificationStatus.UNKNOWN,
             [],
@@ -3852,7 +3846,7 @@ async def test_unknown_criteria_use_remaining_rounds_then_resolve() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = ["Java", "Kafka"]
+    model.keywords = ["Java", "Kafka"]
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()
     research = ResearchFake([])
@@ -3863,7 +3857,7 @@ async def test_unknown_criteria_use_remaining_rounds_then_resolve() -> None:
             id=uuid4(),
             company_id=company.id,
             research_run_id=run_id,
-            criterion="technology",
+            criterion="keyword",
             subject="Java",
             claim="Uses Java.",
             evidence_text="Uses Java.",
@@ -3900,7 +3894,7 @@ async def test_size_mismatch_is_retained_after_all_criteria_resolve() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = [
+    model.keywords = [
         "Java",
     ]
     model.company_size = {"max": 500}
@@ -3912,7 +3906,7 @@ async def test_size_mismatch_is_retained_after_all_criteria_resolve() -> None:
             id=uuid4(),
             company_id=company.id,
             research_run_id=run_id,
-            criterion="technology",
+            criterion="keyword",
             subject="Java",
             claim="Uses Java.",
             evidence_text="Uses Java.",
@@ -4012,13 +4006,13 @@ async def test_multi_company_workflow_researches_all_unknown_criteria() -> None:
                                 evidence_text="A fintech company.",
                             ),
                             ExtractedEvidence(
-                                criterion=EvidenceCriterion.TECHNOLOGY,
+                                criterion=EvidenceCriterion.KEYWORD,
                                 subject="Java",
                                 claim="Uses Java.",
                                 evidence_text="Uses Java.",
                             ),
                             ExtractedEvidence(
-                                criterion=EvidenceCriterion.TECHNOLOGY,
+                                criterion=EvidenceCriterion.KEYWORD,
                                 subject="Spring",
                                 claim="Uses Spring.",
                                 evidence_text="Uses Spring.",
@@ -4049,13 +4043,13 @@ async def test_multi_company_workflow_researches_all_unknown_criteria() -> None:
                     return ExtractedEvidenceItems(
                         evidence=[
                             ExtractedEvidence(
-                                criterion=EvidenceCriterion.TECHNOLOGY,
+                                criterion=EvidenceCriterion.KEYWORD,
                                 subject="Java",
                                 claim="Uses Java.",
                                 evidence_text="Uses Java.",
                             ),
                             ExtractedEvidence(
-                                criterion=EvidenceCriterion.TECHNOLOGY,
+                                criterion=EvidenceCriterion.KEYWORD,
                                 subject="Spring",
                                 claim="Uses Spring.",
                                 evidence_text="Uses Spring.",
@@ -4071,7 +4065,7 @@ async def test_multi_company_workflow_researches_all_unknown_criteria() -> None:
                     return ExtractedEvidenceItems(
                         evidence=[
                             ExtractedEvidence(
-                                criterion=EvidenceCriterion.TECHNOLOGY,
+                                criterion=EvidenceCriterion.KEYWORD,
                                 subject="Kafka",
                                 claim="Uses Kafka.",
                                 evidence_text="Uses Kafka.",
@@ -4089,7 +4083,7 @@ async def test_multi_company_workflow_researches_all_unknown_criteria() -> None:
             raise AssertionError(f"Unexpected extraction model: {model_type}")
 
     model = campaign()
-    model.technologies = ["Java", "Spring", "Kafka"]
+    model.keywords = ["Java", "Spring", "Kafka"]
     model.company_size = {"min": 500}
     search = CostSearchFake([])
     research = CostResearchFake([])
@@ -4137,7 +4131,7 @@ async def test_approximate_company_size_stays_unknown() -> None:
     model = campaign()
     model.target_market = None
     model.industry = None
-    model.technologies = []
+    model.keywords = []
     model.company_size = {"min": 500}
     company = ResearchCompany(id=uuid4(), name="Acme")
     run_id = uuid4()

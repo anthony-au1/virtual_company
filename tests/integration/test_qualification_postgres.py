@@ -52,7 +52,7 @@ async def test_committed_snapshots_are_idempotent_and_run_scoped() -> None:
                     name="Snapshot test",
                     target_count=2,
                     status="RUNNING",
-                    technologies=[],
+                    keywords=[],
                 )
             )
             session.add_all(
@@ -78,7 +78,7 @@ async def test_committed_snapshots_are_idempotent_and_run_scoped() -> None:
             payload = {
                 "criteria": [
                     {
-                        "criterion": "technology",
+                        "criterion": "keyword",
                         "subject": "java",
                         "status": "MATCH",
                         "evidence_ids": [str(uuid4())],
@@ -158,7 +158,7 @@ async def test_deleting_a_run_preserves_campaign_siblings_and_canonical_company(
                     name="Sealed campaign",
                     target_count=1,
                     status="COMPLETED",
-                    technologies=[],
+                    keywords=[],
                     sealed_at=sealed_at,
                 )
             )

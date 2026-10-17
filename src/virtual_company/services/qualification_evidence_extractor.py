@@ -263,10 +263,10 @@ class QualificationEvidenceExtractor:
     ) -> bool:
         if evidence.criterion != criterion.criterion:
             return False
-        if criterion.criterion != "technology":
+        if criterion.criterion != "keyword":
             return normalize_subject(criterion.criterion, criterion.subject) == (
                 normalize_subject(criterion.criterion, evidence.subject)
             )
-        expected = normalize_subject("technology", criterion.subject)
-        observed = normalize_subject("technology", evidence.subject)
+        expected = normalize_subject("keyword", criterion.subject)
+        observed = normalize_subject("keyword", evidence.subject)
         return expected == observed

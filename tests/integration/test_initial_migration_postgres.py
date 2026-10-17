@@ -344,7 +344,10 @@ async def test_initial_migration_creates_current_schema() -> None:
                     column["name"]: column
                     for column in inspector.get_columns("campaign", schema=schema)
                 }
-                assert campaign_columns["technologies"]["nullable"] is False
+                assert campaign_columns["keywords"]["nullable"] is False
+                assert "technologies" not in campaign_columns
+                assert "target_count" in campaign_columns
+                assert "industry" in campaign_columns
                 assert "company_size" in campaign_columns
                 assert (
                     campaign_columns["max_companies_to_research"]["nullable"] is False

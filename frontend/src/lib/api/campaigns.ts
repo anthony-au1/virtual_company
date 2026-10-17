@@ -8,7 +8,7 @@ export type Campaign = {
   description: string | null;
   target_market: string | null;
   industry: string | null;
-  technologies: string[];
+  keywords: string[];
   company_size: {
     min: number | null;
     max: number | null;
@@ -26,7 +26,7 @@ export type CreateCampaignPayload = {
   description: string;
   target_market?: string;
   industry?: string;
-  technologies: string[];
+  keywords: string[];
   company_size: {
     min?: number;
     max?: number;
@@ -41,7 +41,7 @@ export type UpdateCampaignPayload = {
   description: string;
   target_market: string | null;
   industry: string | null;
-  technologies: string[];
+  keywords: string[];
   company_size: { min?: number; max?: number } | null;
   target_count: number;
   max_companies_to_research: number;

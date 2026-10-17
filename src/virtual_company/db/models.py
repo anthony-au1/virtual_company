@@ -95,7 +95,7 @@ class Campaign(Base):
     description: Mapped[str | None] = mapped_column(Text)
     target_market: Mapped[str | None] = mapped_column(String(255))
     industry: Mapped[str | None] = mapped_column(String(255))
-    technologies: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    keywords: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     company_size: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     target_count: Mapped[int] = mapped_column(Integer, nullable=False)
     max_companies_to_research: Mapped[int] = mapped_column(

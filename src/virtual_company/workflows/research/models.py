@@ -30,7 +30,7 @@ class CampaignCriteria(BaseModel):
     description: str | None
     target_market: str | None
     industry: str | None
-    technologies: list[str]
+    keywords: list[str]
     company_size: CompanySizeCriteria | None
     target_count: int
     max_companies_to_research: int

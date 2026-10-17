@@ -79,7 +79,7 @@ def campaign() -> Campaign:
         target_count=25,
         max_companies_to_research=25,
         status="DRAFT",
-        technologies=[],
+        keywords=[],
         created_at=now,
         updated_at=now,
     )
@@ -112,7 +112,7 @@ def test_create_campaign_accepts_flat_criteria() -> None:
     model = campaign()
     model.target_market = "Australia"
     model.industry = "fin tech"
-    model.technologies = ["java", "kafka"]
+    model.keywords = ["java", "kafka"]
     model.company_size = {
         "min": 100,
         "max": 500,
@@ -127,17 +127,32 @@ def test_create_campaign_accepts_flat_criteria() -> None:
             "status": model.status,
             "target_market": model.target_market,
             "industry": model.industry,
-            "technologies": model.technologies,
+            "keywords": model.keywords,
             "company_size": model.company_size,
         },
     )
     assert response.status_code == 201
-    assert response.json()["technologies"] == model.technologies
+    assert response.json()["keywords"] == model.keywords
+    assert "technologies" not in response.json()
     assert response.json()["company_size"] == model.company_size
     assert response.json()["company_size"] == {"min": 100, "max": 500}
     assert "value" not in response.text
     assert service.create_data is not None
     assert service.create_data.company_size.min == 100
+
+
+def test_create_campaign_rejects_legacy_technologies_field() -> None:
+    response = TestClient(app).post(
+        "/api/v1/campaigns",
+        json={
+            "name": "APAC SaaS",
+            "target_count": 25,
+            "status": "DRAFT",
+            "technologies": ["Java"],
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_campaign_response_flattens_legacy_persisted_company_size() -> None:
@@ -186,7 +201,7 @@ def test_patch_maps_sealed_definition_to_conflict() -> None:
     )
 
     response = TestClient(app).patch(
-        f"/api/v1/campaigns/{uuid4()}", json={"technologies": ["Go"]}
+        f"/api/v1/campaigns/{uuid4()}", json={"keywords": ["Go"]}
     )
 
     assert response.status_code == 409

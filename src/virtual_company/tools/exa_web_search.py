@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import random
+import re
 from typing import Any
 
 import httpx
@@ -19,6 +23,12 @@ from virtual_company.tools.web_search import (
 )
 
 EXA_HIGHLIGHT_MAX_CHARACTERS = 500
+_MAX_SEARCH_ATTEMPTS = 3
+_RETRYABLE_HTTP_STATUS_CODES = {502, 503, 504}
+_RETRY_BACKOFF_BASE_SECONDS = 0.25
+_RETRY_BACKOFF_JITTER_SECONDS = 0.1
+_STATUS_CODE_PATTERN = re.compile(r"\bstatus code\s+(\d{3})\b", re.IGNORECASE)
+logger = logging.getLogger(__name__)
 
 
 class ExaWebSearchTool:
@@ -38,24 +48,54 @@ class ExaWebSearchTool:
 
     async def search(self, query: str, limit: int = 10) -> SearchResponse:
         """Return Exa's auto-ranked results with short source highlights only."""
-        try:
-            response = await self._client.search(
-                query,
-                type="instant",
-                num_results=limit,
-                contents={"highlights": {"max_characters": EXA_HIGHLIGHT_MAX_CHARACTERS}},
-            )
-        except httpx.TimeoutException as error:
-            raise WebSearchTimeoutError("Exa web search timed out") from error
-        except ValueError as error:
-            message = str(error)
-            if "status code 401" in message or "status code 403" in message:
-                raise WebSearchAuthenticationError("Exa authentication failed") from error
-            if "status code 429" in message:
-                raise WebSearchRateLimitError("Exa rate limit exceeded") from error
-            raise WebSearchError("Exa web search failed") from error
-        except Exception as error:
-            raise WebSearchError("Exa web search failed") from error
+        for attempt in range(1, _MAX_SEARCH_ATTEMPTS + 1):
+            try:
+                response = await self._client.search(
+                    query,
+                    type="instant",
+                    num_results=limit,
+                    contents={"highlights": {"max_characters": EXA_HIGHLIGHT_MAX_CHARACTERS}},
+                )
+                break
+            except Exception as error:
+                status_code = _http_status_code(error)
+                if status_code in {401, 403}:
+                    raise WebSearchAuthenticationError(
+                        "Exa authentication failed"
+                    ) from error
+                if status_code == 429:
+                    raise WebSearchRateLimitError("Exa rate limit exceeded") from error
+
+                failure_category = _transient_failure_category(error, status_code)
+                if failure_category is None:
+                    if isinstance(error, httpx.TimeoutException):
+                        raise WebSearchTimeoutError(
+                            "Exa web search timed out"
+                        ) from error
+                    raise WebSearchError("Exa web search failed") from error
+
+                if attempt == _MAX_SEARCH_ATTEMPTS:
+                    if isinstance(error, httpx.TimeoutException):
+                        raise WebSearchTimeoutError(
+                            "Exa web search timed out"
+                        ) from error
+                    raise WebSearchError("Exa web search failed") from error
+
+                backoff_seconds = _retry_backoff_seconds(attempt)
+                logger.warning(
+                    "web_search_retry",
+                    extra={
+                        "context": {
+                            "provider": self.provider,
+                            "attempt": attempt,
+                            "max_attempts": _MAX_SEARCH_ATTEMPTS,
+                            "failure_category": failure_category,
+                            "status_code": status_code,
+                            "backoff_seconds": round(backoff_seconds, 3),
+                        }
+                    },
+                )
+                await asyncio.sleep(backoff_seconds)
         return SearchResponse(
             results=[
                 SearchResult(
@@ -67,3 +107,33 @@ class ExaWebSearchTool:
                 if result.url
             ]
         )
+
+
+def _http_status_code(error: Exception) -> int | None:
+    """Read structured status first, then narrowly parse exa-py's ValueError."""
+    if isinstance(error, httpx.HTTPStatusError):
+        return error.response.status_code
+    if isinstance(error, ValueError):
+        match = _STATUS_CODE_PATTERN.search(str(error))
+        if match is not None:
+            return int(match.group(1))
+    return None
+
+
+def _transient_failure_category(
+    error: Exception, status_code: int | None
+) -> str | None:
+    """Return a safe category only for provider failures that can recover."""
+    if status_code in _RETRYABLE_HTTP_STATUS_CODES:
+        return "http_5xx"
+    if isinstance(error, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(error, httpx.TransportError):
+        return "network"
+    return None
+
+
+def _retry_backoff_seconds(attempt: int) -> float:
+    """Use short exponential delays with bounded jitter before another attempt."""
+    delay = _RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+    return delay + random.uniform(0, _RETRY_BACKOFF_JITTER_SECONDS)

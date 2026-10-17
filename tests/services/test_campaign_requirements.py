@@ -18,7 +18,7 @@ def request(**changes: object) -> CampaignCreateRequest:
             "status": "DRAFT",
             "target_market": "Australia",
             "industry": "FinTech",
-            "technologies": ["Java", "Spring", "Kafka"],
+            "keywords": ["Java", "Spring", "Kafka"],
             "company_size": {"min": 100, "max": 500},
             **changes,
         }
@@ -28,17 +28,33 @@ def request(**changes: object) -> CampaignCreateRequest:
 def test_campaign_uses_flat_criteria_and_campaign_research_limit() -> None:
     campaign = request()
     assert campaign.max_companies_to_research == 15
-    assert campaign.technologies == ["Java", "Spring", "Kafka"]
+    assert campaign.keywords == ["Java", "Spring", "Kafka"]
     assert campaign.company_size is not None
     assert campaign.company_size.min == 100
     assert [(item.criterion, item.subject) for item in campaign_criteria(campaign)] == [
         ("target_market", "Australia"),
         ("industry", "FinTech"),
-        ("technology", "Java"),
-        ("technology", "Spring"),
-        ("technology", "Kafka"),
+        ("keyword", "Java"),
+        ("keyword", "Spring"),
+        ("keyword", "Kafka"),
         ("company_size", "employees >= 100"),
         ("company_size", "employees <= 500"),
+    ]
+
+
+def test_campaign_keywords_accept_non_technology_concepts() -> None:
+    campaign = request(
+        target_market=None,
+        industry="Retail",
+        keywords=["omnichannel", "inventory optimisation"],
+        company_size=None,
+    )
+
+    assert campaign.keywords == ["omnichannel", "inventory optimisation"]
+    assert [(item.criterion, item.subject) for item in campaign_criteria(campaign)] == [
+        ("industry", "Retail"),
+        ("keyword", "omnichannel"),
+        ("keyword", "inventory optimisation"),
     ]
 
 
@@ -67,7 +83,7 @@ def test_company_size_bounds_are_direct_integers_and_generate_same_criteria(
     campaign = request(
         target_market=None,
         industry=None,
-        technologies=[],
+        keywords=[],
         company_size=company_size,
     )
 

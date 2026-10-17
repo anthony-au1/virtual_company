@@ -7,21 +7,21 @@ Research-scoped table names are created directly by the project's initial schema
 
 Table: campaign
 
-| Column                      | PostgreSQL type | Nullable | Description                                     |
-|-----------------------------|-----------------|---------:|-------------------------------------------------|
-| `id`                        | `UUID`          |       NO | unique ID campaign                              |
-| `name`                      | `VARCHAR(255)`  |       NO | name                                            |
-| `description`               | `TEXT`          |      YES | detailed description                            |
-| `target_market`             | `VARCHAR(255)`  |      YES | geographical market                             |
-| `industry`                  | `VARCHAR(255)`  |      YES | targeted industry                               |
-| `technologies`              | `JSONB`         |       NO | campaign technology criteria                    |
-| `company_size`              | `JSONB`         |      YES | optional direct integer min/max employee bounds |
-| `max_companies_to_research` | `INTEGER`       |       NO | campaign research cap; at least `target_count`  |
-| `target_count`              | `INTEGER`       |       NO | desired eventual qualified-target count         |
-| `status`                    | `VARCHAR(30)`   |       NO | campaign status                                 |
-| `created_at`                | `TIMESTAMPTZ`   |       NO | created date                                    |
-| `updated_at`                | `TIMESTAMPTZ`   |       NO | last change date                                |
-| `sealed_at`                 | `TIMESTAMPTZ`   |      YES | first run start; campaign definition is sealed  |
+| Column                      | PostgreSQL type | Nullable | Description                                        |
+|-----------------------------|-----------------|---------:|----------------------------------------------------|
+| `id`                        | `UUID`          |       NO | unique ID campaign                                 |
+| `name`                      | `VARCHAR(255)`  |       NO | name                                               |
+| `description`               | `TEXT`          |      YES | detailed description                               |
+| `target_market`             | `VARCHAR(255)`  |      YES | geographical market                                |
+| `industry`                  | `VARCHAR(255)`  |      YES | targeted industry                                  |
+| `keywords`                  | `JSONB`         |       NO | company concepts/signals used as campaign criteria |
+| `company_size`              | `JSONB`         |      YES | optional direct integer min/max employee bounds    |
+| `max_companies_to_research` | `INTEGER`       |       NO | campaign research cap; at least `target_count`     |
+| `target_count`              | `INTEGER`       |       NO | desired eventual qualified-target count            |
+| `status`                    | `VARCHAR(30)`   |       NO | campaign status                                    |
+| `created_at`                | `TIMESTAMPTZ`   |       NO | created date                                       |
+| `updated_at`                | `TIMESTAMPTZ`   |       NO | last change date                                   |
+| `sealed_at`                 | `TIMESTAMPTZ`   |      YES | first run start; campaign definition is sealed     |
 
 status:
 

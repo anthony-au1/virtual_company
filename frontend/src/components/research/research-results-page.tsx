@@ -254,17 +254,17 @@ function CampaignCriteria({ results }: { results: ResearchResults }) {
             <ConfiguredCriterion label="Industry" subject={criteria.industry} />
           ) : null}
         </CriterionGroup>
-        <CriterionGroup title="Technologies">
-          {criteria.technologies.map((technology) => (
+        <CriterionGroup title="Keywords">
+          {criteria.keywords.map((keyword) => (
             <ConfiguredCriterion
-              key={technology}
-              label="Technology"
-              subject={technology}
+              key={keyword}
+              label="Keyword"
+              subject={keyword}
             />
           ))}
-          {criteria.technologies.length === 0 ? (
+          {criteria.keywords.length === 0 ? (
             <p className="text-muted-foreground text-xs">
-              No technology criteria
+              No keyword criteria
             </p>
           ) : null}
         </CriterionGroup>

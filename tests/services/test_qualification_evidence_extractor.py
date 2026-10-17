@@ -66,18 +66,18 @@ class ProviderSequence:
         return cast(T, output)
 
 
-def campaign(technologies: list[str] | None = None) -> SimpleNamespace:
+def campaign(keywords: list[str] | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         target_market="Australia",
         industry="fintech",
-        technologies=technologies or ["Kafka"],
+        keywords=keywords or ["Kafka"],
         company_size=None,
     )
 
 
 def evidence(
     text: str,
-    criterion: str = "technology",
+    criterion: str = "keyword",
     subject: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
@@ -102,8 +102,8 @@ def evidence(
 async def test_different_wording_reaches_the_same_semantic_schema(
     wording: str, criterion_id: str
 ) -> None:
-    criterion = "technology" if criterion_id == "criterion_2" else "industry"
-    subject = "Kafka" if criterion == "technology" else "fintech"
+    criterion = "keyword" if criterion_id == "criterion_2" else "industry"
+    subject = "Kafka" if criterion == "keyword" else "fintech"
     item = evidence(wording, criterion, subject)
     output = QualificationFacts(
         categorical=[
@@ -138,7 +138,7 @@ async def test_different_wording_reaches_the_same_semantic_schema(
 def test_normalization_only_canonicalizes_safe_formatting_variants(
     value: str, expected: str
 ) -> None:
-    assert normalize_subject("technology", value) == expected
+    assert normalize_subject("keyword", value) == expected
 
 
 @pytest.mark.asyncio
@@ -155,8 +155,8 @@ def test_normalization_only_canonicalizes_safe_formatting_variants(
 async def test_related_technology_subjects_remain_independent(
     requested: str, related: str
 ) -> None:
-    assert normalize_subject("technology", requested) != normalize_subject(
-        "technology", related
+    assert normalize_subject("keyword", requested) != normalize_subject(
+        "keyword", related
     )
     item = evidence(f"Our platform uses {related}", subject=related)
     output = QualificationFacts(
@@ -181,28 +181,44 @@ def test_v3_prompt_requires_excerpt_entailment_and_preserves_job_evidence() -> N
     )
 
     prompt = extract_qualification_facts_system_prompt()
-    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v3"
+    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v4"
     for instruction in (
         "EXACT PROPERTY",
         "Normalize spelling, not meaning",
         "evidence_text",
         "they are not proof",
-        "embedded in a different technology name",
+        "embedded in a different concept name",
         "Apache Kafka alone does not establish Kafka",
         "Spring Boot alone does not establish Spring",
         "Java EE alone does not establish Java",
         "Supplying an industry",
         "appearing in topical content",
-        "Company-attributed engineering job requirements can establish a technology",
+        "company engagement with a keyword",
         "prefer unknown",
         "positively contradicts",
         "Find java.exe",
-        "Kafka != Apache Kafka",
-        "familiar real-world synonym also fails",
+        "familiar synonym alone does not establish support",
         "founded in Melbourne, Australia supports Australia",
         "including an explicit unknown when unsupported",
     ):
         assert instruction in prompt
+
+
+def test_keyword_qualification_prompt_is_concept_neutral() -> None:
+    from virtual_company.workflows.research.prompts import (
+        extract_qualification_facts_system_prompt,
+    )
+
+    prompt = extract_qualification_facts_system_prompt().lower()
+    assert "company-specific engagement with the requested concept" in prompt
+    assert "topical mention" in prompt
+    from virtual_company.workflows.research.prompts import (
+        extract_company_evidence_system_prompt,
+    )
+
+    evidence_prompt = extract_company_evidence_system_prompt().lower()
+    assert "doing, using, offering, adopting, implementing" in evidence_prompt
+    assert "company-specific context" in evidence_prompt
 
 
 @pytest.mark.asyncio

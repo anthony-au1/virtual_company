@@ -42,7 +42,7 @@ class EvaluationCase:
     subject: str
     evidence: str
     expected: str
-    technologies: tuple[str, ...] = ()
+    keywords: tuple[str, ...] = ()
     # An extracted claim must not override the actual source excerpt.
     claim: str | None = None
 
@@ -78,21 +78,21 @@ CASES = (
     ),
     EvaluationCase(
         "Afterpay",
-        "technology",
+        "keyword",
         "Java",
         "Android Gradle wrapper: @rem Find java.exe",
         "UNKNOWN",
     ),
     EvaluationCase(
         "Airwallex",
-        "technology",
+        "keyword",
         "Java",
         "Several Airwallex backend engineering roles require strong commercial Java development experience.",
         "MATCH",
     ),
     EvaluationCase(
         "Zip",
-        "technology",
+        "keyword",
         "Spring Boot",
         "Experience with Java and Spring Boot.",
         "MATCH",
@@ -100,7 +100,7 @@ CASES = (
     ),
     EvaluationCase(
         "Zip",
-        "technology",
+        "keyword",
         "Spring",
         "Experience with Java and Spring Boot.",
         "UNKNOWN",
@@ -108,7 +108,7 @@ CASES = (
     ),
     EvaluationCase(
         "Judo Bank",
-        "technology",
+        "keyword",
         "Kafka",
         "With the help of Apache Kafka® and Confluent Cloud, Judo Bank was able to seamlessly integrate its various systems with its data platform.",
         "UNKNOWN",
@@ -116,38 +116,38 @@ CASES = (
     ),
     EvaluationCase(
         "Acme",
-        "technology",
+        "keyword",
         "Kafka",
         "Acme's production platform uses Kafka for event streaming.",
         "MATCH",
     ),
     EvaluationCase(
         "Acme",
-        "technology",
+        "keyword",
         "Apache Kafka",
         "Acme's platform uses Apache Kafka.",
         "MATCH",
     ),
     EvaluationCase(
         "Acme",
-        "technology",
+        "keyword",
         "Spring",
         "Acme's production services are built using Spring Boot.",
         "UNKNOWN",
     ),
     EvaluationCase(
         "Airwallex",
-        "technology",
+        "keyword",
         "Spring Boot",
         "Airwallex's production software is primarily written in Java and Spring Boot.",
         "MATCH",
     ),
     EvaluationCase(
-        "Acme", "technology", "Java", "Acme's application uses Java EE.", "UNKNOWN"
+        "Acme", "keyword", "Java", "Acme's application uses Java EE.", "UNKNOWN"
     ),
     EvaluationCase(
         "Airwallex",
-        "technology",
+        "keyword",
         "Java",
         "Airwallex's backend services are primarily written in Java.",
         "MATCH",
@@ -190,27 +190,27 @@ CASES = (
     ),
     EvaluationCase(
         "Acme",
-        "technology",
+        "keyword",
         "Java",
         "Acme's official engineering careers page: Experience building backend services in Java.",
         "MATCH",
     ),
     EvaluationCase(
         "Airwallex",
-        "technology",
+        "keyword",
         "Kafka",
         "Airwallex's payments platform uses Kafka event streams.",
         "MATCH",
     ),
     EvaluationCase(
         "Acme",
-        "technology",
+        "keyword",
         "React",
         "Acme's mobile applications use React Native.",
         "UNKNOWN",
     ),
     EvaluationCase(
-        "Acme", "technology", ".NET", "Acme builds services using .NET Core.", "UNKNOWN"
+        "Acme", "keyword", ".NET", "Acme builds services using .NET Core.", "UNKNOWN"
     ),
     EvaluationCase(
         "Acme",
@@ -233,8 +233,8 @@ def _campaign(case: EvaluationCase) -> SimpleNamespace:
     return SimpleNamespace(
         target_market=case.subject if case.criterion == "target_market" else None,
         industry=case.subject if case.criterion == "industry" else None,
-        technologies=list(case.technologies or (case.subject,))
-        if case.criterion == "technology"
+        keywords=list(case.keywords or (case.subject,))
+        if case.criterion == "keyword"
         else [],
         company_size=CompanySizeCriteria(min=500)
         if case.criterion == "company_size"

@@ -7,7 +7,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-_TECHNOLOGY_FORMAT_VARIANTS = {
+_KEYWORD_FORMAT_VARIANTS = {
     "springboot": "spring boot",
     "spring-boot": "spring boot",
     "spring_boot": "spring boot",
@@ -16,8 +16,8 @@ _TECHNOLOGY_FORMAT_VARIANTS = {
 
 def normalize_subject(criterion: str, value: str | None) -> str:
     key = " ".join((value or "").casefold().split())
-    if criterion == "technology":
-        return _TECHNOLOGY_FORMAT_VARIANTS.get(key, key)
+    if criterion == "keyword":
+        return _KEYWORD_FORMAT_VARIANTS.get(key, key)
     if criterion == "industry" and key == "fin tech":
         return "fintech"
     return key
@@ -52,7 +52,7 @@ class CompanySizeCriteria(BaseModel):
 class CampaignForQualification(Protocol):
     target_market: str | None
     industry: str | None
-    technologies: list[str]
+    keywords: list[str]
     company_size: CompanySizeCriteria | None
 
 
@@ -71,7 +71,7 @@ def campaign_criteria(campaign: CampaignForQualification) -> list[CampaignCriter
     if campaign.industry:
         criteria.append(CampaignCriterion("industry", campaign.industry))
     criteria.extend(
-        CampaignCriterion("technology", label) for label in campaign.technologies
+        CampaignCriterion("keyword", label) for label in campaign.keywords
     )
     if campaign.company_size:
         for bound_name, operator in (("min", ">="), ("max", "<=")):

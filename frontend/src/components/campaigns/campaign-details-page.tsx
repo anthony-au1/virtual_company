@@ -179,11 +179,11 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
                 {campaign.industry ? (
                   <CriteriaRow label="Industry" value={campaign.industry} />
                 ) : null}
-                {campaign.technologies.map((technology) => (
+                {campaign.keywords.map((keyword) => (
                   <CriteriaRow
-                    key={technology}
-                    label="Technology"
-                    value={technology}
+                    key={keyword}
+                    label="Keyword"
+                    value={keyword}
                   />
                 ))}
                 {sizeRows(campaign)}
@@ -365,7 +365,7 @@ function hasCriteria(campaign: Campaign) {
   return Boolean(
     campaign.target_market ||
     campaign.industry ||
-    campaign.technologies.length ||
+    campaign.keywords.length ||
     campaign.company_size?.min != null ||
     campaign.company_size?.max != null,
   );

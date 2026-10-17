@@ -44,7 +44,7 @@ export type ResearchResults = {
     criteria: {
       target_market: string | null;
       industry: string | null;
-      technologies: string[];
+      keywords: string[];
       company_size: {
         min: number | null;
         max: number | null;

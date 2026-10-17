@@ -40,7 +40,7 @@ class CampaignCreateRequest(CampaignCreate):
     description: str | None = None
     target_market: str | None = Field(default=None, max_length=255)
     industry: str | None = Field(default=None, max_length=255)
-    technologies: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
     company_size: CompanySizeCriteria | None = None
 
 
@@ -55,7 +55,7 @@ class CampaignUpdateRequest(CampaignUpdate):
     description: str | None = None
     target_market: str | None = Field(default=None, max_length=255)
     industry: str | None = Field(default=None, max_length=255)
-    technologies: list[str] | None = None
+    keywords: list[str] | None = None
     company_size: CompanySizeCriteria | None = None
     max_companies_to_research: int | None = Field(default=None, ge=1)
 
@@ -66,7 +66,7 @@ class CampaignUpdateRequest(CampaignUpdate):
             "name",
             "target_count",
             "status",
-            "technologies",
+            "keywords",
         } & self.model_fields_set:
             if getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null")
@@ -150,7 +150,7 @@ class CampaignResponse(BaseModel):
     description: str | None
     target_market: str | None
     industry: str | None
-    technologies: list[str]
+    keywords: list[str]
     company_size: CompanySizeCriteria | None
     target_count: int
     max_companies_to_research: int
@@ -211,7 +211,7 @@ class CampaignCriteriaResponse(BaseModel):
 
     target_market: str | None
     industry: str | None
-    technologies: list[str]
+    keywords: list[str]
     company_size: CompanySizeCriteria | None
 
 
