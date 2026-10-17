@@ -1,4 +1,4 @@
-"""HTTP contract tests for Exploration and Obligation endpoints."""
+"""HTTP contract tests for Exploration and read-only Obligation endpoints."""
 
 from __future__ import annotations
 
@@ -11,10 +11,7 @@ from fastapi.testclient import TestClient
 from virtual_company.api.dependencies import get_exploration_service
 from virtual_company.db.models import Exploration, ExplorationObligation
 from virtual_company.main import app
-from virtual_company.repositories.dtos import (
-    ExplorationObligationUpdate,
-    ExplorationUpdate,
-)
+from virtual_company.repositories.dtos import ExplorationUpdate
 
 
 class ExplorationServiceStub:
@@ -27,8 +24,11 @@ class ExplorationServiceStub:
     async def create(self, business_context: str) -> Exploration:
         now = datetime.now(UTC)
         item = Exploration(
-            id=uuid4(), business_context=business_context, status="DRAFT",
-            created_at=now, updated_at=now,
+            id=uuid4(),
+            business_context=business_context,
+            status="DRAFT",
+            created_at=now,
+            updated_at=now,
         )
         self.explorations[item.id] = item
         return item
@@ -47,47 +47,16 @@ class ExplorationServiceStub:
             item.business_context = data.business_context  # type: ignore[assignment]
         return item
 
-    async def create_obligation(
-        self, exploration_id: UUID, description: str
-    ) -> ExplorationObligation | None:
-        if exploration_id not in self.explorations:
-            return None
-        item = ExplorationObligation(
-            id=uuid4(), exploration_id=exploration_id, description=description,
-            created_at=datetime.now(UTC),
-        )
-        self.obligations[item.id] = item
-        return item
-
     async def list_obligations(
         self, exploration_id: UUID
     ) -> list[ExplorationObligation] | None:
         if exploration_id not in self.explorations:
             return None
         return [
-            item for item in self.obligations.values()
+            item
+            for item in self.obligations.values()
             if item.exploration_id == exploration_id
         ]
-
-    async def update_obligation(
-        self,
-        exploration_id: UUID,
-        obligation_id: UUID,
-        data: ExplorationObligationUpdate,
-    ) -> ExplorationObligation | None:
-        item = self.obligations.get(obligation_id)
-        if item is None or item.exploration_id != exploration_id:
-            return None
-        if "description" in data.model_fields_set:
-            item.description = data.description  # type: ignore[assignment]
-        return item
-
-    async def delete_obligation(self, exploration_id: UUID, obligation_id: UUID) -> bool:
-        item = self.obligations.get(obligation_id)
-        if item is None or item.exploration_id != exploration_id:
-            return False
-        del self.obligations[obligation_id]
-        return True
 
 
 @pytest.fixture(autouse=True)
@@ -121,88 +90,86 @@ def test_exploration_lifecycle_and_restricted_fields() -> None:
     )
     assert updated.status_code == 200
     assert updated.json()["business_context"] == "Assess regional fit"
-    assert service.explorations[UUID(exploration_id)].business_context == "Assess regional fit"
+    assert (
+        service.explorations[UUID(exploration_id)].business_context
+        == "Assess regional fit"
+    )
 
-    assert client.post(
-        "/api/v1/explorations", json={"business_context": None}
-    ).status_code == 422
-    assert client.post(
-        "/api/v1/explorations",
-        json={"business_context": "context", "id": str(uuid4())},
-    ).status_code == 422
-    assert client.patch(
-        f"/api/v1/explorations/{exploration_id}", json={"business_context": None}
-    ).status_code == 422
-    assert client.patch(
-        f"/api/v1/explorations/{exploration_id}", json={"status": "RUNNING"}
-    ).status_code == 422
+    assert (
+        client.post("/api/v1/explorations", json={"business_context": None}).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/v1/explorations",
+            json={"business_context": "context", "id": str(uuid4())},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.patch(
+            f"/api/v1/explorations/{exploration_id}", json={"business_context": None}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.patch(
+            f"/api/v1/explorations/{exploration_id}", json={"status": "RUNNING"}
+        ).status_code
+        == 422
+    )
     assert client.get(f"/api/v1/explorations/{uuid4()}").status_code == 404
 
 
-def test_obligation_lifecycle_parent_scope_and_validation() -> None:
+def test_obligations_are_readable_but_not_user_managed() -> None:
     service = ExplorationServiceStub()
     app.dependency_overrides[get_exploration_service] = lambda: service
     client = TestClient(app)
-    first = client.post(
-        "/api/v1/explorations", json={"business_context": "First"}
+    exploration = client.post(
+        "/api/v1/explorations", json={"business_context": "Assess fit"}
     ).json()
-    second = client.post(
-        "/api/v1/explorations", json={"business_context": "Second"}
-    ).json()
-    first_id, second_id = UUID(first["id"]), UUID(second["id"])
-
-    path = f"/api/v1/explorations/{first_id}/obligations"
-    one = client.post(path, json={"description": "Find target market"})
-    two = client.post(path, json={"description": "Review product fit"})
-    other = client.post(
-        f"/api/v1/explorations/{second_id}/obligations",
-        json={"description": "Other exploration"},
+    exploration_id = UUID(exploration["id"])
+    obligation = ExplorationObligation(
+        id=uuid4(),
+        exploration_id=exploration_id,
+        description="System-derived research question",
+        created_at=datetime.now(UTC),
     )
-    assert one.status_code == two.status_code == other.status_code == 201
-    one_id = UUID(one.json()["id"])
+    service.obligations[obligation.id] = obligation
 
+    path = f"/api/v1/explorations/{exploration_id}/obligations"
     listed = client.get(path)
-    assert {item["id"] for item in listed.json()} == {one.json()["id"], two.json()["id"]}
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+    assert listed.json()[0]["id"] == str(obligation.id)
+    assert listed.json()[0]["exploration_id"] == str(exploration_id)
+    assert listed.json()[0]["description"] == obligation.description
     assert client.get(f"/api/v1/explorations/{uuid4()}/obligations").status_code == 404
-    assert client.post(
-        f"/api/v1/explorations/{uuid4()}/obligations",
-        json={"description": "Orphan"},
-    ).status_code == 404
-    assert client.post(path, json={"description": None}).status_code == 422
-    assert client.post(path, json={"description": "x", "exploration_id": str(second_id)}).status_code == 422
 
-    update_path = f"/api/v1/explorations/{first_id}/obligations/{one_id}"
-    updated = client.patch(update_path, json={"description": "Updated question"})
-    assert updated.status_code == 200
-    assert service.obligations[one_id].description == "Updated question"
-    assert client.patch(update_path, json={"description": None}).status_code == 422
-    assert client.patch(
-        f"/api/v1/explorations/{second_id}/obligations/{one_id}",
-        json={"description": "Tamper"},
-    ).status_code == 404
-    assert client.patch(
-        f"/api/v1/explorations/{first_id}/obligations/{uuid4()}",
-        json={"description": "Missing"},
-    ).status_code == 404
-
-    assert client.delete(
-        f"/api/v1/explorations/{second_id}/obligations/{one_id}"
-    ).status_code == 404
-    deleted = client.delete(update_path)
-    assert deleted.status_code == 204
-    assert one_id not in service.obligations
-    assert client.delete(update_path).status_code == 404
+    # Collection path remains registered for GET, so unsupported POST is 405.
+    assert client.post(path, json={"description": "manual create"}).status_code == 405
+    item_path = f"{path}/{obligation.id}"
+    assert (
+        client.patch(item_path, json={"description": "manual update"}).status_code
+        == 404
+    )
+    assert (
+        client.put(item_path, json={"description": "manual replace"}).status_code == 404
+    )
+    assert client.delete(item_path).status_code == 404
 
 
-def test_exploration_openapi_includes_routes_and_restricted_create_fields() -> None:
+def test_exploration_openapi_excludes_obligation_write_operations() -> None:
     schema = app.openapi()
     paths = schema["paths"]
     assert "/api/v1/explorations" in paths
     assert "/api/v1/explorations/{exploration_id}" in paths
     assert "/api/v1/explorations/{exploration_id}/obligations" in paths
+    assert set(paths["/api/v1/explorations/{exploration_id}/obligations"]) == {"get"}
     assert (
-        "/api/v1/explorations/{exploration_id}/obligations/{obligation_id}"
-        in paths
+        "/api/v1/explorations/{exploration_id}/obligations/{obligation_id}" not in paths
     )
     create_schema = schema["components"]["schemas"]["ExplorationCreateRequest"]
     assert set(create_schema["properties"]) == {"business_context"}
+    assert "ExplorationObligationCreateRequest" not in schema["components"]["schemas"]
+    assert "ExplorationObligationUpdateRequest" not in schema["components"]["schemas"]

@@ -90,7 +90,10 @@ class ExplorationUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def reject_null_business_context(self) -> ExplorationUpdateRequest:
-        if "business_context" in self.model_fields_set and self.business_context is None:
+        if (
+            "business_context" in self.model_fields_set
+            and self.business_context is None
+        ):
             raise ValueError("business_context cannot be null")
         return self
 
@@ -105,28 +108,6 @@ class ExplorationResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
-
-
-class ExplorationObligationCreateRequest(BaseModel):
-    """Client supplied fields for creating an Exploration Obligation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    description: str
-
-
-class ExplorationObligationUpdateRequest(BaseModel):
-    """Editable Obligation fields accepted by PATCH."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    description: str | None = None
-
-    @model_validator(mode="after")
-    def reject_null_description(self) -> ExplorationObligationUpdateRequest:
-        if "description" in self.model_fields_set and self.description is None:
-            raise ValueError("description cannot be null")
-        return self
 
 
 class ExplorationObligationResponse(BaseModel):

@@ -161,40 +161,35 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             assert len(await exploration_repo.list_obligations(exploration.id)) == 2
             assert len(await exploration_repo.list_runs(exploration.id)) == 1
 
-            # Exercise the application layer against persisted rows and confirm
-            # parent/child ownership checks survive the HTTP boundary.
+            # Exercise Exploration CRUD/read access and internal obligation
+            # persistence independently of the public API.
             service = ExplorationService(session)
             app_exploration = await service.create("Application service context")
-            app_obligation = await service.create_obligation(
-                app_exploration.id, "Application service requirement"
+            app_obligation = await obligation_repo.create(
+                ExplorationObligationCreate(
+                    exploration_id=app_exploration.id,
+                    description="Internally generated requirement",
+                )
             )
-            assert app_obligation is not None
             assert app_exploration.status == "DRAFT"
             assert (await service.get_by_id(app_exploration.id)).business_context == (
                 "Application service context"
             )
             assert [item.id for item in await service.list()]  # persisted list result
-            assert [item.id for item in await service.list_obligations(app_exploration.id)] == [
-                app_obligation.id
-            ]
+            assert [
+                item.id for item in await service.list_obligations(app_exploration.id)
+            ] == [app_obligation.id]
             changed = await service.update(
                 app_exploration.id,
                 ExplorationUpdate(business_context="Updated application context"),
             )
             assert changed.business_context == "Updated application context"
-            changed_obligation = await service.update_obligation(
-                app_exploration.id,
+            changed_obligation = await obligation_repo.update(
                 app_obligation.id,
                 ExplorationObligationUpdate(description="Updated requirement"),
             )
             assert changed_obligation.description == "Updated requirement"
-            assert await service.update_obligation(
-                exploration.id,
-                app_obligation.id,
-                ExplorationObligationUpdate(description="Wrong parent"),
-            ) is None
-            assert not await service.delete_obligation(exploration.id, app_obligation.id)
-            assert await service.delete_obligation(app_exploration.id, app_obligation.id)
+            await obligation_repo.delete(changed_obligation)
             assert await service.list_obligations(app_exploration.id) == []
             assert len(await run_repo.list_companies(run.id)) == 1
             assert len(await evidence_repo.list_by_exploration_company_id(link.id)) == 2
