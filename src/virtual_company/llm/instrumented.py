@@ -12,9 +12,23 @@ from virtual_company.observability import Observability, get_observability
 class InstrumentedLLMProvider:
     """Record LLM request metadata while preserving the LLMProvider contract."""
 
-    def __init__(self, provider: LLMProvider, observability: Observability | None = None) -> None:
+    def __init__(
+        self, provider: LLMProvider, observability: Observability | None = None
+    ) -> None:
         self._provider = provider
         self._observability = observability or get_observability()
+
+    @property
+    def provider(self) -> str:
+        return str(getattr(self._provider, "provider", "unknown"))
+
+    @property
+    def model(self) -> str:
+        return str(getattr(self._provider, "model", "unknown"))
+
+    @property
+    def role(self) -> str:
+        return str(getattr(self._provider, "role", "unknown"))
 
     async def generate_structured(
         self,
@@ -27,10 +41,14 @@ class InstrumentedLLMProvider:
         metadata = self._metadata()
         self._observability.event("llm_request_started", **metadata)
         started = time.perf_counter()
-        with self._observability.span("llm.generate_structured", as_type="generation", **metadata) as observation:
+        with self._observability.span(
+            "llm.generate_structured", as_type="generation", **metadata
+        ) as observation:
             try:
                 if hasattr(observation, "update") and self._observability.capture_io:
-                    observation.update(input={"system": system_prompt, "user": user_prompt})
+                    observation.update(
+                        input={"system": system_prompt, "user": user_prompt}
+                    )
                 result = await self._provider.generate_structured(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
@@ -38,17 +56,33 @@ class InstrumentedLLMProvider:
                 )
             except Exception as error:
                 duration = time.perf_counter() - started
-                self._observability.record("llm_requests_total", status="failed", **metadata)
+                self._observability.record(
+                    "llm_requests_total", status="failed", **metadata
+                )
                 self._observability.record("llm_request_failures_total", **metadata)
-                self._observability.record("llm_request_duration_seconds", duration, status="failed", **metadata)
-                self._observability.event("llm_request_failed", duration_ms=int(duration * 1000), error_type=type(error).__name__, **metadata)
+                self._observability.record(
+                    "llm_request_duration_seconds",
+                    duration,
+                    status="failed",
+                    **metadata,
+                )
+                self._observability.event(
+                    "llm_request_failed",
+                    duration_ms=int(duration * 1000),
+                    error_type=type(error).__name__,
+                    **metadata,
+                )
                 raise
             if hasattr(observation, "update") and self._observability.capture_io:
                 observation.update(output=result.model_dump())
         duration = time.perf_counter() - started
         self._observability.record("llm_requests_total", status="completed", **metadata)
-        self._observability.record("llm_request_duration_seconds", duration, status="completed", **metadata)
-        self._observability.event("llm_request_completed", duration_ms=int(duration * 1000), **metadata)
+        self._observability.record(
+            "llm_request_duration_seconds", duration, status="completed", **metadata
+        )
+        self._observability.event(
+            "llm_request_completed", duration_ms=int(duration * 1000), **metadata
+        )
         return result
 
     def _metadata(self) -> dict[str, str]:

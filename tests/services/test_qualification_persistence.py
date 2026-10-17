@@ -40,7 +40,16 @@ async def test_serializes_existing_results_without_committing(
             "Missing size",
         ),
     ]
-    result = ResearchCompanyQualification(company_id, status, criteria)
+    result = ResearchCompanyQualification(
+        company_id,
+        status,
+        criteria,
+        provenance={
+            "evaluation_stage": "final",
+            "input_evidence_ids": [str(evidence_id)],
+            "qualification_facts": {"categorical": []},
+        },
+    )
     await service.persist_research_company_qualifications(
         campaign_id=campaign_id, research_run_id=run_id, qualifications=[result]
     )
@@ -54,6 +63,7 @@ async def test_serializes_existing_results_without_committing(
     assert data.criteria_results == {
         "criteria": [
             {
+                "criterion_id": "criterion_0",
                 "criterion": "keyword",
                 "subject": "java",
                 "status": "MATCH",
@@ -61,13 +71,19 @@ async def test_serializes_existing_results_without_committing(
                 "reason": "Explicit support",
             },
             {
+                "criterion_id": "criterion_1",
                 "criterion": "company_size",
                 "subject": "employees >= 100",
                 "status": "UNKNOWN",
                 "evidence_ids": [],
                 "reason": "Missing size",
             },
-        ]
+        ],
+        "provenance": {
+            "evaluation_stage": "final",
+            "input_evidence_ids": [str(evidence_id)],
+            "qualification_facts": {"categorical": []},
+        },
     }
     session.commit.assert_not_called()
 

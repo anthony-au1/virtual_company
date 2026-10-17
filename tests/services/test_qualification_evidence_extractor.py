@@ -174,6 +174,65 @@ async def test_related_technology_subjects_remain_independent(
     assert result.facts.categorical[0].evidence_ids == []
 
 
+@pytest.mark.asyncio
+async def test_extraction_records_correlated_fact_and_prompt_provenance(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from virtual_company.observability import get_observability
+
+    run_id, company_id = uuid4(), uuid4()
+    item = evidence("The company uses Kafka.", subject="Kafka")
+    provider = ProviderStub(
+        QualificationFacts(
+            categorical=[
+                CategoricalEvidenceFact(
+                    criterion_id="criterion_2",
+                    state="supported",
+                    evidence_ids=[item.id],
+                )
+            ]
+        )
+    )
+    provider.model = "test-model"
+    observability = get_observability()
+    observability.clear_context()
+
+    with caplog.at_level(logging.INFO, logger="virtual_company.observability.runtime"):
+        result = await QualificationEvidenceExtractor(provider).extract(
+            campaign(),
+            [item],
+            research_run_id=run_id,
+            company_id=company_id,
+            company_name="Acme",
+            evaluation_stage="intermediate",
+            investigation_round=1,
+        )
+
+    assert result.provenance_by_criterion["criterion_2"] == {
+        "prompt_name": "extract_qualification_facts",
+        "prompt_version": "v4",
+        "model": "test-model",
+        "evaluation_stage": "intermediate",
+        "investigation_round": "1",
+        "input_evidence_ids": [str(item.id)],
+    }
+    record = next(
+        item
+        for item in caplog.records
+        if item.getMessage() == "qualification_fact_extracted"
+    )
+    assert record.context["research_run_id"] == str(run_id)
+    assert record.context["company_id"] == str(company_id)
+    assert record.context["criterion_id"] == "criterion_2"
+    assert record.context["fact_state"] == "supported"
+    assert record.context["evidence_ids"] == [str(item.id)]
+    assert record.context["prompt_version"] == "v4"
+    assert record.context["model"] == "test-model"
+    assert "api_key" not in caplog.text.casefold()
+
+
 def test_v3_prompt_requires_excerpt_entailment_and_preserves_job_evidence() -> None:
     from virtual_company.workflows.research.prompts import (
         EXTRACT_QUALIFICATION_FACTS_PROMPT,

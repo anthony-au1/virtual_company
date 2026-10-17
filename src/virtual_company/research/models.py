@@ -120,15 +120,26 @@ class QualificationFactsCacheEntry(BaseModel):
     facts: QualificationFacts | None
     status: QualificationFactsCacheStatus = QualificationFactsCacheStatus.SUCCESS
     attempt_count: int = Field(default=1, ge=0, le=2)
+    provenance_by_criterion: dict[str, dict[str, object]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_status(self) -> QualificationFactsCacheEntry:
         if self.status is QualificationFactsCacheStatus.SUCCESS and self.facts is None:
             raise ValueError("Successful fact extraction requires facts")
-        if self.status is QualificationFactsCacheStatus.FAILED_RETRYABLE and self.attempt_count != 1:
+        if (
+            self.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
+            and self.attempt_count != 1
+        ):
             raise ValueError("Retryable extraction failures require one attempt")
-        if self.status is QualificationFactsCacheStatus.FAILED_EXHAUSTED and self.attempt_count != 2:
+        if (
+            self.status is QualificationFactsCacheStatus.FAILED_EXHAUSTED
+            and self.attempt_count != 2
+        ):
             raise ValueError("Exhausted extraction failures require two attempts")
-        if self.status is QualificationFactsCacheStatus.SUCCESS and self.evidence_ids and self.attempt_count == 0:
+        if (
+            self.status is QualificationFactsCacheStatus.SUCCESS
+            and self.evidence_ids
+            and self.attempt_count == 0
+        ):
             raise ValueError("Successful extraction of Evidence requires an attempt")
         return self

@@ -31,3 +31,4 @@ class ResearchCompanyQualification:
     company_id: UUID
     status: ResearchCompanyQualificationStatus
     criteria: list[CriterionQualification]
+    provenance: dict[str, object] | None = None

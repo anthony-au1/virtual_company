@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 from virtual_company.domain.criteria import campaign_criteria, normalize_subject
@@ -71,6 +71,7 @@ from virtual_company.workflows.research.prompts import (
     COMPANY_QUERY_PROMPT,
     EXTRACT_COMPANY_CANDIDATES_PROMPT,
     EXTRACT_COMPANY_EVIDENCE_PROMPT,
+    EXTRACT_QUALIFICATION_FACTS_PROMPT,
     FOLLOWUP_COMPANY_QUERY_PROMPT,
     RANK_COMPANY_CANDIDATES_PROMPT,
     SEARCH_QUERY_PROMPT,
@@ -568,6 +569,8 @@ class ResearchNodes:
                 observability.event(
                     "company_research_queries_generated",
                     investigation_round=next_round,
+                    search_phase="initial",
+                    generated_queries=queries,
                     query_count=len(queries),
                     duplicate_queries_skipped=self._duplicate_query_count(
                         response.queries, investigation.attempted_queries
@@ -652,6 +655,7 @@ class ResearchNodes:
                 observability.event(
                     "followup_company_queries_generated",
                     investigation_round=next_round,
+                    search_phase="followup",
                     missing_criteria=[
                         (
                             f"{item.criterion}/{item.subject}"
@@ -662,6 +666,7 @@ class ResearchNodes:
                     ],
                     query_subjects=self._query_subjects(missing),
                     query_count=len(queries),
+                    generated_queries=queries,
                     duplicate_queries_skipped=self._duplicate_query_count(
                         response.queries, attempted_queries
                     ),
@@ -716,6 +721,7 @@ class ResearchNodes:
             search_phase = "investigation" if round_number <= 1 else "followup"
             with observability.context(
                 company_id=str(company.id),
+                company_name=company.name,
                 company_domain=company.domain,
                 search_phase=search_phase,
             ):
@@ -1252,8 +1258,11 @@ class ResearchNodes:
         ) -> tuple[ResearchCompany, WebPage, list[ExtractedEvidence], bool]:
             with observability.context(
                 company_id=str(company.id),
+                company_name=company.name,
                 company_domain=company.domain,
-                source_url=page.url,
+                source_url=self._safe_log_url(page.url),
+                research_run_id=str(research_run_id),
+                workflow_stage="evidence_extraction",
                 prompt_name=EXTRACT_COMPANY_EVIDENCE_PROMPT.name,
                 prompt_version=EXTRACT_COMPANY_EVIDENCE_PROMPT.version,
             ):
@@ -1388,6 +1397,7 @@ class ResearchNodes:
     ) -> dict[str, dict[UUID, list[WebPage]]]:
         """Reject fetched pages that cannot be tied to their intended company."""
         observability = get_observability()
+        research_run_id = state.get("research_run_id")
         semaphore = asyncio.Semaphore(self._evidence_extraction_concurrency)
         work = [
             (company, page)
@@ -1400,7 +1410,12 @@ class ResearchNodes:
         ) -> tuple[UUID, WebPage, bool]:
             with observability.context(
                 company_id=str(company.id),
-                source_url=page.url,
+                company_name=company.name,
+                research_run_id=(
+                    str(research_run_id) if research_run_id is not None else None
+                ),
+                source_url=self._safe_log_url(page.url),
+                workflow_stage="evidence_attribution",
                 prompt_name=VALIDATE_COMPANY_PAGE_ATTRIBUTION_PROMPT.name,
                 prompt_version=VALIDATE_COMPANY_PAGE_ATTRIBUTION_PROMPT.version,
             ):
@@ -1422,7 +1437,8 @@ class ResearchNodes:
                 observability.event(
                     "company_page_attribution_validated",
                     attributable=result.attributable,
-                    reason=result.reason,
+                    reason=result.reason[:300],
+                    workflow_stage="evidence_attribution",
                 )
                 return company.id, page, result.attributable
 
@@ -1512,7 +1528,39 @@ class ResearchNodes:
                 company_id=str(company_id),
                 evidence_persisted_count=count,
             )
+        for item in getattr(outcome, "items", None) or []:
+            with observability.context(
+                research_run_id=str(research_run_id),
+                company_id=str(item.company_id),
+                workflow_stage="evidence_extraction_persisted",
+                prompt_name=EXTRACT_COMPANY_EVIDENCE_PROMPT.name,
+                prompt_version=EXTRACT_COMPANY_EVIDENCE_PROMPT.version,
+                model=str(getattr(self._extraction_llm, "model", "unknown")),
+            ):
+                observability.event(
+                    "research_evidence_extracted",
+                    evidence_id=str(item.id),
+                    criterion=item.criterion,
+                    subject=item.subject,
+                    source_url=self._safe_log_url(item.source_url),
+                    source_title=item.source_title,
+                    claim=item.claim[:300],
+                    excerpt=item.evidence_text[:500],
+                    confidence=(
+                        float(item.confidence) if item.confidence is not None else None
+                    ),
+                    company_attribution_validated=True,
+                )
         return {"investigations": investigations}
+
+    @staticmethod
+    def _safe_log_url(value: str) -> str:
+        """Remove query strings and fragments before a source URL enters logs."""
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            return value[:300]
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))[:500]
 
     async def check_evidence_coverage(
         self, state: ResearchWorkflowState
@@ -1544,6 +1592,11 @@ class ResearchNodes:
                     evidence_by_company[company.id],
                     previous_entry=fact_cache.get(company.id),
                     previous_qualifications=previous_qualifications.get(company.id),
+                    research_run_id=research_run_id,
+                    company_id=company.id,
+                    company_name=company.name,
+                    evaluation_stage="intermediate",
+                    investigation_round=state["investigations"][company.id].round,
                 )
                 for company in pending_companies
             )
@@ -1754,6 +1807,14 @@ class ResearchNodes:
             for item in criteria
         ]
 
+    @staticmethod
+    def _criterion_label(criterion: CriterionQualification) -> str:
+        return (
+            f"{criterion.criterion}:{criterion.subject}"
+            if criterion.subject
+            else criterion.criterion
+        )
+
     async def qualify_companies(
         self, state: ResearchWorkflowState
     ) -> dict[str, object]:
@@ -1790,6 +1851,11 @@ class ResearchNodes:
                     evidence_by_company[company.id],
                     previous_entry=fact_cache.get(company.id),
                     previous_qualifications=previous_qualifications.get(company.id),
+                    research_run_id=run_id,
+                    company_id=company.id,
+                    company_name=company.name,
+                    evaluation_stage="final",
+                    investigation_round=state["investigations"][company.id].round,
                 )
                 for company in stale_companies
             )
@@ -1811,6 +1877,24 @@ class ResearchNodes:
                 company.id,
                 criteria,
             )
+            facts_entry = fact_cache[company.id]
+            result = ResearchCompanyQualification(
+                company_id=result.company_id,
+                status=result.status,
+                criteria=result.criteria,
+                provenance={
+                    "evaluation_stage": "final",
+                    "available_evidence_ids": [
+                        str(value) for value in facts_entry.evidence_ids
+                    ],
+                    "qualification_facts": (
+                        facts_entry.facts.model_dump(mode="json")
+                        if facts_entry.facts is not None
+                        else None
+                    ),
+                    "fact_extraction_by_criterion": facts_entry.provenance_by_criterion,
+                },
+            )
             criterion_qualifications[company.id] = criteria
             metadata = {
                 "company_id": str(company.id),
@@ -1829,7 +1913,86 @@ class ResearchNodes:
                     for item in result.criteria
                 ),
             }
-            with observability.span("company_qualification", **metadata):
+            with (
+                observability.context(
+                    research_run_id=str(run_id),
+                    company_id=str(company.id),
+                    company_name=company.name,
+                    workflow_stage="final_company_qualification",
+                    evaluation_stage="final",
+                ),
+                observability.span("company_qualification", **metadata),
+            ):
+                for index, item in enumerate(result.criteria):
+                    fact = next(
+                        (
+                            value
+                            for value in (
+                                facts_entry.facts.categorical
+                                if facts_entry.facts
+                                else []
+                            )
+                            if value.criterion_id == f"criterion_{index}"
+                        ),
+                        None,
+                    )
+                    if item.criterion == "company_size":
+                        fact_output = {
+                            "employee_counts": [
+                                value.model_dump(mode="json")
+                                for value in (
+                                    facts_entry.facts.employee_counts
+                                    if facts_entry.facts
+                                    else []
+                                )
+                            ]
+                        }
+                    else:
+                        fact_output = fact.model_dump(mode="json") if fact else None
+                    observability.event(
+                        "research_criterion_evaluated",
+                        criterion=item.criterion,
+                        subject=item.subject,
+                        criterion_id=f"criterion_{index}",
+                        result=item.status.value,
+                        reason=item.reason[:300],
+                        evidence_ids=[str(value) for value in item.evidence_ids],
+                        evaluation_evidence_ids=(
+                            facts_entry.provenance_by_criterion.get(
+                                f"criterion_{index}", {}
+                            ).get("input_evidence_ids", [])
+                        ),
+                        qualification_fact=fact_output,
+                        extraction_provenance=facts_entry.provenance_by_criterion.get(
+                            f"criterion_{index}"
+                        ),
+                        model=(
+                            facts_entry.provenance_by_criterion.get(
+                                f"criterion_{index}", {}
+                            ).get("model")
+                        ),
+                        prompt_name=EXTRACT_QUALIFICATION_FACTS_PROMPT.name,
+                        prompt_version=EXTRACT_QUALIFICATION_FACTS_PROMPT.version,
+                    )
+                observability.event(
+                    "research_company_qualification_finalized",
+                    **metadata,
+                    matched_criteria=[
+                        self._criterion_label(item)
+                        for item in result.criteria
+                        if item.status is QualificationStatus.MATCH
+                    ],
+                    mismatched_criteria=[
+                        self._criterion_label(item)
+                        for item in result.criteria
+                        if item.status is QualificationStatus.MISMATCH
+                    ],
+                    unknown_criteria=[
+                        self._criterion_label(item)
+                        for item in result.criteria
+                        if item.status is QualificationStatus.UNKNOWN
+                    ],
+                )
                 observability.event("company_qualified", **metadata)
             results[company.id] = result
         return {
@@ -1845,6 +2008,11 @@ class ResearchNodes:
         *,
         previous_entry: QualificationFactsCacheEntry | None,
         previous_qualifications: list[CriterionQualification] | None,
+        research_run_id: UUID,
+        company_id: UUID,
+        company_name: str,
+        evaluation_stage: str,
+        investigation_round: int,
     ) -> QualificationFactsCacheEntry:
         target_ids = self._unresolved_criterion_ids(campaign, previous_qualifications)
         extracted = await self._qualification_extractor.extract(
@@ -1852,6 +2020,11 @@ class ResearchNodes:
             evidence,
             previous_entry=previous_entry,
             target_criterion_ids=target_ids,
+            research_run_id=research_run_id,
+            company_id=company_id,
+            company_name=company_name,
+            evaluation_stage=evaluation_stage,
+            investigation_round=investigation_round,
         )
         if (
             extracted.status is not QualificationFactsCacheStatus.SUCCESS

@@ -47,6 +47,7 @@ class PersistedResearchEvidence:
     created_count: int
     skipped_count: int
     created_by_company: dict[UUID, int]
+    items: list[ResearchEvidence] | None = None
 
 
 class ResearchService:
@@ -140,18 +141,24 @@ class ResearchService:
     ) -> PersistedResearchEvidence:
         """Store distinct evidence items without duplicating a retried node's output."""
         existing = await self._evidence.list_by_research_run_id(research_run_id)
-        seen = {self._research_evidence_key(item) for item in existing}
+        existing_by_key = {self._research_evidence_key(item): item for item in existing}
+        seen = set(existing_by_key)
         created_count = 0
         skipped_count = 0
         created_by_company: dict[UUID, int] = {}
+        persisted_items: list[ResearchEvidence] = []
         for item in evidence:
             if item.research_run_id != research_run_id:
                 raise ValueError("Evidence must belong to the active research run")
             key = self._research_evidence_key(item)
             if key in seen:
                 skipped_count += 1
+                if key in existing_by_key:
+                    persisted_items.append(existing_by_key[key])
                 continue
-            await self._evidence.create(item)
+            persisted = await self._evidence.create(item)
+            persisted_items.append(persisted)
+            existing_by_key[key] = persisted
             seen.add(key)
             created_count += 1
             created_by_company[item.company_id] = (
@@ -161,6 +168,7 @@ class ResearchService:
             created_count=created_count,
             skipped_count=skipped_count,
             created_by_company=created_by_company,
+            items=persisted_items,
         )
 
     async def persist_research_company_qualifications(
@@ -181,6 +189,7 @@ class ResearchService:
                     criteria_results={
                         "criteria": [
                             {
+                                "criterion_id": f"criterion_{index}",
                                 "criterion": item.criterion,
                                 "subject": item.subject,
                                 "status": item.status.value,
@@ -189,8 +198,13 @@ class ResearchService:
                                 ],
                                 "reason": item.reason,
                             }
-                            for item in result.criteria
-                        ]
+                            for index, item in enumerate(result.criteria)
+                        ],
+                        **(
+                            {"provenance": result.provenance}
+                            if result.provenance is not None
+                            else {}
+                        ),
                     },
                 )
             )

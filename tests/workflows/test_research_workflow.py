@@ -720,9 +720,7 @@ def test_evidence_extraction_prompt_requires_company_specific_keyword_support() 
     assert "an unrelated article containing the keyword does not qualify" in prompt
     assert "the same exact-concept discipline to all keyword types" in prompt
     assert "normalize spelling and formatting only, not meaning" in prompt
-    assert (
-        "do not infer a related or broader concept" in prompt
-    )
+    assert "do not infer a related or broader concept" in prompt
     assert "spring boot alone does not establish spring" in prompt
     assert "apache kafka alone does not establish kafka" in prompt
     assert "apply the same exact-concept discipline to all keyword types" in prompt
@@ -3940,6 +3938,195 @@ async def test_size_mismatch_is_retained_after_all_criteria_resolve() -> None:
     ]
     assert result.status.value == "NOT_QUALIFIED"
     assert result.criteria[-1].status is QualificationStatus.MISMATCH
+
+
+@pytest.mark.asyncio
+async def test_final_qualification_persists_and_logs_criterion_provenance(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from virtual_company.observability import get_observability
+
+    model = campaign()
+    model.keywords = ["Java"]
+    model.company_size = {"min": 100}
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    run_id = uuid4()
+    item = SimpleNamespace(
+        id=uuid4(),
+        company_id=company.id,
+        research_run_id=run_id,
+        criterion="keyword",
+        subject="Java",
+        claim="Acme's product uses Java.",
+        evidence_text="Acme's product uses Java.",
+        source_url="https://acme.example/engineering",
+        source_title="Engineering",
+    )
+    size_item = SimpleNamespace(
+        id=uuid4(),
+        company_id=company.id,
+        research_run_id=run_id,
+        criterion="company_size",
+        subject=None,
+        claim="Acme has 40 employees.",
+        evidence_text="Acme has 40 employees.",
+        source_url="https://acme.example/about",
+        source_title="About",
+    )
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
+    nodes._research.evidence = [item, size_item]
+    state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "research_run_id": run_id,
+        "research_companies": [company],
+        "investigations": {
+            company.id: CompanyInvestigationState(company_id=company.id, stopped=True)
+        },
+        "active_company_ids": [],
+    }
+    observability = get_observability()
+    observability.clear_context()
+
+    with caplog.at_level(logging.INFO, logger="virtual_company.observability.runtime"):
+        output = await nodes.qualify_companies(state)
+
+    result = output["research_company_qualifications"][company.id]
+    assert result.status is ResearchCompanyQualificationStatus.NOT_QUALIFIED
+    assert [criterion.status for criterion in result.criteria] == [
+        QualificationStatus.UNKNOWN,
+        QualificationStatus.UNKNOWN,
+        QualificationStatus.MATCH,
+        QualificationStatus.MISMATCH,
+    ]
+    assert result.provenance is not None
+    assert result.provenance["evaluation_stage"] == "final"
+    assert set(result.provenance["available_evidence_ids"]) == {
+        str(item.id),
+        str(size_item.id),
+    }
+    assert (
+        result.provenance["qualification_facts"]["categorical"][0]["state"]
+        == "supported"
+    )
+    assert (
+        result.provenance["fact_extraction_by_criterion"]["criterion_2"][
+            "evaluation_stage"
+        ]
+        == "final"
+    )
+    assert (
+        result.provenance["fact_extraction_by_criterion"]["criterion_3"][
+            "evaluation_stage"
+        ]
+        == "final"
+    )
+
+    evaluated = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "research_criterion_evaluated"
+        and record.context["criterion"] == "keyword"
+    )
+    assert evaluated.context["research_run_id"] == str(run_id)
+    assert evaluated.context["company_id"] == str(company.id)
+    assert evaluated.context["criterion"] == "keyword"
+    assert evaluated.context["result"] == "MATCH"
+    assert evaluated.context["evidence_ids"] == [str(item.id)]
+    finalized = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "research_company_qualification_finalized"
+    )
+    assert finalized.context["matched_criteria"] == ["keyword:Java"]
+    assert finalized.context["mismatched_criteria"] == ["company_size:employees >= 100"]
+    assert finalized.context["unknown_criteria"] == [
+        "target_market:Australia",
+        "industry:Fintech",
+    ]
+    mismatch = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "research_criterion_evaluated"
+        and record.context["criterion"] == "company_size"
+    )
+    assert mismatch.context["result"] == "MISMATCH"
+    assert mismatch.context["evidence_ids"] == [str(size_item.id)]
+    assert "api_key" not in caplog.text.casefold()
+
+
+@pytest.mark.asyncio
+async def test_persisted_evidence_event_is_correlated_and_redacts_url_query(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+    from unittest.mock import AsyncMock
+
+    from virtual_company.observability import get_observability
+
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    run_id = uuid4()
+    evidence_id = uuid4()
+    source_url = "https://acme.example/jobs?access_token=private#section"
+    stored = SimpleNamespace(
+        id=evidence_id,
+        company_id=company.id,
+        criterion="keyword",
+        subject="Java",
+        source_url=source_url,
+        source_title="Engineering role",
+        claim="Role uses Java.",
+        evidence_text="Role uses Java.",
+        confidence=None,
+    )
+    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), campaign())
+    nodes._research.persist_research_evidence = AsyncMock(
+        return_value=SimpleNamespace(
+            created_count=1,
+            skipped_count=0,
+            created_by_company={company.id: 1},
+            items=[stored],
+        )
+    )
+    state = {
+        "research_run_id": run_id,
+        "research_companies": [company],
+        "active_company_ids": [company.id],
+        "investigations": {
+            company.id: CompanyInvestigationState(company_id=company.id)
+        },
+        "validated_research_evidence": [
+            SimpleNamespace(
+                company_id=company.id,
+                research_run_id=run_id,
+                criterion="keyword",
+                subject="Java",
+                claim=stored.claim,
+                evidence_text=stored.evidence_text,
+                source_url=source_url,
+                source_title=stored.source_title,
+            )
+        ],
+    }
+    get_observability().clear_context()
+
+    with caplog.at_level(logging.INFO, logger="virtual_company.observability.runtime"):
+        await nodes.persist_research_evidence(state)
+
+    event = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "research_evidence_extracted"
+    )
+    assert event.context["research_run_id"] == str(run_id)
+    assert event.context["company_id"] == str(company.id)
+    assert event.context["evidence_id"] == str(evidence_id)
+    assert event.context["criterion"] == "keyword"
+    assert event.context["source_url"] == "https://acme.example/jobs"
+    assert event.context["company_attribution_validated"] is True
+    assert "private" not in caplog.text
+    assert "access_token" not in caplog.text
 
 
 @pytest.mark.asyncio
