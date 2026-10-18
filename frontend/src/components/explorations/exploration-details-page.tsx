@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { DeleteExplorationAction } from "@/components/explorations/delete-exploration-action";
 import {
   getExploration,
   listExplorationObligations,
@@ -91,6 +92,7 @@ export function ExplorationDetailsPage({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">{exploration.status}</Badge>
+          <DeleteExplorationAction explorationId={explorationId} />
           <Link
             className={cn(buttonVariants({ variant: "outline" }))}
             href={`/explorations/${explorationId}/edit`}

@@ -87,3 +87,10 @@ class ExplorationObligationRepository:
     async def delete(self, obligation: ExplorationObligation) -> None:
         await self._session.delete(obligation)
         await self._session.flush()
+
+    async def delete_for_exploration_id(self, exploration_id: UUID) -> None:
+        await self._session.execute(
+            delete(ExplorationObligation).where(
+                ExplorationObligation.exploration_id == exploration_id
+            )
+        )

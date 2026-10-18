@@ -50,6 +50,10 @@ class ExplorationRepository:
         await self._session.refresh(exploration)
         return exploration
 
+    async def delete(self, exploration: Exploration) -> None:
+        await self._session.delete(exploration)
+        await self._session.flush()
+
     async def list_obligations(
         self, exploration_id: UUID
     ) -> list[ExplorationObligation]:

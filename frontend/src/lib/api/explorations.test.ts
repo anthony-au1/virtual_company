@@ -21,6 +21,9 @@ describe("Exploration API", () => {
     await explorationApi.getExploration("id/1");
     await explorationApi.updateExploration("id/1", { max_obligations: 12 });
     await explorationApi.listExplorationObligations("id/1");
+    const deleteResponse = new Response(null, { status: 204 });
+    fetchMock.mockResolvedValueOnce(deleteResponse);
+    await explorationApi.deleteExploration("id/1");
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/api/backend/api/v1/explorations",
@@ -28,6 +31,7 @@ describe("Exploration API", () => {
       "/api/backend/api/v1/explorations/id%2F1",
       "/api/backend/api/v1/explorations/id%2F1",
       "/api/backend/api/v1/explorations/id%2F1/obligations",
+      "/api/backend/api/v1/explorations/id%2F1",
     ]);
     expect(fetchMock.mock.calls[1]?.[1]).toEqual(
       expect.objectContaining({
@@ -44,12 +48,15 @@ describe("Exploration API", () => {
         body: JSON.stringify({ max_obligations: 12 }),
       }),
     );
+    expect(fetchMock.mock.calls[5]?.[1]).toEqual(
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 
   it("does not define manual obligation mutation methods", () => {
     expect("createExplorationObligation" in explorationApi).toBe(false);
     expect("updateExplorationObligation" in explorationApi).toBe(false);
     expect("deleteExplorationObligation" in explorationApi).toBe(false);
-    expect("deleteExploration" in explorationApi).toBe(false);
+    expect("deleteExplorationObligation" in explorationApi).toBe(false);
   });
 });

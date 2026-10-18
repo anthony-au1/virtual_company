@@ -37,7 +37,10 @@ from virtual_company.repositories.exploration_obligation import (
     ExplorationObligationRepository,
 )
 from virtual_company.repositories.exploration_run import ExplorationRunRepository
-from virtual_company.services.exploration import ExplorationService
+from virtual_company.services.exploration import (
+    ExplorationGenerationConflictError,
+    ExplorationService,
+)
 from virtual_company.services.obligation_generator import (
     GeneratedObligation,
     ObligationGenerationResult,
@@ -219,6 +222,15 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             assert (
                 len(await evidence_repo.list_by_obligation_id(obligation_one.id)) == 1
             )
+
+            with pytest.raises(ExplorationGenerationConflictError):
+                await service.delete(exploration.id)
+            assert await exploration_repo.get_by_id(exploration.id) is not None
+            assert len(await service.list_obligations(exploration.id)) == 2
+
+            assert await service.delete(app_exploration.id) is True
+            assert await exploration_repo.get_by_id(app_exploration.id) is None
+            assert await service.list_obligations(app_exploration.id) is None
 
             with pytest.raises(IntegrityError):
                 await company_repo.create(

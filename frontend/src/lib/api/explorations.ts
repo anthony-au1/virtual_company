@@ -50,6 +50,13 @@ export function updateExploration(
   );
 }
 
+export function deleteExploration(explorationId: string): Promise<void> {
+  return apiFetch<void>(
+    `/api/v1/explorations/${encodeURIComponent(explorationId)}`,
+    { method: "DELETE" },
+  );
+}
+
 export function listExplorationObligations(
   explorationId: string,
 ): Promise<ExplorationObligation[]> {

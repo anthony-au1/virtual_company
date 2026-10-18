@@ -4,6 +4,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +17,7 @@ import type {
   ExplorationObligation,
 } from "@/lib/api/explorations";
 import { ApiError } from "@/lib/api/client";
+import { explorationsQueryKey } from "@/lib/queries/query-keys";
 
 const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
 
@@ -28,11 +30,13 @@ vi.mock("@/lib/api/explorations", () => ({
   getExploration: vi.fn(),
   createExploration: vi.fn(),
   updateExploration: vi.fn(),
+  deleteExploration: vi.fn(),
   listExplorationObligations: vi.fn(),
 }));
 
 import {
   createExploration,
+  deleteExploration,
   getExploration,
   listExplorationObligations,
   listExplorations,
@@ -43,6 +47,7 @@ const mockList = vi.mocked(listExplorations);
 const mockGet = vi.mocked(getExploration);
 const mockCreate = vi.mocked(createExploration);
 const mockUpdate = vi.mocked(updateExploration);
+const mockDelete = vi.mocked(deleteExploration);
 const mockObligations = vi.mocked(listExplorationObligations);
 
 function renderWithQuery(ui: React.ReactNode) {
@@ -99,7 +104,145 @@ describe("ExplorationsPage", () => {
         name: "Open Exploration Find payment companies in Australia",
       }),
     ).toHaveAttribute("href", "/explorations/e1");
+    expect(
+      within(
+        screen.getByRole("row", { name: /Find payment companies/ }),
+      ).getByRole("button", { name: "Delete Exploration" }),
+    ).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("row", { name: /Understand regulation/ }),
+      ).getByRole("link", {
+        name: "Open Exploration Understand regulation in New Zealand",
+      }),
+    ).toHaveAttribute("href", "/explorations/e2");
+    expect(
+      within(
+        screen.getByRole("row", { name: /Understand regulation/ }),
+      ).getByRole("button", { name: "Delete Exploration" }),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("DRAFT")).toHaveLength(2);
+  });
+
+  it("confirms row deletion, prevents duplicate submits, and refreshes the list", async () => {
+    const first = exploration("e1", "Find payment companies in Australia");
+    const second = exploration("e2", "Understand regulation in New Zealand", 4);
+    mockList
+      .mockResolvedValueOnce([first, second])
+      .mockResolvedValueOnce([second]);
+    let resolveDelete!: () => void;
+    mockDelete.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveDelete = resolve;
+      }),
+    );
+    const { client } = renderWithQuery(<ExplorationsPage />);
+
+    const row = await screen.findByRole("row", {
+      name: /Find payment companies in Australia/,
+    });
+    expect(
+      within(row).getByRole("link", {
+        name: "Open Exploration Find payment companies in Australia",
+      }),
+    ).toHaveAttribute("href", "/explorations/e1");
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Delete Exploration" }),
+    );
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "permanently delete this Exploration and its generated research obligations",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mockDelete).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Delete Exploration" }),
+    );
+    const confirm = within(screen.getByRole("alertdialog")).getByRole(
+      "button",
+      {
+        name: "Delete Exploration",
+      },
+    );
+    fireEvent.click(confirm);
+    await waitFor(() => expect(confirm).toBeDisabled());
+    fireEvent.click(confirm);
+    expect(mockDelete).toHaveBeenCalledTimes(1);
+    expect(mockDelete).toHaveBeenCalledWith("e1");
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(client.getQueryData(explorationsQueryKey)).toHaveLength(2);
+
+    resolveDelete();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("row", { name: /Find payment companies/ }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("row", { name: /Understand regulation/ }),
+    ).toBeInTheDocument();
+    expect(mockList).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps the row and shows the lifecycle message when deletion returns 409", async () => {
+    mockList.mockResolvedValue([
+      exploration("e1", "Find payment companies in Australia"),
+    ]);
+    mockDelete.mockRejectedValue(
+      new ApiError("conflict", 409, { detail: "internal lifecycle detail" }),
+    );
+    renderWithQuery(<ExplorationsPage />);
+
+    const row = await screen.findByRole("row", {
+      name: /Find payment companies in Australia/,
+    });
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Delete Exploration" }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete Exploration",
+      }),
+    );
+
+    expect(
+      await screen.findByText(
+        "This Exploration cannot be deleted because it has already been run.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("row", { name: /Find payment companies/ }),
+    ).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("keeps the row and shows a safe error for other delete failures", async () => {
+    mockList.mockResolvedValue([
+      exploration("e1", "Find payment companies in Australia"),
+    ]);
+    mockDelete.mockRejectedValue(new ApiError("internal detail", 500, {}));
+    renderWithQuery(<ExplorationsPage />);
+
+    const row = await screen.findByRole("row", {
+      name: /Find payment companies in Australia/,
+    });
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Delete Exploration" }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete Exploration",
+      }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Exploration could not be deleted. Please try again.",
+    );
+    expect(
+      screen.getByRole("row", { name: /Find payment companies/ }),
+    ).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it("shows loading, empty, and error states", async () => {
@@ -252,6 +395,119 @@ describe("ExplorationDetailsPage", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("0 generated")).toBeInTheDocument();
+  });
+
+  it("requires confirmation and navigates only after successful deletion", async () => {
+    mockGet.mockResolvedValue(exploration());
+    mockObligations.mockResolvedValue([]);
+    const { client } = renderWithQuery(
+      <ExplorationDetailsPage explorationId="exploration-1" />,
+    );
+    mockDelete.mockResolvedValue(undefined);
+
+    await screen.findByRole("heading", {
+      name: "Assess market entry for a payments consultancy",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Delete Exploration" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "permanently delete this Exploration and its generated research obligations",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mockDelete).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Exploration" }));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete Exploration",
+      }),
+    );
+    await waitFor(() =>
+      expect(mockDelete).toHaveBeenCalledWith("exploration-1"),
+    );
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/explorations"));
+    expect(client.getQueryData(["explorations"])).toBeUndefined();
+  });
+
+  it("keeps the detail page and shows the lifecycle conflict on 409", async () => {
+    mockGet.mockResolvedValue(exploration());
+    mockObligations.mockResolvedValue([]);
+    mockDelete.mockRejectedValue(
+      new ApiError("conflict", 409, { detail: "internal lifecycle detail" }),
+    );
+    renderWithQuery(<ExplorationDetailsPage explorationId="exploration-1" />);
+
+    await screen.findByRole("heading", {
+      name: "Assess market entry for a payments consultancy",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Delete Exploration" }));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete Exploration",
+      }),
+    );
+    expect(
+      await screen.findByText(
+        "This Exploration cannot be deleted because it has already been run.",
+      ),
+    ).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+  });
+
+  it("disables confirmation while pending and refreshes the list after success", async () => {
+    mockGet.mockResolvedValue(exploration());
+    mockObligations.mockResolvedValue([]);
+    let resolveDelete!: () => void;
+    mockDelete.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveDelete = resolve;
+      }),
+    );
+    const { client } = renderWithQuery(
+      <ExplorationDetailsPage explorationId="exploration-1" />,
+    );
+    client.setQueryData(["explorations"], [exploration()]);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+
+    await screen.findByRole("heading", {
+      name: "Assess market entry for a payments consultancy",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Delete Exploration" }));
+    const confirm = within(screen.getByRole("alertdialog")).getByRole(
+      "button",
+      {
+        name: "Delete Exploration",
+      },
+    );
+    fireEvent.click(confirm);
+    await waitFor(() => expect(confirm).toBeDisabled());
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(client.getQueryData(["explorations"])).toHaveLength(1);
+
+    resolveDelete();
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/explorations"));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["explorations"] });
+  });
+
+  it("keeps detail visible and reports a safe message for other delete failures", async () => {
+    mockGet.mockResolvedValue(exploration());
+    mockObligations.mockResolvedValue([]);
+    mockDelete.mockRejectedValue(new ApiError("failed", 500, {}));
+    renderWithQuery(<ExplorationDetailsPage explorationId="exploration-1" />);
+
+    await screen.findByRole("heading", {
+      name: "Assess market entry for a payments consultancy",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Delete Exploration" }));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete Exploration",
+      }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Exploration could not be deleted. Please try again.",
+    );
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });
 

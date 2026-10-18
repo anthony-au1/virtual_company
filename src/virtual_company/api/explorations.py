@@ -19,7 +19,7 @@ from virtual_company.repositories.dtos import (
 )
 from virtual_company.services import ExplorationService
 from virtual_company.services.exploration import (
-    ExplorationGenerationConflictError,
+    ExplorationLifecycleConflictError,
     ExplorationObligationGenerationError,
 )
 
@@ -75,7 +75,7 @@ async def update_exploration(
             exploration_id,
             ExplorationUpdate(**payload.model_dump(exclude_unset=True)),
         )
-    except ExplorationGenerationConflictError as error:
+    except ExplorationLifecycleConflictError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(error)
         ) from error
@@ -87,6 +87,27 @@ async def update_exploration(
     if exploration is None:
         raise HTTPException(status_code=404, detail="Exploration not found")
     return ExplorationResponse.model_validate(exploration)
+
+
+@router.delete(
+    "/{exploration_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Exploration not found"},
+        status.HTTP_409_CONFLICT: {"description": "Exploration has already been run"},
+    },
+)
+async def delete_exploration(
+    exploration_id: UUID, service: ExplorationServiceDependency
+) -> None:
+    try:
+        deleted = await service.delete(exploration_id)
+    except ExplorationLifecycleConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(error)
+        ) from error
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Exploration not found")
 
 
 @router.get(

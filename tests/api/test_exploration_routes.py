@@ -24,6 +24,7 @@ class ExplorationServiceStub:
     def __init__(self) -> None:
         self.explorations: dict[UUID, Exploration] = {}
         self.obligations: dict[UUID, ExplorationObligation] = {}
+        self.runs: set[UUID] = set()
 
     async def create(
         self, business_context: str, max_obligations: int = 10
@@ -67,6 +68,22 @@ class ExplorationServiceStub:
             for item in self.obligations.values()
             if item.exploration_id == exploration_id
         ]
+
+    async def delete(self, exploration_id: UUID) -> bool:
+        item = self.explorations.get(exploration_id)
+        if item is None:
+            return False
+        if exploration_id in self.runs:
+            raise ExplorationGenerationConflictError(
+                "This Exploration cannot be deleted because it has already been run."
+            )
+        del self.explorations[exploration_id]
+        self.obligations = {
+            key: value
+            for key, value in self.obligations.items()
+            if value.exploration_id != exploration_id
+        }
+        return True
 
 
 @pytest.fixture(autouse=True)
@@ -233,11 +250,44 @@ def test_generation_failures_and_post_run_mutation_use_safe_http_errors() -> Non
     assert updated.json()["detail"] == "inputs are immutable"
 
 
+def test_delete_route_status_and_lifecycle_conflict() -> None:
+    service = ExplorationServiceStub()
+    app.dependency_overrides[get_exploration_service] = lambda: service
+    client = TestClient(app)
+    exploration = client.post(
+        "/api/v1/explorations", json={"business_context": "context"}
+    ).json()
+    exploration_id = UUID(exploration["id"])
+
+    assert client.delete(f"/api/v1/explorations/{exploration_id}").status_code == 204
+    assert client.get(f"/api/v1/explorations/{exploration_id}").status_code == 404
+    assert client.delete(f"/api/v1/explorations/{exploration_id}").status_code == 404
+
+    another = client.post(
+        "/api/v1/explorations", json={"business_context": "context"}
+    ).json()
+    another_id = UUID(another["id"])
+    service.runs.add(another_id)
+    response = client.delete(f"/api/v1/explorations/{another_id}")
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "This Exploration cannot be deleted because it has already been run."
+    )
+    assert client.get(f"/api/v1/explorations/{another_id}").status_code == 200
+
+
 def test_exploration_openapi_excludes_obligation_write_operations() -> None:
     schema = app.openapi()
     paths = schema["paths"]
     assert "/api/v1/explorations" in paths
     assert "/api/v1/explorations/{exploration_id}" in paths
+    assert paths["/api/v1/explorations/{exploration_id}"]["delete"][
+        "responses"
+    ].keys() >= {
+        "204",
+        "404",
+        "409",
+    }
     assert "/api/v1/explorations/{exploration_id}/obligations" in paths
     assert set(paths["/api/v1/explorations/{exploration_id}/obligations"]) == {"get"}
     assert (

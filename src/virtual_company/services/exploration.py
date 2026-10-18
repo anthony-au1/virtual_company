@@ -23,8 +23,13 @@ from virtual_company.services.obligation_generator import (
 )
 
 
-class ExplorationGenerationConflictError(ValueError):
-    """Raised when generation inputs are changed after an Exploration run."""
+class ExplorationLifecycleConflictError(ValueError):
+    """Raised when a lifecycle rule prevents changing an Exploration."""
+
+
+# Preserve the existing service error name for callers while sharing the same
+# lifecycle conflict type with DELETE.
+ExplorationGenerationConflictError = ExplorationLifecycleConflictError
 
 
 class ExplorationObligationGenerationError(RuntimeError):
@@ -96,7 +101,7 @@ class ExplorationService:
                 return await self._explorations.update(exploration_id, data)
 
             if await self._runs.exists_for_exploration(exploration_id):
-                raise ExplorationGenerationConflictError(
+                raise ExplorationLifecycleConflictError(
                     "Exploration business context and maximum obligations cannot "
                     "change after the Exploration has been run"
                 )
@@ -114,6 +119,20 @@ class ExplorationService:
                 [item.description for item in result.obligations],
             )
             return updated
+
+    async def delete(self, exploration_id: UUID) -> bool:
+        """Delete a pre-run Exploration and its generated obligations atomically."""
+        async with self._session.begin():
+            exploration = await self._explorations.get_by_id_for_update(exploration_id)
+            if exploration is None:
+                return False
+            if await self._runs.exists_for_exploration(exploration_id):
+                raise ExplorationLifecycleConflictError(
+                    "This Exploration cannot be deleted because it has already been run."
+                )
+            await self._obligations.delete_for_exploration_id(exploration_id)
+            await self._explorations.delete(exploration)
+            return True
 
     async def list_obligations(
         self, exploration_id: UUID

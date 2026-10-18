@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { DeleteExplorationAction } from "@/components/explorations/delete-exploration-action";
 import { listExplorations } from "@/lib/api/explorations";
 import { explorationsQueryKey } from "@/lib/queries/query-keys";
 import { cn } from "@/lib/utils";
@@ -83,14 +84,14 @@ export function ExplorationsPage() {
       ) : (
         <div className="overflow-hidden rounded-lg border">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-sm">
+            <table className="w-full min-w-[700px] text-left text-sm">
               <thead className="bg-muted/50 text-muted-foreground border-b text-xs">
                 <tr>
                   <th className="px-4 py-3 font-medium">Business context</th>
                   <th className="px-4 py-3 font-medium">Maximum obligations</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Updated</th>
-                  <th className="px-4 py-3" />
+                  <th className="px-4 py-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -116,19 +117,25 @@ export function ExplorationsPage() {
                         {formatDate(item.updated_at)}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <Link
-                          aria-label={`Open Exploration ${preview(item.business_context)}`}
-                          className={cn(
-                            buttonVariants({ size: "sm", variant: "ghost" }),
-                          )}
-                          href={`/explorations/${item.id}`}
-                        >
-                          Open{" "}
-                          <ArrowRight
-                            aria-hidden="true"
-                            data-icon="inline-end"
+                        <div className="flex justify-end gap-1">
+                          <Link
+                            aria-label={`Open Exploration ${preview(item.business_context)}`}
+                            className={cn(
+                              buttonVariants({ size: "sm", variant: "ghost" }),
+                            )}
+                            href={`/explorations/${item.id}`}
+                          >
+                            Open{" "}
+                            <ArrowRight
+                              aria-hidden="true"
+                              data-icon="inline-end"
+                            />
+                          </Link>
+                          <DeleteExplorationAction
+                            explorationId={item.id}
+                            navigateOnSuccess={false}
                           />
-                        </Link>
+                        </div>
                       </td>
                     </tr>
                   ))}

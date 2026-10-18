@@ -215,6 +215,10 @@ PATCH requests that repeat the current values are no-ops and do not regenerate
 obligations. The generated obligation order is not a guaranteed domain
 property.
 
+An Exploration may be permanently deleted before it has any ExplorationRun;
+that deletion also removes its generated obligations. Once any ExplorationRun
+exists, the Exploration is historical execution context and cannot be deleted.
+
 Indexes:
 
 - PK (`id`)

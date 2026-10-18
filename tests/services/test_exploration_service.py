@@ -68,6 +68,11 @@ class ExplorationRepositoryStub:
     async def list(self):
         return list(self.store["explorations"].values())
 
+    async def delete(self, exploration):
+        del self.store["explorations"][exploration.id]
+        if self.store.get("fail_exploration_delete"):
+            raise RuntimeError("delete persistence failed")
+
 
 class ObligationRepositoryStub:
     def __init__(self, session: SessionStub) -> None:
@@ -93,6 +98,13 @@ class ObligationRepositoryStub:
             if value.exploration_id != exploration_id
         }
         return await self.create_many(exploration_id, descriptions)
+
+    async def delete_for_exploration_id(self, exploration_id):
+        self.store["obligations"] = {
+            key: value
+            for key, value in self.store["obligations"].items()
+            if value.exploration_id != exploration_id
+        }
 
     async def list_by_exploration_id(self, exploration_id):
         return [
@@ -294,4 +306,57 @@ async def test_run_makes_changed_inputs_immutable_but_allows_noop(
     assert (current.business_context, current.max_obligations) == ("same", 10)
     assert [item.id for item in await service.list_obligations(exploration.id)] == [
         item.id for item in original_obligations
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_exploration_and_owned_obligations(service_factory):
+    service, session = service_factory(GeneratorStub(result("one", "two")))
+    exploration = await service.create("context")
+
+    assert await service.delete(exploration.id) is True
+    assert await service.get_by_id(exploration.id) is None
+    assert session.store["obligations"] == {}
+
+
+@pytest.mark.asyncio
+async def test_delete_missing_exploration_returns_false(service_factory):
+    service, _ = service_factory(GeneratorStub())
+
+    assert await service.delete(uuid4()) is False
+
+
+@pytest.mark.asyncio
+async def test_delete_after_any_run_conflicts_and_preserves_state(service_factory):
+    service, session = service_factory(GeneratorStub(result("owned")))
+    exploration = await service.create("context")
+    obligations = await service.list_obligations(exploration.id)
+    session.store["runs"].add(exploration.id)
+
+    with pytest.raises(ExplorationGenerationConflictError, match="already been run"):
+        await service.delete(exploration.id)
+
+    current = await service.get_by_id(exploration.id)
+    assert (current.business_context, current.max_obligations) == ("context", 10)
+    assert [item.id for item in await service.list_obligations(exploration.id)] == [
+        item.id for item in obligations
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_persistence_failure_rolls_back_parent_and_obligations(
+    service_factory,
+):
+    service, session = service_factory(GeneratorStub(result("owned")))
+    exploration = await service.create("context")
+    obligations = await service.list_obligations(exploration.id)
+    session.store["fail_exploration_delete"] = True
+
+    with pytest.raises(RuntimeError, match="delete persistence failed"):
+        await service.delete(exploration.id)
+
+    current = await service.get_by_id(exploration.id)
+    assert (current.business_context, current.max_obligations) == ("context", 10)
+    assert [item.id for item in await service.list_obligations(exploration.id)] == [
+        item.id for item in obligations
     ]
