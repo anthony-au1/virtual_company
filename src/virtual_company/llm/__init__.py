@@ -12,6 +12,7 @@ from virtual_company.llm.base import (
 )
 from virtual_company.llm.instrumented import InstrumentedLLMProvider
 from virtual_company.llm.openai_provider import OpenAIProvider
+from virtual_company.llm.prompts import PromptIdentity
 from virtual_company.llm.registry import LLMRegistry, create_llm_provider
 from virtual_company.llm.roles import LLMRole
 
@@ -28,5 +29,6 @@ __all__ = [
     "LLMRole",
     "LLMStructuredOutputError",
     "OpenAIProvider",
+    "PromptIdentity",
     "create_llm_provider",
 ]

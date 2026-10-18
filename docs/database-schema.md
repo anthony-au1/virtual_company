@@ -211,9 +211,9 @@ Table: `exploration_obligation`
 Represents a concrete question or condition that must be established through
 evidence to address the Exploration business context. Obligations are
 system-managed and are not independently user-managed resources. This schema
-documents their intended semantics; obligation generation is not implemented
-by this change. Obligations remain first-class records so evidence can identify
-the requirement that motivated its collection.
+records obligations derived from the Exploration's business context, up to its
+configured `max_obligations` ceiling. Obligations remain first-class records so
+evidence can identify the requirement that motivated its collection.
 
 | Column           | PostgreSQL type | Nullable | Description                       |
 |------------------|-----------------|---------:|-----------------------------------|

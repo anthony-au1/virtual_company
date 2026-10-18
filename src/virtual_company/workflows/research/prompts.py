@@ -4,25 +4,17 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
 from virtual_company.domain.qualification import CriterionQualification
+from virtual_company.llm.prompts import PromptIdentity
 from virtual_company.research.models import SearchResult, WebPage
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
     ResearchCompany,
 )
-
-
-@dataclass(frozen=True)
-class PromptIdentity:
-    """Stable metadata for a locally managed prompt."""
-
-    name: str
-    version: str
 
 
 class ResearchQualificationEvidencePromptItem(Protocol):

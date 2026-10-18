@@ -42,7 +42,7 @@ class LLMRegistry:
         if provider == "anthropic":
             return create_llm_provider(
                 provider=provider,
-                model=self._settings.anthropic_model,
+                model=self._anthropic_model_for_role(role),
                 api_key=self._settings.anthropic_api_key,
                 role=role,
             )
@@ -52,10 +52,26 @@ class LLMRegistry:
 
     def _provider_for_role(self, role: LLMRole) -> str:
         if role is LLMRole.RESEARCH:
-            return (self._settings.llm_research_provider or self._settings.llm_provider).lower()
-        return (self._settings.llm_extraction_provider or self._settings.llm_provider).lower()
+            return (
+                self._settings.llm_research_provider or self._settings.llm_provider
+            ).lower()
+        if role is LLMRole.EXTRACTION:
+            return (
+                self._settings.llm_extraction_provider or self._settings.llm_provider
+            ).lower()
+        return (
+            self._settings.llm_obligation_generation_provider
+            or self._settings.llm_provider
+        ).lower()
 
     def _openai_model_for_role(self, role: LLMRole) -> str:
         if role is LLMRole.RESEARCH:
             return self._settings.openai_research_model
-        return self._settings.openai_extraction_model
+        if role is LLMRole.EXTRACTION:
+            return self._settings.openai_extraction_model
+        return self._settings.openai_obligation_generation_model
+
+    def _anthropic_model_for_role(self, role: LLMRole) -> str:
+        if role is LLMRole.OBLIGATION_GENERATION:
+            return self._settings.anthropic_obligation_generation_model
+        return self._settings.anthropic_model

@@ -8,3 +8,4 @@ class LLMRole(StrEnum):
 
     RESEARCH = "research"
     EXTRACTION = "extraction"
+    OBLIGATION_GENERATION = "obligation_generation"

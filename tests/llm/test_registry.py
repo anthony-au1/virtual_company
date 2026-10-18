@@ -27,6 +27,33 @@ def test_default_roles_resolve_to_openai_terra_and_luna() -> None:
     assert extraction._model == "gpt-5.6-luna"
 
 
+def test_obligation_generation_has_an_independent_reasoning_model() -> None:
+    registry = LLMRegistry(Settings(openai_api_key=SecretStr("test-key")))
+
+    generator = registry.for_role(LLMRole.OBLIGATION_GENERATION)
+
+    assert isinstance(generator, OpenAIProvider)
+    assert generator._model == "gpt-5.6-terra"
+    assert generator.role == "obligation_generation"
+
+
+def test_obligation_generation_provider_and_model_can_be_overridden() -> None:
+    registry = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("openai-key"),
+            anthropic_api_key=SecretStr("anthropic-key"),
+            llm_obligation_generation_provider="anthropic",
+            anthropic_obligation_generation_model="custom-reasoning-model",
+        )
+    )
+
+    generator = registry.for_role(LLMRole.OBLIGATION_GENERATION)
+
+    assert isinstance(generator, AnthropicProvider)
+    assert generator._model == "custom-reasoning-model"
+    assert isinstance(registry.for_role(LLMRole.EXTRACTION), OpenAIProvider)
+
+
 def test_anthropic_configuration_resolves_sonnet_for_research() -> None:
     registry = LLMRegistry(
         Settings(

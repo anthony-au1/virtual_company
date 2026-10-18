@@ -2,6 +2,13 @@
 
 from virtual_company.services.campaign import CampaignService
 from virtual_company.services.exploration import ExplorationService
+from virtual_company.services.obligation_generator import (
+    GeneratedObligation,
+    ObligationGenerationResult,
+    ObligationGenerationValidationError,
+    ObligationGenerator,
+    create_configured_obligation_generator,
+)
 from virtual_company.services.research import (
     PersistedResearchCompanies,
     PersistedResearchEvidence,
@@ -19,6 +26,10 @@ __all__ = [
     "ActiveResearchRunError",
     "CampaignService",
     "ExplorationService",
+    "GeneratedObligation",
+    "ObligationGenerationResult",
+    "ObligationGenerationValidationError",
+    "ObligationGenerator",
     "PersistedResearchCompanies",
     "PersistedResearchEvidence",
     "ResearchCompanyService",
@@ -26,4 +37,5 @@ __all__ = [
     "ResearchResultsService",
     "ResearchRunNotFoundError",
     "ResearchService",
+    "create_configured_obligation_generator",
 ]
