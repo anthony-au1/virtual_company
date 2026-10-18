@@ -305,11 +305,20 @@ class Exploration(Base):
     """An Exploration definition and its business context."""
 
     __tablename__ = "exploration"
+    __table_args__ = (
+        CheckConstraint(
+            "max_obligations >= 1 AND max_obligations <= 20",
+            name="ck_exploration_max_obligations_range",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
     )
     business_context: Mapped[str] = mapped_column(Text, nullable=False)
+    max_obligations: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=10, server_default="10"
+    )
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

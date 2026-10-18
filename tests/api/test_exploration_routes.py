@@ -21,11 +21,14 @@ class ExplorationServiceStub:
         self.explorations: dict[UUID, Exploration] = {}
         self.obligations: dict[UUID, ExplorationObligation] = {}
 
-    async def create(self, business_context: str) -> Exploration:
+    async def create(
+        self, business_context: str, max_obligations: int = 10
+    ) -> Exploration:
         now = datetime.now(UTC)
         item = Exploration(
             id=uuid4(),
             business_context=business_context,
+            max_obligations=max_obligations,
             status="DRAFT",
             created_at=now,
             updated_at=now,
@@ -43,8 +46,11 @@ class ExplorationServiceStub:
         self, exploration_id: UUID, data: ExplorationUpdate
     ) -> Exploration | None:
         item = self.explorations.get(exploration_id)
-        if item is not None and "business_context" in data.model_fields_set:
-            item.business_context = data.business_context  # type: ignore[assignment]
+        if item is not None:
+            if "business_context" in data.model_fields_set:
+                item.business_context = data.business_context  # type: ignore[assignment]
+            if "max_obligations" in data.model_fields_set:
+                item.max_obligations = data.max_obligations  # type: ignore[assignment]
         return item
 
     async def list_obligations(
@@ -79,10 +85,22 @@ def test_exploration_lifecycle_and_restricted_fields() -> None:
     exploration = created.json()
     exploration_id = exploration["id"]
     assert exploration["status"] == "DRAFT"
+    assert exploration["max_obligations"] == 10
     assert client.get(f"/api/v1/explorations/{exploration_id}").json() == exploration
     assert [item["id"] for item in client.get("/api/v1/explorations").json()] == [
         exploration_id
     ]
+    minimum = client.post(
+        "/api/v1/explorations",
+        json={"business_context": "Minimum boundary", "max_obligations": 1},
+    )
+    maximum = client.post(
+        "/api/v1/explorations",
+        json={"business_context": "Maximum boundary", "max_obligations": 20},
+    )
+    assert minimum.status_code == maximum.status_code == 201
+    assert minimum.json()["max_obligations"] == 1
+    assert maximum.json()["max_obligations"] == 20
 
     updated = client.patch(
         f"/api/v1/explorations/{exploration_id}",
@@ -90,10 +108,24 @@ def test_exploration_lifecycle_and_restricted_fields() -> None:
     )
     assert updated.status_code == 200
     assert updated.json()["business_context"] == "Assess regional fit"
+    assert updated.json()["max_obligations"] == 10
     assert (
         service.explorations[UUID(exploration_id)].business_context
         == "Assess regional fit"
     )
+
+    updated = client.patch(
+        f"/api/v1/explorations/{exploration_id}", json={"max_obligations": 15}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["business_context"] == "Assess regional fit"
+    assert updated.json()["max_obligations"] == 15
+    updated = client.patch(
+        f"/api/v1/explorations/{exploration_id}",
+        json={"business_context": "Both changed", "max_obligations": 1},
+    )
+    assert updated.json()["business_context"] == "Both changed"
+    assert updated.json()["max_obligations"] == 1
 
     assert (
         client.post("/api/v1/explorations", json={"business_context": None}).status_code
@@ -112,6 +144,21 @@ def test_exploration_lifecycle_and_restricted_fields() -> None:
         ).status_code
         == 422
     )
+    for invalid in (0, 21, None):
+        assert (
+            client.post(
+                "/api/v1/explorations",
+                json={"business_context": "context", "max_obligations": invalid},
+            ).status_code
+            == 422
+        )
+        assert (
+            client.patch(
+                f"/api/v1/explorations/{exploration_id}",
+                json={"max_obligations": invalid},
+            ).status_code
+            == 422
+        )
     assert (
         client.patch(
             f"/api/v1/explorations/{exploration_id}", json={"status": "RUNNING"}
@@ -169,7 +216,25 @@ def test_exploration_openapi_excludes_obligation_write_operations() -> None:
     assert (
         "/api/v1/explorations/{exploration_id}/obligations/{obligation_id}" not in paths
     )
-    create_schema = schema["components"]["schemas"]["ExplorationCreateRequest"]
-    assert set(create_schema["properties"]) == {"business_context"}
+    schemas = schema["components"]["schemas"]
+    create_schema = schemas["ExplorationCreateRequest"]
+    create_field = create_schema["properties"]["max_obligations"]
+    assert create_field["type"] == "integer"
+    assert create_field["default"] == 10
+    assert create_field["minimum"] == 1
+    assert create_field["maximum"] == 20
+    update_field = schemas["ExplorationUpdateRequest"]["properties"]["max_obligations"]
+    update_integer_schema = next(
+        item for item in update_field["anyOf"] if item.get("type") == "integer"
+    )
+    assert update_integer_schema["minimum"] == 1
+    assert update_integer_schema["maximum"] == 20
+    assert "max_obligations" not in schemas["ExplorationUpdateRequest"].get(
+        "required", []
+    )
+    assert (
+        schemas["ExplorationResponse"]["properties"]["max_obligations"]["type"]
+        == "integer"
+    )
     assert "ExplorationObligationCreateRequest" not in schema["components"]["schemas"]
     assert "ExplorationObligationUpdateRequest" not in schema["components"]["schemas"]

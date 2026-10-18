@@ -31,7 +31,9 @@ ExplorationServiceDependency = Annotated[
 async def create_exploration(
     payload: ExplorationCreateRequest, service: ExplorationServiceDependency
 ) -> ExplorationResponse:
-    exploration = await service.create(payload.business_context)
+    exploration = await service.create(
+        payload.business_context, payload.max_obligations
+    )
     return ExplorationResponse.model_validate(exploration)
 
 

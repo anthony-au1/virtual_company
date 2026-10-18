@@ -229,6 +229,7 @@ def upgrade() -> None:
         "exploration",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("business_context", sa.Text(), nullable=False),
+        sa.Column("max_obligations", sa.Integer(), server_default="10", nullable=False),
         sa.Column("status", sa.String(30), nullable=False),
         sa.Column(
             "created_at",
@@ -243,6 +244,10 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id", name="exploration_pkey"),
+        sa.CheckConstraint(
+            "max_obligations >= 1 AND max_obligations <= 20",
+            name="ck_exploration_max_obligations_range",
+        ),
     )
     op.create_table(
         "exploration_obligation",

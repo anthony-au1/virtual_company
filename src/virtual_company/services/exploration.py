@@ -25,10 +25,16 @@ class ExplorationService:
         self._explorations = ExplorationRepository(session)
         self._obligations = ExplorationObligationRepository(session)
 
-    async def create(self, business_context: str) -> Exploration:
+    async def create(
+        self, business_context: str, max_obligations: int = 10
+    ) -> Exploration:
         async with self._session.begin():
             return await self._explorations.create(
-                ExplorationCreate(business_context=business_context, status="DRAFT")
+                ExplorationCreate(
+                    business_context=business_context,
+                    max_obligations=max_obligations,
+                    status="DRAFT",
+                )
             )
 
     async def get_by_id(self, exploration_id: UUID) -> Exploration | None:

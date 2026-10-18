@@ -71,8 +71,17 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             exploration = await exploration_repo.create(
                 ExplorationCreate(
                     business_context="Assess payment-provider fit",
+                    max_obligations=20,
                     status="DRAFT",
                 )
+            )
+            assert exploration.max_obligations == 20
+            assert (
+                await exploration_repo.get_by_id(exploration.id)
+            ).max_obligations == 20
+            assert any(
+                item.id == exploration.id and item.max_obligations == 20
+                for item in await exploration_repo.list()
             )
             obligation_one = await obligation_repo.create(
                 ExplorationObligationCreate(
@@ -164,7 +173,7 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             # Exercise Exploration CRUD/read access and internal obligation
             # persistence independently of the public API.
             service = ExplorationService(session)
-            app_exploration = await service.create("Application service context")
+            app_exploration = await service.create("Application service context", 4)
             app_obligation = await obligation_repo.create(
                 ExplorationObligationCreate(
                     exploration_id=app_exploration.id,
@@ -175,15 +184,20 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             assert (await service.get_by_id(app_exploration.id)).business_context == (
                 "Application service context"
             )
+            assert app_exploration.max_obligations == 4
             assert [item.id for item in await service.list()]  # persisted list result
             assert [
                 item.id for item in await service.list_obligations(app_exploration.id)
             ] == [app_obligation.id]
             changed = await service.update(
                 app_exploration.id,
-                ExplorationUpdate(business_context="Updated application context"),
+                ExplorationUpdate(
+                    business_context="Updated application context",
+                    max_obligations=8,
+                ),
             )
             assert changed.business_context == "Updated application context"
+            assert changed.max_obligations == 8
             changed_obligation = await obligation_repo.update(
                 app_obligation.id,
                 ExplorationObligationUpdate(description="Updated requirement"),

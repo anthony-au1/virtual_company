@@ -142,10 +142,12 @@ class ResearchCompanyQualificationUpsert(BaseModel):
 class ExplorationCreate(BaseModel):
     business_context: str
     status: str
+    max_obligations: int = 10
 
 
 class ExplorationUpdate(BaseModel):
     business_context: str | None = None
+    max_obligations: int | None = None
     status: str | None = None
 
 

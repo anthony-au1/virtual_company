@@ -230,6 +230,7 @@ async def test_initial_migration_creates_current_schema() -> None:
                     "exploration": {
                         "id",
                         "business_context",
+                        "max_obligations",
                         "status",
                         "created_at",
                         "updated_at",
@@ -283,6 +284,7 @@ async def test_initial_migration_creates_current_schema() -> None:
                     "exploration": {
                         "id",
                         "business_context",
+                        "max_obligations",
                         "status",
                         "created_at",
                         "updated_at",
@@ -326,6 +328,21 @@ async def test_initial_migration_creates_current_schema() -> None:
                         for name, column in columns.items()
                         if not column["nullable"]
                     } == not_null_columns
+
+                exploration_columns = {
+                    column["name"]: column
+                    for column in inspector.get_columns("exploration", schema=schema)
+                }
+                assert str(exploration_columns["max_obligations"]["default"]) in {
+                    "10",
+                    "10::integer",
+                }
+                assert any(
+                    constraint["name"] == "ck_exploration_max_obligations_range"
+                    for constraint in inspector.get_check_constraints(
+                        "exploration", schema=schema
+                    )
+                )
 
                 assert inspector.get_pk_constraint(
                     "exploration_fact_evidence", schema=schema
