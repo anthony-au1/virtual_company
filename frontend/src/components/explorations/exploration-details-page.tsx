@@ -165,8 +165,9 @@ export function ExplorationDetailsPage({
           ) : obligationsQuery.data.length === 0 ? (
             <p className="text-muted-foreground mt-4 rounded-md border border-dashed p-4 text-sm leading-6">
               No company-investigation obligations were generated from the
-              current Business Context. You can refine it and update this
-              Exploration before starting a future run.
+              current Business Context. This is valid when investigating
+              selected companies cannot meaningfully support the goal. You can
+              refine it and update this Exploration before a future run.
             </p>
           ) : (
             <ol className="mt-4 divide-y">

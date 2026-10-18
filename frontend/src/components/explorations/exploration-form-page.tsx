@@ -136,9 +136,9 @@ export function ExplorationFormPage({
           {editMode ? "Edit Exploration" : "New Exploration"}
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Describe what you want to learn about companies you will select from
-          Research. The system will generate shared, evidence-focused
-          investigation obligations.
+          Describe a business goal or question and how investigating companies
+          you will select from Research could help answer it. The system will
+          generate shared, evidence-focused investigation obligations.
         </p>
       </div>
 
@@ -147,9 +147,9 @@ export function ExplorationFormPage({
           <CardHeader>
             <CardTitle>Business context</CardTitle>
             <p className="text-muted-foreground text-sm">
-              Describe what you want to learn about the companies you will
-              select from Research, along with the business goal, context, and
-              constraints that should guide their investigation.
+              Describe the business goal, decision, or question you want to
+              investigate, with the context and constraints that should guide
+              research into companies you will select from Research.
             </p>
           </CardHeader>
           <CardContent>
@@ -170,8 +170,9 @@ export function ExplorationFormPage({
               className="text-muted-foreground mt-1 text-xs"
               id="business-context-help"
             >
-              Explain what should be established about each selected company;
-              use a full description rather than a search query.
+              The context may concern the companies directly or a broader
+              question their investigation can help answer. Use a full
+              description rather than a search query.
             </p>
             {form.formState.errors.business_context ? (
               <p className="text-destructive mt-1 text-xs" role="alert">

@@ -35,11 +35,18 @@ target associations; shared ResearchCompany records are retained.
 
 ## Exploration
 
-Research discovers and qualifies companies. An Exploration describes why and
-what the user wants to learn about companies they will select from existing
-Research results. Its obligations are shared, reusable questions or conditions
-to establish about each selected company; they do not discover or shortlist
-companies.
+Research discovers and qualifies companies. An Exploration Business Context is
+a free-text description of the user's business goal, decision, problem, context,
+capabilities, and constraints for which investigating companies selected from
+existing Research results may provide useful evidence. It may directly concern
+those companies or describe a broader business question their investigation can
+help answer. Exploration remains company-focused rather than becoming generic
+market, geographic, regulatory, labour-market, or technology research. When
+company investigation cannot meaningfully address the context, zero obligations
+is valid.
+
+Obligations remain shared, reusable questions or conditions to establish about
+each selected company. They do not discover or shortlist companies.
 
 Exploration CRUD and obligation generation/regeneration are implemented. Company
 selection, run start/execution, Company × Obligation investigation, query

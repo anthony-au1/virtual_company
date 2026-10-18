@@ -172,11 +172,14 @@ Fact
 Hypothesis
 ```
 
-`business_context` is free text describing why and what the user wants to learn
-about companies that will be selected from existing Research results, including
-relevant business purpose, context, goals, capabilities, and constraints. It
-guides investigation of those companies; it is not an unrestricted request for
-Exploration to discover a new company set.
+`business_context` is free text describing the user's business goal, decision,
+problem, context, capabilities, and constraints for which investigating
+companies selected from existing Research results may provide useful evidence.
+It may directly concern those companies or describe a broader business question
+that their investigation can help answer. Exploration remains company-focused:
+it is not generic market, geographic, regulatory, labour-market, or technology
+research. When the context cannot meaningfully support company-applicable
+obligations, a valid empty obligation set may be generated.
 
 An Exploration Obligation is a reusable question or condition to establish about
 each selected company in order to address the Business Context. The obligation
