@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { ThemeProvider } from "next-themes";
 import { describe, expect, it, vi } from "vitest";
 
@@ -20,9 +20,13 @@ describe("AppShell", () => {
     );
 
     expect(screen.getByText("Virtual Consultancy")).toBeInTheDocument();
+    const primaryNav = screen.getByRole("navigation", { name: "Primary" });
+    expect(primaryNav).toBeInTheDocument();
     expect(
-      screen.getByRole("navigation", { name: "Primary" }),
-    ).toBeInTheDocument();
+      within(primaryNav)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent?.trim()),
+    ).toEqual(["Campaigns", "Research", "Explorations", "Leads"]);
     expect(screen.getByRole("link", { name: "Research" })).toHaveAttribute(
       "href",
       "/research",

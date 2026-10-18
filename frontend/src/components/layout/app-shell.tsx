@@ -10,8 +10,8 @@ import { cn } from "@/lib/utils";
 
 const navigation = [
   { label: "Campaigns", icon: BriefcaseBusiness, href: "/campaigns" },
-  { label: "Explorations", icon: Compass, href: "/explorations" },
   { label: "Research", icon: Search, href: "/research" },
+  { label: "Explorations", icon: Compass, href: "/explorations" },
   { label: "Leads", icon: Users },
 ];
 
