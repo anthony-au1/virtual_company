@@ -10,12 +10,15 @@ import {
   CircleHelp,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DeleteRunAction } from "@/components/research/delete-run-action";
 import {
   formatDate,
+  isTerminalRunStatus,
   RunStatus,
 } from "@/components/research/research-runs-page";
 import {
@@ -36,6 +39,7 @@ const filters = [
 type ResultFilter = (typeof filters)[number];
 
 export function ResearchResultsPage({ runId }: { runId: string }) {
+  const router = useRouter();
   const [filter, setFilter] = useState<ResultFilter>("ALL");
   const [search, setSearch] = useState("");
   const queryKey = researchRunResultsQueryKey(runId);
@@ -118,7 +122,15 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
               {results.research_run.id}
             </p>
           </div>
-          <RunStatus status={results.research_run.status} />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <RunStatus status={results.research_run.status} />
+            {isTerminalRunStatus(results.research_run.status) ? (
+              <DeleteRunAction
+                runId={runId}
+                onDeleted={() => router.push("/research")}
+              />
+            ) : null}
+          </div>
         </div>
         {results.research_run.status === "RUNNING" ? (
           <p className="mt-3 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
@@ -263,9 +275,7 @@ function CampaignCriteria({ results }: { results: ResearchResults }) {
             />
           ))}
           {criteria.keywords.length === 0 ? (
-            <p className="text-muted-foreground text-xs">
-              No keyword criteria
-            </p>
+            <p className="text-muted-foreground text-xs">No keyword criteria</p>
           ) : null}
         </CriterionGroup>
         {criteria.company_size ? (

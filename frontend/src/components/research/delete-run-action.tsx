@@ -42,12 +42,13 @@ export function DeleteRunAction({
     <>
       <Button
         aria-label={`Delete run ${runId}`}
+        disabled={mutation.isPending}
         onClick={() => setConfirming(true)}
         size="sm"
-        variant="ghost"
+        variant="destructive"
       >
-        <Trash2 aria-hidden="true" />
-        Delete
+        <Trash2 aria-hidden="true" data-icon="inline-start" />
+        Delete Run
       </Button>
       {confirming ? (
         <div
@@ -65,11 +66,12 @@ export function DeleteRunAction({
             role="alertdialog"
           >
             <h2 id={`delete-run-title-${runId}`} className="font-semibold">
-              Delete this Research Run?
+              Delete Research Run?
             </h2>
             <p className="text-muted-foreground mt-2 text-sm">
-              This permanently removes the run and its results. The Campaign and
-              other runs will remain.
+              This will permanently delete this research run and its persisted
+              evidence and qualification results. The Campaign and other runs
+              will remain. This action cannot be undone.
             </p>
             {mutation.isError ? (
               <ul

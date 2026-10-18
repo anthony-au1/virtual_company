@@ -12,6 +12,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ResearchResultsPage } from "@/components/research/research-results-page";
 import { ResearchRunsPage } from "@/components/research/research-runs-page";
 import type { ResearchResults, ResearchRunListItem } from "@/lib/api/research";
+import {
+  researchRunResultsQueryKey,
+  researchRunsQueryKey,
+} from "@/lib/queries/query-keys";
+
+const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
 
 vi.mock("@/lib/api/research", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/research")>();
@@ -37,9 +47,10 @@ function renderWithQuery(ui: React.ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
-    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
-  );
+  return {
+    client,
+    ...render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>),
+  };
 }
 
 function run(id: string, name: string): ResearchRunListItem {
@@ -175,8 +186,13 @@ describe("ResearchRunsPage", () => {
       screen.getByRole("link", { name: "Open Australian Payments Research" }),
     ).toHaveAttribute("href", "/research/run-b");
     expect(screen.getByText("RUNNING")).toBeInTheDocument();
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete run run-a",
+    });
+    expect(deleteButton).toHaveTextContent("Delete Run");
+    expect(deleteButton).toHaveClass("bg-destructive/10");
     expect(
-      screen.getByRole("button", { name: "Delete run run-a" }),
+      deleteButton.querySelector("svg.lucide-trash-2"),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Delete run run-b" }),
@@ -213,15 +229,43 @@ describe("ResearchRunsPage", () => {
     renderWithQuery(<ResearchRunsPage />);
     await screen.findByText("Research A");
 
+    expect(
+      screen.getByRole("link", { name: "Open Research A" }),
+    ).toHaveAttribute("href", "/research/run-a");
     fireEvent.click(screen.getByRole("button", { name: "Delete run run-a" }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
-      "This permanently removes the run and its results.",
+      "Delete Research Run?",
     );
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "persisted evidence and qualification results",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mockedDeleteRun).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete run run-a" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete Run" }));
     await waitFor(() => expect(mockedDeleteRun).toHaveBeenCalledWith("run-a"));
     await waitFor(() =>
       expect(screen.queryByText("Research A")).not.toBeInTheDocument(),
     );
+    expect(mockedListRuns).toHaveBeenCalledTimes(2);
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("keeps the run visible and shows the delete error when deletion fails", async () => {
+    mockedListRuns.mockResolvedValue([run("run-a", "Research A")]);
+    mockedDeleteRun.mockRejectedValue(new Error("Delete request failed"));
+    renderWithQuery(<ResearchRunsPage />);
+    const runName = await screen.findByText("Research A");
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete run run-a" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Run" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Delete request failed",
+    );
+    expect(runName).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });
 
@@ -265,6 +309,67 @@ describe("ResearchResultsPage", () => {
         name: /Company profile/,
       }),
     ).toHaveAttribute("href", "https://example.com/source");
+  });
+
+  it("confirms deletion, clears results, and navigates back to Research Runs", async () => {
+    mockedGetResults.mockResolvedValue(results("run-a"));
+    mockedDeleteRun.mockResolvedValue(undefined);
+    const { client } = renderWithQuery(<ResearchResultsPage runId="run-a" />);
+    await screen.findByRole("heading", {
+      name: "Australian Fintech Java Research",
+    });
+    client.setQueryData(researchRunResultsQueryKey("run-a"), results("run-a"));
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+
+    expect(
+      screen.getByRole("button", { name: "Delete run run-a" }),
+    ).toHaveClass("bg-destructive/10");
+    fireEvent.click(screen.getByRole("button", { name: "Delete run run-a" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "Delete Research Run?",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mockedDeleteRun).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete run run-a" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Run" }));
+    await waitFor(() => expect(mockedDeleteRun).toHaveBeenCalledWith("run-a"));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/research"));
+    expect(
+      client.getQueryData(researchRunResultsQueryKey("run-a")),
+    ).toBeUndefined();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: researchRunsQueryKey });
+  });
+
+  it("disables detail deletion while pending and keeps the page on failure", async () => {
+    mockedGetResults.mockResolvedValue(results("run-a"));
+    let rejectDelete!: (error: Error) => void;
+    mockedDeleteRun.mockReturnValue(
+      new Promise<void>((_resolve, reject) => {
+        rejectDelete = reject;
+      }),
+    );
+    renderWithQuery(<ResearchResultsPage runId="run-a" />);
+    await screen.findByRole("heading", {
+      name: "Australian Fintech Java Research",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete run run-a" }));
+    const confirm = screen.getByRole("button", { name: "Delete Run" });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(confirm).toBeDisabled());
+    fireEvent.click(confirm);
+    expect(mockedDeleteRun).toHaveBeenCalledTimes(1);
+    expect(mockPush).not.toHaveBeenCalled();
+
+    rejectDelete(new Error("Delete request failed"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Delete request failed",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Australian Fintech Java Research" }),
+    ).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it("keeps automatic qualification statuses available as filters", async () => {
