@@ -12,39 +12,45 @@ class ObligationGenerationCase:
 
 CASES = (
     ObligationGenerationCase(
-        "consulting prospect discovery",
-        "We provide cloud migration consulting and want to find Australian organisations "
-        "showing signs of legacy platform modernisation needs.",
-        "target organisations",
+        "consulting opportunity assessment",
+        "We provide cloud and software engineering consulting. For the companies "
+        "selected from Research results, understand which show technology complexity, "
+        "modernisation initiatives, limited internal engineering capability, or evidence "
+        "of potential demand for external engineering support.",
+        "technology complexity, modernisation, internal capability, and external support demand at each selected company",
     ),
     ObligationGenerationCase(
-        "regulatory market entry",
-        "We plan to offer a consumer lending service in Singapore and need to understand "
-        "which licences and consumer protections apply.",
-        "proposed lending activity and Singapore requirements",
+        "competitive analysis of selected companies",
+        "We want to compare the selected competitors to understand each company's "
+        "product positioning, capabilities, and signs of unmet customer needs.",
+        "positioning, capabilities, and unmet customer needs at each selected competitor",
     ),
     ObligationGenerationCase(
-        "competitor and market research",
-        "We are assessing the market for low-cost inventory software for independent "
-        "grocery retailers in New Zealand, including competitor offerings and unmet needs.",
-        "market and competitor offerings",
+        "regulatory exposure of selected companies",
+        "For each company selected from our Research results, understand whether it "
+        "operates in or is otherwise exposed to a regulated environment relevant to our "
+        "consumer lending business objective, and whether that exposure affects demand "
+        "for our service.",
+        "each selected company's relevant regulated-environment exposure and its business implications",
     ),
     ObligationGenerationCase(
         "technology-modernisation opportunity",
-        "Our firm delivers data-platform modernisation. Identify organisations with "
-        "evidence of legacy analytics infrastructure or an active migration program.",
-        "organisations and their technology-modernisation needs",
+        "Our firm delivers data-platform modernisation. For each selected company, "
+        "determine whether there is evidence of legacy analytics infrastructure, active "
+        "migration programs, or a need for external modernisation support.",
+        "modernisation signals and support needs at each selected company",
+    ),
+    ObligationGenerationCase(
+        "capabilities goals and constraints",
+        "We build privacy-preserving identity tools for healthcare providers and want "
+        "to expand into regional hospitals. Our implementation team is small and we must "
+        "meet local privacy rules. For each selected hospital company, assess evidence "
+        "of relevant needs, implementation fit, and constraints on adoption.",
+        "needs, adoption fit, and constraints at each selected hospital company",
     ),
     ObligationGenerationCase(
         "vague irrelevant context",
         "blue window seven maybe potato",
-        "no supported research subject",
-    ),
-    ObligationGenerationCase(
-        "capabilities goals and constraints",
-        "We build privacy-preserving identity tools for healthcare providers. We want to "
-        "expand into regional hospitals, but have a small implementation team and must "
-        "meet local privacy rules. Assess demand and entry constraints.",
-        "healthcare demand, implementation constraints, and applicable rules",
+        "no supported company-applicable investigation question; zero obligations is valid",
     ),
 )

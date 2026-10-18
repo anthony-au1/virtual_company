@@ -117,7 +117,8 @@ export function ExplorationDetailsPage({
               </dd>
             </div>
             <p className="text-muted-foreground mt-1 text-xs">
-              Upper bound; fewer research obligations may be generated.
+              Upper bound; fewer shared company-investigation obligations may be
+              generated.
             </p>
           </dl>
         </section>
@@ -132,8 +133,8 @@ export function ExplorationDetailsPage({
                 Research obligations
               </h2>
               <p className="text-muted-foreground mt-1 text-xs leading-5">
-                Generated automatically from the Business Context. These are
-                research questions or conditions to establish through evidence.
+                Generated from the Business Context as shared questions or
+                conditions to establish for companies selected from Research.
               </p>
             </div>
             {obligationsQuery.data ? (
@@ -163,9 +164,9 @@ export function ExplorationDetailsPage({
             </div>
           ) : obligationsQuery.data.length === 0 ? (
             <p className="text-muted-foreground mt-4 rounded-md border border-dashed p-4 text-sm leading-6">
-              No research obligations were generated from the current business
-              context. You can refine the Business Context and update this
-              Exploration before starting it.
+              No company-investigation obligations were generated from the
+              current Business Context. You can refine it and update this
+              Exploration before starting a future run.
             </p>
           ) : (
             <ol className="mt-4 divide-y">

@@ -268,6 +268,14 @@ describe("ExplorationFormPage create", () => {
   it("shows the fields and defaults maximum obligations to 10", () => {
     renderWithQuery(<ExplorationFormPage />);
     expect(screen.getByLabelText("Business context").tagName).toBe("TEXTAREA");
+    expect(
+      screen.getAllByText(/companies you will select from Research/),
+    ).toHaveLength(2);
+    expect(
+      screen.getByText(
+        /what should be established about each selected company/,
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("Maximum obligations")).toHaveValue(10);
     expect(
       screen.getByText(/This is a ceiling, not an exact count/),
@@ -391,7 +399,7 @@ describe("ExplorationDetailsPage", () => {
 
     expect(
       await screen.findByText(
-        /No research obligations were generated from the current business context/,
+        /No company-investigation obligations were generated from the current Business Context/,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("0 generated")).toBeInTheDocument();

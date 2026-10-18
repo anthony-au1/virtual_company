@@ -28,8 +28,8 @@ export function ExplorationsPage() {
             Explorations
           </h1>
           <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
-            Investigate a business context through evidence-backed research
-            obligations.
+            Define what to learn about companies selected from existing Research
+            results, then guide their evidence-backed investigation.
           </p>
         </div>
         <Link className={cn(buttonVariants())} href="/explorations/new">
@@ -70,8 +70,8 @@ export function ExplorationsPage() {
         <div className="rounded-lg border border-dashed p-10 text-center">
           <h2 className="text-sm font-semibold">No Explorations yet</h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Create an Exploration to turn a business context into focused
-            research obligations.
+            Create an Exploration to define shared investigation questions for
+            companies you will select from Research.
           </p>
           <Link
             className={cn(buttonVariants({ className: "mt-4" }))}

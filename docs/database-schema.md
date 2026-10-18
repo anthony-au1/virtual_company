@@ -152,9 +152,13 @@ criterion-level results for that run/company pair.
 
 ## Exploration entities
 
-These tables persist entities owned by the Exploration workflow. The workflow
-uses Business Context to define Obligations, collects Evidence to support Facts,
-and derives Hypotheses from Facts:
+These tables describe the Exploration domain and its planned provenance model.
+Currently implemented behavior includes Exploration CRUD, obligation generation
+and regeneration, persistence entities/repositories, and lifecycle restrictions.
+Company selection and Exploration Run start/execution are planned, followed by
+Company × Obligation investigation, query generation, external search, Evidence
+collection orchestration, Fact derivation, and Hypothesis derivation. These
+execution steps are not currently orchestrated by the application.
 
 ```text
 Business Context
@@ -168,16 +172,17 @@ Fact
 Hypothesis
 ```
 
-`business_context` is a free-text description of the user's business situation,
-capabilities, goals, constraints, and/or question that the Exploration should
-investigate. It does not require every one of those elements. It is the source
-context from which the system will later derive research obligations.
+`business_context` is free text describing why and what the user wants to learn
+about companies that will be selected from existing Research results, including
+relevant business purpose, context, goals, capabilities, and constraints. It
+guides investigation of those companies; it is not an unrestricted request for
+Exploration to discover a new company set.
 
-An Exploration obligation is a concrete question or condition that must be
-established through evidence in order to address the Exploration's business
-context. Obligations remain system-managed. Evidence is externally collected
-supporting material, a Fact is a factual statement derived from Evidence, and a
-Hypothesis is a higher-level inference derived from Facts.
+An Exploration Obligation is a reusable question or condition to establish about
+each selected company in order to address the Business Context. The obligation
+set is shared across the selected company set and is generated without company
+names. Obligations remain system-managed. In the planned execution workflow,
+Evidence will support Facts, and Hypotheses will be derived from Facts.
 
 Table: `exploration`
 
@@ -186,7 +191,7 @@ Represents an Exploration definition and its high-level business context.
 | Column             | PostgreSQL type | Nullable | Description                                                 |
 |--------------------|-----------------|---------:|-------------------------------------------------------------|
 | `id`               | UUID            |       NO | Exploration ID                                              |
-| `business_context` | TEXT            |       NO | Source context to investigate                               |
+| `business_context` | TEXT            |       NO | Purpose/context guiding investigation of Research companies |
 | `max_obligations`  | INTEGER         |       NO | Maximum system-derived obligation count; default `10`, 1–20 |
 | `status`           | VARCHAR(30)     |       NO | Exploration status                                          |
 | `created_at`       | TIMESTAMPTZ     |       NO | Creation time                                               |
@@ -199,19 +204,20 @@ Constraints:
 
 `max_obligations` is an upper bound, not an exact requested count. For example,
 `10` means at most 10 obligations may be derived; the eventual count may be
-anywhere from zero through 10, including zero when no meaningful research
-obligations can be derived.
+anywhere from zero through 10, including zero when no meaningful
+company-applicable obligations can be derived.
 
-When an Exploration is created, the system generates its obligation set from
-`business_context` and `max_obligations`. A successful empty result is valid
+Currently, when an Exploration is created, the system generates its obligation
+set from `business_context` and `max_obligations`. A successful empty result is valid
 and creates no obligation rows. If generation fails, creation fails without
 persisting an Exploration. Before the first Exploration run, changing either
 generation input regenerates and replaces the complete obligation set in the
 same transaction as the input update. A failed generation or persistence
 operation leaves the previous inputs and obligations intact. Once any run
-exists, `business_context` and `max_obligations` are immutable because they
-establish the provenance for that run and its downstream evidence and findings.
-PATCH requests that repeat the current values are no-ops and do not regenerate
+exists, `business_context` and `max_obligations` are immutable. Future run-start
+behavior must establish this lifecycle boundary under the parent Exploration
+row lock, shared with PATCH and DELETE, so start, input updates, and deletion
+cannot race. PATCH requests that repeat the current values are no-ops and do not regenerate
 obligations. The generated obligation order is not a guaranteed domain
 property.
 
@@ -225,19 +231,18 @@ Indexes:
 
 Table: `exploration_obligation`
 
-Represents a concrete question or condition that must be established through
-evidence to address the Exploration business context. Obligations are
-system-managed and are not independently user-managed resources. This schema
-records obligations derived from the Exploration's business context, up to its
-configured `max_obligations` ceiling. Obligations remain first-class records so
-evidence can identify the requirement that motivated its collection.
+Represents a reusable question or condition to establish about each selected
+Research company to address the Exploration Business Context. Obligations are
+system-managed and are not independently user-managed resources. Current
+Exploration CRUD generates and persists them up to `max_obligations`; applying
+them to companies and collecting Evidence are planned execution behavior.
 
-| Column           | PostgreSQL type | Nullable | Description                       |
-|------------------|-----------------|---------:|-----------------------------------|
-| `id`             | UUID            |       NO | Obligation ID                     |
-| `exploration_id` | UUID            |       NO | Owning Exploration                |
-| `description`    | TEXT            |       NO | Requirement or discovery question |
-| `created_at`     | TIMESTAMPTZ     |       NO | Creation time                     |
+| Column           | PostgreSQL type | Nullable | Description                                        |
+|------------------|-----------------|---------:|----------------------------------------------------|
+| `id`             | UUID            |       NO | Obligation ID                                      |
+| `exploration_id` | UUID            |       NO | Owning Exploration                                 |
+| `description`    | TEXT            |       NO | Shared company-investigation question or condition |
+| `created_at`     | TIMESTAMPTZ     |       NO | Creation time                                      |
 
 Constraints:
 
@@ -253,7 +258,8 @@ Relationship: `exploration` 1 -> N `exploration_obligation`.
 
 Table: `exploration_run`
 
-Represents one execution of an Exploration.
+Represents one execution of an Exploration. The persistence entity exists;
+starting and executing an Exploration Run is planned behavior.
 
 | Column           | PostgreSQL type | Nullable | Description           |
 |------------------|-----------------|---------:|-----------------------|
@@ -277,8 +283,9 @@ Relationship: `exploration` 1 -> N `exploration_run`.
 
 Table: `exploration_company`
 
-Represents an existing `research_company` discovered or processed within one
-Exploration run. It carries no duplicate company identity or profile data.
+Represents an existing `research_company` selected from Research results and
+associated with one Exploration Run. It is not a company discovered by
+Exploration. It carries no duplicate company identity or profile data.
 
 | Column               | PostgreSQL type | Nullable | Description                |
 |----------------------|-----------------|---------:|----------------------------|
@@ -308,11 +315,13 @@ Relationships:
 
 Table: `exploration_evidence`
 
-Represents external supporting material collected while investigating an
-`exploration_company`. `exploration_company_id` identifies who the evidence
-concerns; `exploration_obligation_id` identifies why it was collected. Run
-ownership is derived through `exploration_company` and does not need a duplicate
-`exploration_run_id`.
+Represents the planned external supporting material for one
+`ExplorationCompany × ExplorationObligation` investigation. Both associations
+are required: `exploration_company_id` identifies which selected company the
+evidence concerns, and `exploration_obligation_id` identifies the shared
+question/condition it addresses. Future workflow logic must ensure both belong
+to the same Exploration. Run ownership is derived through `exploration_company`
+and does not need a duplicate `exploration_run_id`.
 
 | Column                      | PostgreSQL type | Nullable | Description                       |
 |-----------------------------|-----------------|---------:|-----------------------------------|
@@ -427,7 +436,7 @@ Indexes:
 
 ### Provenance and domain invariants
 
-The provenance chain is:
+The intended provenance chain is:
 
 ```text
 Exploration
@@ -449,21 +458,28 @@ Exploration
               ExplorationHypothesis
 ```
 
-The reasoning flow is Business Context → Obligation → Evidence → Fact →
-Hypothesis. A Hypothesis can be traced through Facts and Evidence to its
-`research_company` and the Obligation that motivated evidence collection.
+The planned reasoning flow is Business Context → Obligation → Evidence → Fact →
+Hypothesis. In the planned execution workflow, a Hypothesis can be traced through
+Facts and Evidence to its `research_company` and the Obligation that motivated
+evidence collection.
 
-All Evidence records supporting one Fact must belong to the same
-`exploration_company`. All Facts supporting one Hypothesis must ultimately
-resolve through their Evidence to the same `exploration_company`. These
-same-company rules are enforced by application/domain logic; company ownership
-is not duplicated on Fact or Hypothesis.
+Future execution logic must enforce these provenance invariants: the
+`ExplorationCompany` and `ExplorationObligation` for Evidence must belong to the
+same Exploration; all Evidence supporting one Fact must belong to the same
+`ExplorationCompany`; and all Facts supporting one Hypothesis must ultimately
+resolve through their Evidence to the same `ExplorationCompany`. These rules
+are not currently enforced by an executing Exploration workflow. Company
+ownership is not duplicated on Fact or Hypothesis.
+
+Future run creation/start must acquire the same parent Exploration row lock used
+by PATCH and DELETE before establishing the run lifecycle boundary. This is a
+workflow requirement only; no run-start repository behavior is implemented.
 
 ```mermaid
 erDiagram
     exploration ||--o{ exploration_obligation: defines
     exploration ||--o{ exploration_run: executes
-    exploration_run ||--o{ exploration_company: processes
+    exploration_run ||--o{ exploration_company: associates_selected
     research_company ||--o{ exploration_company: identifies
     exploration_company ||--o{ exploration_evidence: concerns
     exploration_obligation ||--o{ exploration_evidence: motivates

@@ -136,8 +136,9 @@ export function ExplorationFormPage({
           {editMode ? "Edit Exploration" : "New Exploration"}
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Describe what you want to investigate. The system will generate
-          evidence-focused research obligations.
+          Describe what you want to learn about companies you will select from
+          Research. The system will generate shared, evidence-focused
+          investigation obligations.
         </p>
       </div>
 
@@ -146,9 +147,9 @@ export function ExplorationFormPage({
           <CardHeader>
             <CardTitle>Business context</CardTitle>
             <p className="text-muted-foreground text-sm">
-              Describe the business situation, goal, constraints, and what you
-              want to investigate. More specific context produces more focused
-              research obligations.
+              Describe what you want to learn about the companies you will
+              select from Research, along with the business goal, context, and
+              constraints that should guide their investigation.
             </p>
           </CardHeader>
           <CardContent>
@@ -169,8 +170,8 @@ export function ExplorationFormPage({
               className="text-muted-foreground mt-1 text-xs"
               id="business-context-help"
             >
-              Use a full description rather than a short keyword or search
-              query.
+              Explain what should be established about each selected company;
+              use a full description rather than a search query.
             </p>
             {form.formState.errors.business_context ? (
               <p className="text-destructive mt-1 text-xs" role="alert">
@@ -184,9 +185,9 @@ export function ExplorationFormPage({
           <CardHeader>
             <CardTitle>Generation limit</CardTitle>
             <p className="text-muted-foreground text-sm">
-              Maximum number of research questions or conditions the Exploration
-              may generate. Fewer may be generated when the context does not
-              require the full limit.
+              Maximum number of shared questions or conditions to investigate
+              for each selected company. Fewer may be generated when the context
+              does not require the full limit.
             </p>
           </CardHeader>
           <CardContent>

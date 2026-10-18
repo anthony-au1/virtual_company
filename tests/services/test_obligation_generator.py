@@ -137,7 +137,7 @@ async def test_generator_records_capability_prompt_and_result_count() -> None:
     assert metadata["provider"] == "test-provider"
     assert metadata["model"] == "test-reasoning-model"
     assert metadata["prompt_name"] == "generate_exploration_obligations"
-    assert metadata["prompt_version"] == "v1"
+    assert metadata["prompt_version"] == "v2"
     assert metadata["max_obligations"] == 3
     assert metadata["generated_obligation_count"] == len(result_value.obligations)
 
@@ -234,33 +234,41 @@ async def test_timeout_remains_a_technical_failure() -> None:
         await generator.generate("context", 2)
 
 
-@pytest.mark.asyncio
-async def test_obligation_subject_is_not_forced_to_be_a_company() -> None:
-    generated = await ObligationGenerator(
-        ProviderStub(result("Determine which consumer-protection requirements apply."))
-    ).generate("Enter a regulated market", 4)
-
-    assert "consumer-protection" in generated.obligations[0].description
-    assert "the company" not in generated.obligations[0].description.casefold()
-
-
 def test_prompt_identity_and_contract_are_versioned() -> None:
     assert GENERATE_EXPLORATION_OBLIGATIONS_PROMPT.name == (
         "generate_exploration_obligations"
     )
-    assert GENERATE_EXPLORATION_OBLIGATIONS_PROMPT.version == "v1"
+    assert GENERATE_EXPLORATION_OBLIGATIONS_PROMPT.version == "v2"
     prompt = generate_exploration_obligations_system_prompt().casefold()
     for requirement in (
         "free-text",
         "holistically",
-        "not inherently company-specific",
+        "research has already discovered",
+        "companies selected from those research results",
+        "specific selected companies are intentionally not provided",
+        "evaluated for each selected company",
+        "something about a selected company",
+        "exploration does not discover, identify, shortlist, rank, or select companies",
+        "find companies",
         "what must be established",
-        "search or workflow action",
+        "how to search",
         "facts, answers, conclusions, or hypotheses",
         "distinct",
         "minimum useful set",
         "hard ceiling, not a target",
         "zero obligations is valid",
         "do not invent requirements",
+        "reusable across the selected company set",
+        "without assuming facts about named companies",
     ):
         assert requirement in prompt
+
+
+def test_generator_interface_has_only_shared_context_and_limit_inputs() -> None:
+    import inspect
+
+    assert tuple(inspect.signature(ObligationGenerator.generate).parameters) == (
+        "self",
+        "business_context",
+        "max_obligations",
+    )

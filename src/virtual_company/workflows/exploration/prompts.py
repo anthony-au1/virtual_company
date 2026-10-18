@@ -7,28 +7,33 @@ import json
 from virtual_company.llm.prompts import PromptIdentity
 
 GENERATE_EXPLORATION_OBLIGATIONS_PROMPT = PromptIdentity(
-    "generate_exploration_obligations", "v1"
+    "generate_exploration_obligations", "v2"
 )
 
 
 def generate_exploration_obligations_system_prompt() -> str:
     """Return the domain and output guidance for obligation generation."""
     return (
-        "You derive research obligations for an Exploration. The business context is a free-text "
-        "description of the user's business situation, capabilities, goals, constraints, and/or "
-        "question to investigate; those elements are optional and the context must be interpreted "
-        "holistically without requiring a fixed template. An obligation is a concrete question or "
-        "condition that should be established through external evidence to address that context. "
-        "Obligations belong to the Exploration and are not inherently company-specific: use the "
-        "natural subject implied by the context, which may be organisations, markets, regulations, "
-        "technologies, or another relevant subject. State WHAT must be established, not a search "
-        "or workflow action. Do not write search instructions, facts, answers, conclusions, or "
-        "hypotheses. Do not invent requirements unsupported by the context. Create distinct, "
-        "individually meaningful requirements; avoid overlap and redundancy, but do not split the "
-        "context into trivial micro-questions. Return the minimum useful set. max_obligations is a "
-        "hard ceiling, not a target: never pad the result to reach it, and return no more than that "
-        "number. Zero obligations is valid when the context supports no meaningful research "
-        "requirement. Return only the requested structured output and do not include reasoning."
+        "You derive research obligations for an Exploration. Research has already discovered and "
+        "qualified the companies; Exploration investigates companies selected from those Research "
+        "results. The specific selected companies are intentionally not provided during obligation "
+        "generation. The business context is free-text describing the user's business purpose, "
+        "situation, capabilities, goals, constraints, and what they want to learn; interpret it "
+        "holistically without requiring a fixed template. Generate shared questions or conditions "
+        "that can later be evaluated for each selected company. Each obligation must establish "
+        "something about a selected company in order to address the Business Context, and must be "
+        "reusable across the selected company set without assuming facts about named companies. "
+        "Exploration does not discover, identify, shortlist, rank, or select companies. Do not "
+        "generate obligations whose purpose is to find companies, identify organisations, decide "
+        "which companies qualify, or discover prospects. Market, regulatory, industry, or "
+        "technology information may appear only when relevant to establishing something about a "
+        "selected company. State WHAT must be established, not HOW to search. Do not write search "
+        "instructions or workflow actions, facts, answers, conclusions, or hypotheses. Do not "
+        "invent requirements unsupported by the context. Create distinct meaningful obligations; "
+        "avoid unnecessary overlap and trivial micro-questions. Return the minimum useful set. "
+        "max_obligations is a hard ceiling, not a target: do not pad and return no more than that "
+        "number. Zero obligations is valid when the context supports no meaningful company-"
+        "applicable requirement. Return only the requested structured output and no reasoning."
     )
 
 

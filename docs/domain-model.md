@@ -32,3 +32,20 @@ A Campaign may be hard-deleted before it has any Research Run. Once any
 Research Run exists, the Campaign is part of Research execution history and
 cannot be deleted. Deleting a pre-run Campaign removes its campaign-specific
 target associations; shared ResearchCompany records are retained.
+
+## Exploration
+
+Research discovers and qualifies companies. An Exploration describes why and
+what the user wants to learn about companies they will select from existing
+Research results. Its obligations are shared, reusable questions or conditions
+to establish about each selected company; they do not discover or shortlist
+companies.
+
+Exploration CRUD and obligation generation/regeneration are implemented. Company
+selection, run start/execution, Company × Obligation investigation, query
+generation, external search, Evidence orchestration, Fact derivation, and
+Hypothesis derivation are future workflow work. Future execution must lock the
+parent Exploration row at run start against PATCH/DELETE and enforce same-
+Exploration Evidence associations plus same-company Evidence→Fact and
+Fact→Hypothesis provenance. Those execution invariants are not currently
+enforced by an Exploration workflow.
