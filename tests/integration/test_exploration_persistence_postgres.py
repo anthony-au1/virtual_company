@@ -38,6 +38,19 @@ from virtual_company.repositories.exploration_obligation import (
 )
 from virtual_company.repositories.exploration_run import ExplorationRunRepository
 from virtual_company.services.exploration import ExplorationService
+from virtual_company.services.obligation_generator import (
+    GeneratedObligation,
+    ObligationGenerationResult,
+)
+
+
+class StaticObligationGenerator:
+    async def generate(self, business_context: str, max_obligations: int):
+        return ObligationGenerationResult(
+            obligations=[
+                GeneratedObligation(description="Generated for " + business_context)
+            ]
+        )
 
 
 @pytest.mark.integration
@@ -172,14 +185,8 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
 
             # Exercise Exploration CRUD/read access and internal obligation
             # persistence independently of the public API.
-            service = ExplorationService(session)
+            service = ExplorationService(session, StaticObligationGenerator())
             app_exploration = await service.create("Application service context", 4)
-            app_obligation = await obligation_repo.create(
-                ExplorationObligationCreate(
-                    exploration_id=app_exploration.id,
-                    description="Internally generated requirement",
-                )
-            )
             assert app_exploration.status == "DRAFT"
             assert (await service.get_by_id(app_exploration.id)).business_context == (
                 "Application service context"
@@ -187,8 +194,9 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             assert app_exploration.max_obligations == 4
             assert [item.id for item in await service.list()]  # persisted list result
             assert [
-                item.id for item in await service.list_obligations(app_exploration.id)
-            ] == [app_obligation.id]
+                item.description
+                for item in await service.list_obligations(app_exploration.id)
+            ] == ["Generated for Application service context"]
             changed = await service.update(
                 app_exploration.id,
                 ExplorationUpdate(
@@ -198,6 +206,7 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             )
             assert changed.business_context == "Updated application context"
             assert changed.max_obligations == 8
+            app_obligation = (await service.list_obligations(app_exploration.id))[0]
             changed_obligation = await obligation_repo.update(
                 app_obligation.id,
                 ExplorationObligationUpdate(description="Updated requirement"),

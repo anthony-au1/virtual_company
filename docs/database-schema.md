@@ -202,6 +202,19 @@ Constraints:
 anywhere from zero through 10, including zero when no meaningful research
 obligations can be derived.
 
+When an Exploration is created, the system generates its obligation set from
+`business_context` and `max_obligations`. A successful empty result is valid
+and creates no obligation rows. If generation fails, creation fails without
+persisting an Exploration. Before the first Exploration run, changing either
+generation input regenerates and replaces the complete obligation set in the
+same transaction as the input update. A failed generation or persistence
+operation leaves the previous inputs and obligations intact. Once any run
+exists, `business_context` and `max_obligations` are immutable because they
+establish the provenance for that run and its downstream evidence and findings.
+PATCH requests that repeat the current values are no-ops and do not regenerate
+obligations. The generated obligation order is not a guaranteed domain
+property.
+
 Indexes:
 
 - PK (`id`)

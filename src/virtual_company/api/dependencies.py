@@ -19,6 +19,7 @@ from virtual_company.services import (
     ResearchEvidenceService,
     ResearchResultsService,
     ResearchService,
+    create_configured_obligation_generator,
 )
 from virtual_company.tools import (
     WebFetchTool,
@@ -38,7 +39,7 @@ def get_campaign_service(session: SessionDependency) -> CampaignService:
 
 def get_exploration_service(session: SessionDependency) -> ExplorationService:
     """Build an Exploration service for the current request."""
-    return ExplorationService(session)
+    return ExplorationService(session, create_configured_obligation_generator())
 
 
 def get_research_company_service(session: SessionDependency) -> ResearchCompanyService:

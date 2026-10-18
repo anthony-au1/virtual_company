@@ -12,6 +12,10 @@ from virtual_company.api.dependencies import get_exploration_service
 from virtual_company.db.models import Exploration, ExplorationObligation
 from virtual_company.main import app
 from virtual_company.repositories.dtos import ExplorationUpdate
+from virtual_company.services.exploration import (
+    ExplorationGenerationConflictError,
+    ExplorationObligationGenerationError,
+)
 
 
 class ExplorationServiceStub:
@@ -204,6 +208,29 @@ def test_obligations_are_readable_but_not_user_managed() -> None:
         client.put(item_path, json={"description": "manual replace"}).status_code == 404
     )
     assert client.delete(item_path).status_code == 404
+
+
+def test_generation_failures_and_post_run_mutation_use_safe_http_errors() -> None:
+    class FailureService(ExplorationServiceStub):
+        async def create(self, business_context: str, max_obligations: int = 10):
+            raise ExplorationObligationGenerationError("private provider detail")
+
+        async def update(self, exploration_id: UUID, data: ExplorationUpdate):
+            raise ExplorationGenerationConflictError("inputs are immutable")
+
+    app.dependency_overrides[get_exploration_service] = lambda: FailureService()
+    client = TestClient(app)
+
+    created = client.post("/api/v1/explorations", json={"business_context": "context"})
+    assert created.status_code == 503
+    assert created.json()["detail"] == "Obligation generation failed"
+    assert "private provider detail" not in created.text
+
+    updated = client.patch(
+        f"/api/v1/explorations/{uuid4()}", json={"business_context": "changed"}
+    )
+    assert updated.status_code == 409
+    assert updated.json()["detail"] == "inputs are immutable"
 
 
 def test_exploration_openapi_excludes_obligation_write_operations() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import ExplorationCompany, ExplorationRun
@@ -17,6 +17,12 @@ class ExplorationRunRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def exists_for_exploration(self, exploration_id: UUID) -> bool:
+        statement = select(
+            exists().where(ExplorationRun.exploration_id == exploration_id)
+        )
+        return bool(await self._session.scalar(statement))
 
     async def create(self, data: ExplorationRunCreate) -> ExplorationRun:
         run = ExplorationRun(**create_values(data))

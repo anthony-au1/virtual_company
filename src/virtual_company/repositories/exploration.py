@@ -28,6 +28,14 @@ class ExplorationRepository:
     async def get_by_id(self, exploration_id: UUID) -> Exploration | None:
         return await self._session.get(Exploration, exploration_id)
 
+    async def get_by_id_for_update(self, exploration_id: UUID) -> Exploration | None:
+        statement = (
+            select(Exploration)
+            .where(Exploration.id == exploration_id)
+            .with_for_update()
+        )
+        return await self._session.scalar(statement)
+
     async def list(self) -> list[Exploration]:
         return list(await self._session.scalars(select(Exploration)))
 

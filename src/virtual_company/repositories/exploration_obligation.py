@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import ExplorationObligation
@@ -28,6 +28,20 @@ class ExplorationObligationRepository:
         await self._session.refresh(obligation)
         return obligation
 
+    async def create_many(
+        self, exploration_id: UUID, descriptions: list[str]
+    ) -> list[ExplorationObligation]:
+        obligations = [
+            ExplorationObligation(
+                exploration_id=exploration_id,
+                description=description,
+            )
+            for description in descriptions
+        ]
+        self._session.add_all(obligations)
+        await self._session.flush()
+        return obligations
+
     async def get_by_id(self, obligation_id: UUID) -> ExplorationObligation | None:
         return await self._session.get(ExplorationObligation, obligation_id)
 
@@ -38,6 +52,26 @@ class ExplorationObligationRepository:
             ExplorationObligation.exploration_id == exploration_id
         )
         return list(await self._session.scalars(statement))
+
+    async def replace_for_exploration(
+        self, exploration_id: UUID, descriptions: list[str]
+    ) -> list[ExplorationObligation]:
+        """Replace all obligations for an Exploration within the caller's transaction."""
+        await self._session.execute(
+            delete(ExplorationObligation).where(
+                ExplorationObligation.exploration_id == exploration_id
+            )
+        )
+        obligations = [
+            ExplorationObligation(
+                exploration_id=exploration_id,
+                description=description,
+            )
+            for description in descriptions
+        ]
+        self._session.add_all(obligations)
+        await self._session.flush()
+        return obligations
 
     async def update(
         self, obligation_id: UUID, data: ExplorationObligationUpdate

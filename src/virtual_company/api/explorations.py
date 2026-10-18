@@ -18,6 +18,10 @@ from virtual_company.repositories.dtos import (
     ExplorationUpdate,
 )
 from virtual_company.services import ExplorationService
+from virtual_company.services.exploration import (
+    ExplorationGenerationConflictError,
+    ExplorationObligationGenerationError,
+)
 
 router = APIRouter(prefix="/api/v1/explorations", tags=["explorations"])
 ExplorationServiceDependency = Annotated[
@@ -31,9 +35,15 @@ ExplorationServiceDependency = Annotated[
 async def create_exploration(
     payload: ExplorationCreateRequest, service: ExplorationServiceDependency
 ) -> ExplorationResponse:
-    exploration = await service.create(
-        payload.business_context, payload.max_obligations
-    )
+    try:
+        exploration = await service.create(
+            payload.business_context, payload.max_obligations
+        )
+    except ExplorationObligationGenerationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Obligation generation failed",
+        ) from error
     return ExplorationResponse.model_validate(exploration)
 
 
@@ -60,10 +70,20 @@ async def update_exploration(
     payload: ExplorationUpdateRequest,
     service: ExplorationServiceDependency,
 ) -> ExplorationResponse:
-    exploration = await service.update(
-        exploration_id,
-        ExplorationUpdate(**payload.model_dump(exclude_unset=True)),
-    )
+    try:
+        exploration = await service.update(
+            exploration_id,
+            ExplorationUpdate(**payload.model_dump(exclude_unset=True)),
+        )
+    except ExplorationGenerationConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(error)
+        ) from error
+    except ExplorationObligationGenerationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Obligation generation failed",
+        ) from error
     if exploration is None:
         raise HTTPException(status_code=404, detail="Exploration not found")
     return ExplorationResponse.model_validate(exploration)
