@@ -1,6 +1,6 @@
 "use client";
 
-import { BriefcaseBusiness, Search, Users } from "lucide-react";
+import { BriefcaseBusiness, Compass, Search, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 
 const navigation = [
   { label: "Campaigns", icon: BriefcaseBusiness, href: "/campaigns" },
+  { label: "Explorations", icon: Compass, href: "/explorations" },
   { label: "Research", icon: Search, href: "/research" },
   { label: "Leads", icon: Users },
 ];
@@ -72,7 +73,7 @@ export function AppShell({ children }: React.PropsWithChildren) {
         </nav>
         <Separator className="hidden md:block" />
         <p className="text-muted-foreground hidden px-5 py-4 text-xs leading-relaxed md:block">
-          Campaign setup and research qualification runs.
+          Campaign setup, Explorations, and research qualification runs.
         </p>
       </aside>
 

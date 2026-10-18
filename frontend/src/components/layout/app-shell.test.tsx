@@ -31,6 +31,10 @@ describe("AppShell", () => {
       "href",
       "/campaigns",
     );
+    expect(screen.getByRole("link", { name: "Explorations" })).toHaveAttribute(
+      "href",
+      "/explorations",
+    );
     expect(
       screen.getByRole("heading", { name: "Foundation content" }),
     ).toBeInTheDocument();

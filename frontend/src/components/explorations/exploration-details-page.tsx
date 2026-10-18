@@ -1,0 +1,214 @@
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, Pencil, RefreshCw } from "lucide-react";
+import Link from "next/link";
+
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  getExploration,
+  listExplorationObligations,
+} from "@/lib/api/explorations";
+import {
+  explorationObligationsQueryKey,
+  explorationQueryKey,
+} from "@/lib/queries/query-keys";
+import { cn } from "@/lib/utils";
+
+export function ExplorationDetailsPage({
+  explorationId,
+}: {
+  explorationId: string;
+}) {
+  const explorationQuery = useQuery({
+    queryKey: explorationQueryKey(explorationId),
+    queryFn: () => getExploration(explorationId),
+  });
+  const obligationsQuery = useQuery({
+    queryKey: explorationObligationsQueryKey(explorationId),
+    queryFn: () => listExplorationObligations(explorationId),
+  });
+
+  if (explorationQuery.isPending) {
+    return (
+      <p role="status" className="mx-auto max-w-5xl p-8 text-center text-sm">
+        Loading Exploration…
+      </p>
+    );
+  }
+  if (explorationQuery.isError) {
+    const notFound =
+      "status" in explorationQuery.error &&
+      explorationQuery.error.status === 404;
+    return (
+      <section className="mx-auto max-w-5xl">
+        <BackToExplorations />
+        <div
+          role="alert"
+          className="border-destructive/30 mt-5 rounded-lg border p-6"
+        >
+          <h1 className="text-lg font-semibold">
+            {notFound
+              ? "Exploration not found"
+              : "Exploration could not be loaded"}
+          </h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            {explorationQuery.error.message}
+          </p>
+          {!notFound ? (
+            <Button
+              className="mt-4"
+              onClick={() => void explorationQuery.refetch()}
+              size="sm"
+              variant="outline"
+            >
+              <RefreshCw aria-hidden="true" data-icon="inline-start" />
+              Try again
+            </Button>
+          ) : null}
+        </div>
+      </section>
+    );
+  }
+
+  const exploration = explorationQuery.data;
+
+  return (
+    <section aria-labelledby="page-title" className="mx-auto max-w-5xl">
+      <BackToExplorations />
+      <header className="mt-4 flex flex-wrap items-start justify-between gap-4 border-b pb-5">
+        <div className="min-w-0">
+          <p className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">
+            Exploration
+          </p>
+          <h1 id="page-title" className="text-2xl font-semibold tracking-tight">
+            {contextHeading(exploration.business_context)}
+          </h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Updated {formatDate(exploration.updated_at)}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary">{exploration.status}</Badge>
+          <Link
+            className={cn(buttonVariants({ variant: "outline" }))}
+            href={`/explorations/${explorationId}/edit`}
+          >
+            <Pencil aria-hidden="true" data-icon="inline-start" />
+            Edit Exploration
+          </Link>
+        </div>
+      </header>
+
+      <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.85fr)]">
+        <section className="h-fit rounded-lg border p-4 sm:p-5">
+          <h2 className="text-sm font-semibold">Business context</h2>
+          <p className="text-muted-foreground mt-3 text-sm leading-6 whitespace-pre-wrap">
+            {exploration.business_context}
+          </p>
+          <dl className="mt-5 border-t pt-4">
+            <div className="flex items-center justify-between gap-4 text-sm">
+              <dt className="text-muted-foreground">Maximum obligations</dt>
+              <dd className="font-medium tabular-nums">
+                {exploration.max_obligations}
+              </dd>
+            </div>
+            <p className="text-muted-foreground mt-1 text-xs">
+              Upper bound; fewer research obligations may be generated.
+            </p>
+          </dl>
+        </section>
+
+        <section
+          aria-labelledby="obligations-title"
+          className="rounded-lg border p-4 sm:p-5"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 id="obligations-title" className="text-sm font-semibold">
+                Research obligations
+              </h2>
+              <p className="text-muted-foreground mt-1 text-xs leading-5">
+                Generated automatically from the Business Context. These are
+                research questions or conditions to establish through evidence.
+              </p>
+            </div>
+            {obligationsQuery.data ? (
+              <Badge variant="secondary">
+                {obligationsQuery.data.length} generated
+              </Badge>
+            ) : null}
+          </div>
+
+          {obligationsQuery.isPending ? (
+            <p role="status" className="text-muted-foreground mt-4 text-sm">
+              Loading research obligations…
+            </p>
+          ) : obligationsQuery.isError ? (
+            <div role="alert" className="mt-4">
+              <p className="text-destructive text-sm">
+                Research obligations could not be loaded.
+              </p>
+              <Button
+                className="mt-2"
+                onClick={() => void obligationsQuery.refetch()}
+                size="sm"
+                variant="outline"
+              >
+                Try again
+              </Button>
+            </div>
+          ) : obligationsQuery.data.length === 0 ? (
+            <p className="text-muted-foreground mt-4 rounded-md border border-dashed p-4 text-sm leading-6">
+              No research obligations were generated from the current business
+              context. You can refine the Business Context and update this
+              Exploration before starting it.
+            </p>
+          ) : (
+            <ol className="mt-4 divide-y">
+              {obligationsQuery.data.map((obligation, index) => (
+                <li
+                  className="flex gap-3 py-3 first:pt-0 last:pb-0"
+                  key={`${index}-${obligation.description}`}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="bg-muted text-muted-foreground flex size-6 shrink-0 items-center justify-center rounded-full text-xs tabular-nums"
+                  >
+                    {index + 1}
+                  </span>
+                  <p className="text-sm leading-6">{obligation.description}</p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function BackToExplorations() {
+  return (
+    <Link
+      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm"
+      href="/explorations"
+    >
+      <ArrowLeft aria-hidden="true" className="size-4" />
+      Explorations
+    </Link>
+  );
+}
+
+function contextHeading(value: string): string {
+  const line = value.replace(/\s+/g, " ").trim();
+  return line.length > 90 ? `${line.slice(0, 87)}…` : line;
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
