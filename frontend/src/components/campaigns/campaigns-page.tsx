@@ -10,6 +10,7 @@ import { listCampaigns } from "@/lib/api/campaigns";
 import { campaignsQueryKey } from "@/lib/queries/query-keys";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/components/research/research-runs-page";
+import { DeleteCampaignAction } from "@/components/campaigns/delete-campaign-action";
 
 export function CampaignsPage() {
   const query = useQuery({
@@ -124,19 +125,25 @@ export function CampaignsPage() {
                         {formatDate(campaign.created_at)}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <Link
-                          aria-label={`Open ${campaign.name}`}
-                          className={cn(
-                            buttonVariants({ size: "sm", variant: "ghost" }),
-                          )}
-                          href={`/campaigns/${campaign.id}`}
-                        >
-                          Open{" "}
-                          <ArrowRight
-                            aria-hidden="true"
-                            data-icon="inline-end"
+                        <div className="flex justify-end gap-2">
+                          <Link
+                            aria-label={`Open ${campaign.name}`}
+                            className={cn(
+                              buttonVariants({ size: "sm", variant: "ghost" }),
+                            )}
+                            href={`/campaigns/${campaign.id}`}
+                          >
+                            Open{" "}
+                            <ArrowRight
+                              aria-hidden="true"
+                              data-icon="inline-end"
+                            />
+                          </Link>
+                          <DeleteCampaignAction
+                            campaignId={campaign.id}
+                            navigateOnSuccess={false}
                           />
-                        </Link>
+                        </div>
                       </td>
                     </tr>
                   ))}

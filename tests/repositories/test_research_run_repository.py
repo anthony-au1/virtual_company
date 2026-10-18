@@ -53,3 +53,19 @@ async def test_list_with_summary_uses_one_grouped_query() -> None:
     sql = str(statement.compile(dialect=postgresql.dialect())).lower()
     assert "group by research_run.id, campaign.id" in sql
     assert "left outer join research_company_qualification" in sql
+
+
+@pytest.mark.asyncio
+async def test_exists_for_campaign_uses_exists_query() -> None:
+    session = MagicMock(spec=AsyncSession)
+    session.scalar = AsyncMock(return_value=True)
+    campaign_id = uuid4()
+
+    assert await ResearchRunRepository(session).exists_for_campaign(campaign_id)
+
+    statement = session.scalar.await_args.args[0]
+    sql = str(statement.compile(dialect=postgresql.dialect())).lower()
+    assert "exists" in sql
+    assert "research_run.campaign_id" in sql
+    assert "count(" not in sql
+    assert "research_run.status" not in sql

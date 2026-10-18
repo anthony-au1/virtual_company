@@ -27,3 +27,8 @@ criterion matches.
 
 Once a Campaign's first Research Run starts, its definition and qualification
 criteria are sealed permanently. Run deletion does not remove the seal.
+
+A Campaign may be hard-deleted before it has any Research Run. Once any
+Research Run exists, the Campaign is part of Research execution history and
+cannot be deleted. Deleting a pre-run Campaign removes its campaign-specific
+target associations; shared ResearchCompany records are retained.

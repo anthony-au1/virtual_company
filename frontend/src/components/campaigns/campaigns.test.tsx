@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -13,6 +14,7 @@ import { CampaignFormPage } from "@/components/campaigns/campaign-form-page";
 import { CampaignsPage } from "@/components/campaigns/campaigns-page";
 import type { Campaign } from "@/lib/api/campaigns";
 import { ApiError } from "@/lib/api/client";
+import { campaignsQueryKey } from "@/lib/queries/query-keys";
 import type { ResearchRunListItem } from "@/lib/api/research";
 
 const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
@@ -26,6 +28,7 @@ vi.mock("@/lib/api/campaigns", () => ({
   listCampaigns: vi.fn(),
   getCampaign: vi.fn(),
   createCampaign: vi.fn(),
+  deleteCampaign: vi.fn(),
 }));
 
 vi.mock("@/lib/api/research", async (importOriginal) => {
@@ -35,6 +38,7 @@ vi.mock("@/lib/api/research", async (importOriginal) => {
 
 import {
   createCampaign,
+  deleteCampaign,
   getCampaign,
   listCampaigns,
 } from "@/lib/api/campaigns";
@@ -43,6 +47,7 @@ import { listResearchRuns, startResearch } from "@/lib/api/research";
 const mockListCampaigns = vi.mocked(listCampaigns);
 const mockGetCampaign = vi.mocked(getCampaign);
 const mockCreateCampaign = vi.mocked(createCampaign);
+const mockDeleteCampaign = vi.mocked(deleteCampaign);
 const mockListRuns = vi.mocked(listResearchRuns);
 const mockStartResearch = vi.mocked(startResearch);
 
@@ -50,9 +55,10 @@ function renderWithQuery(ui: React.ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
-    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
-  );
+  return {
+    client,
+    ...render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>),
+  };
 }
 
 function campaign(id: string, name: string): Campaign {
@@ -102,7 +108,7 @@ function run(
   };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => vi.resetAllMocks());
 afterEach(() => cleanup());
 
 describe("CampaignsPage", () => {
@@ -123,6 +129,129 @@ describe("CampaignsPage", () => {
     expect(
       screen.getByRole("link", { name: "Create Campaign" }),
     ).toHaveAttribute("href", "/campaigns/new");
+    expect(
+      screen.getByRole("button", { name: "Delete Campaign campaign-a" }),
+    ).toHaveClass("text-destructive");
+  });
+
+  it("requires confirmation and cancellation sends no delete request", async () => {
+    mockListCampaigns.mockResolvedValue([campaign("campaign-a", "Fintech")]);
+    renderWithQuery(<CampaignsPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Delete Campaign campaign-a",
+      }),
+    );
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "Delete Campaign?",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mockDeleteCampaign).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("deletes the selected campaign and refreshes the list after success", async () => {
+    mockListCampaigns
+      .mockResolvedValueOnce([campaign("campaign-a", "Fintech")])
+      .mockResolvedValueOnce([]);
+    mockDeleteCampaign.mockResolvedValue(undefined);
+    const { client } = renderWithQuery(<CampaignsPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Delete Campaign campaign-a",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete Campaign",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mockDeleteCampaign).toHaveBeenCalledWith("campaign-a"),
+    );
+    await waitFor(() =>
+      expect(client.getQueryData(campaignsQueryKey)).toEqual([]),
+    );
+    expect(await screen.findByText("No campaigns yet")).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("disables confirmation while deletion is pending", async () => {
+    mockListCampaigns.mockResolvedValue([campaign("campaign-a", "Fintech")]);
+    let finishDelete!: () => void;
+    mockDeleteCampaign.mockReturnValue(
+      new Promise((resolve) => {
+        finishDelete = () => resolve(undefined);
+      }),
+    );
+    renderWithQuery(<CampaignsPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Delete Campaign campaign-a",
+      }),
+    );
+    const confirmButton = within(screen.getByRole("alertdialog")).getByRole(
+      "button",
+      { name: "Delete Campaign" },
+    );
+    fireEvent.click(confirmButton);
+    await waitFor(() => expect(confirmButton).toBeDisabled());
+    fireEvent.click(confirmButton);
+    expect(mockDeleteCampaign).toHaveBeenCalledTimes(1);
+    finishDelete();
+  });
+
+  it("preserves the campaign and shows the lifecycle message on conflict", async () => {
+    mockListCampaigns.mockResolvedValue([campaign("campaign-a", "Fintech")]);
+    mockDeleteCampaign.mockRejectedValue(
+      new ApiError("Conflict", 409, { detail: "internal detail" }),
+    );
+    renderWithQuery(<CampaignsPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Delete Campaign campaign-a",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete Campaign",
+      }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This Campaign cannot be deleted because it has already been used for research.",
+    );
+    expect(screen.getByText("Fintech")).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Campaign row and shows a safe message on server failure", async () => {
+    mockListCampaigns.mockResolvedValue([campaign("campaign-a", "Fintech")]);
+    mockDeleteCampaign.mockRejectedValue(
+      new ApiError("Provider detail", 503, { detail: "internal" }),
+    );
+    renderWithQuery(<CampaignsPage />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Delete Campaign campaign-a",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete Campaign",
+      }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Campaign could not be deleted. Please try again.",
+    );
+    expect(screen.getByText("Fintech")).toBeInTheDocument();
   });
 
   it("shows loading, empty, and error states", async () => {
@@ -168,30 +297,18 @@ describe("CampaignFormPage", () => {
     fireEvent.change(screen.getByRole("textbox", { name: /Campaign name/ }), {
       target: { value: "Fintech" },
     });
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Add keywords" }),
-      {
-        target: { value: "Java" },
-      },
-    );
-    fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add keywords" }),
-      {
-        key: "Enter",
-      },
-    );
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Add keywords" }),
-      {
-        target: { value: " java " },
-      },
-    );
-    fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add keywords" }),
-      {
-        key: "Enter",
-      },
-    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Add keywords" }), {
+      target: { value: "Java" },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Add keywords" }), {
+      key: "Enter",
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Add keywords" }), {
+      target: { value: " java " },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Add keywords" }), {
+      key: "Enter",
+    });
     fireEvent.click(screen.getByRole("button", { name: "Create Campaign" }));
 
     await waitFor(() => expect(mockCreateCampaign).toHaveBeenCalled());
@@ -215,30 +332,18 @@ describe("CampaignFormPage", () => {
     fireEvent.change(screen.getByLabelText("Industry"), {
       target: { value: "Fin tech" },
     });
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Add keywords" }),
-      {
-        target: { value: "Java" },
-      },
-    );
-    fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add keywords" }),
-      {
-        key: "Enter",
-      },
-    );
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Add keywords" }),
-      {
-        target: { value: "Kafka" },
-      },
-    );
-    fireEvent.keyDown(
-      screen.getByRole("textbox", { name: "Add keywords" }),
-      {
-        key: "Enter",
-      },
-    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Add keywords" }), {
+      target: { value: "Java" },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Add keywords" }), {
+      key: "Enter",
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "Add keywords" }), {
+      target: { value: "Kafka" },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Add keywords" }), {
+      key: "Enter",
+    });
     fireEvent.change(screen.getByLabelText("Minimum employees"), {
       target: { value: "500" },
     });
@@ -322,6 +427,60 @@ describe("CampaignDetailsPage", () => {
     expect(
       screen.queryByRole("button", { name: "Delete run run-a2" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Delete Campaign campaign-a" }),
+    ).toBeInTheDocument();
+  });
+
+  it("requires confirmation and navigates to the list after detail deletion", async () => {
+    mockGetCampaign.mockResolvedValue(campaign("campaign-a", "Fintech"));
+    mockListRuns.mockResolvedValue([]);
+    mockDeleteCampaign.mockResolvedValue(undefined);
+    renderWithQuery(<CampaignDetailsPage campaignId="campaign-a" />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Delete Campaign campaign-a",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete Campaign",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mockDeleteCampaign).toHaveBeenCalledWith("campaign-a"),
+    );
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/campaigns"));
+  });
+
+  it("keeps Campaign detail visible and reports a lifecycle conflict", async () => {
+    mockGetCampaign.mockResolvedValue(campaign("campaign-a", "Fintech"));
+    mockListRuns.mockResolvedValue([]);
+    mockDeleteCampaign.mockRejectedValue(
+      new ApiError("Conflict", 409, { detail: "internal detail" }),
+    );
+    renderWithQuery(<CampaignDetailsPage campaignId="campaign-a" />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Delete Campaign campaign-a",
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete Campaign",
+      }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This Campaign cannot be deleted because it has already been used for research.",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Fintech" }),
+    ).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it("hides campaign editing after the campaign is sealed", async () => {

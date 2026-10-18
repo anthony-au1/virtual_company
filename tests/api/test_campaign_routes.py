@@ -12,7 +12,10 @@ from virtual_company.api.dependencies import get_campaign_service, get_research_
 from virtual_company.db.models import Campaign
 from virtual_company.main import app
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
-from virtual_company.services.campaign import CampaignSealedError
+from virtual_company.services.campaign import (
+    CampaignLifecycleConflictError,
+    CampaignSealedError,
+)
 from virtual_company.tools import WebSearchNotConfiguredError
 from virtual_company.workflows.research.models import ResearchWorkflowResult
 from virtual_company.workflows.research.nodes import (
@@ -48,6 +51,9 @@ class CampaignServiceStub:
         self, _campaign_id: object
     ) -> list[object] | None:
         return [] if self.campaign is not None else None
+
+    async def delete(self, campaign_id: object) -> bool:
+        return self.campaign is not None and self.campaign.id == campaign_id
 
 
 class ResearchWorkflowStub:
@@ -206,6 +212,48 @@ def test_patch_maps_sealed_definition_to_conflict() -> None:
 
     assert response.status_code == 409
     assert response.json() == {"detail": "Campaign research definition is sealed"}
+
+
+def test_delete_campaign_returns_no_content() -> None:
+    model = campaign()
+    app.dependency_overrides[get_campaign_service] = lambda: CampaignServiceStub(model)
+
+    response = TestClient(app).delete(f"/api/v1/campaigns/{model.id}")
+
+    assert response.status_code == 204
+    assert response.content == b""
+
+
+def test_delete_campaign_maps_missing_and_lifecycle_conflict() -> None:
+    missing_service = CampaignServiceStub(None)
+    app.dependency_overrides[get_campaign_service] = lambda: missing_service
+    missing_response = TestClient(app).delete(f"/api/v1/campaigns/{uuid4()}")
+    assert missing_response.status_code == 404
+    assert missing_response.json() == {"detail": "Campaign not found"}
+
+    class UsedCampaignService(CampaignServiceStub):
+        async def delete(self, _campaign_id: object) -> bool:
+            raise CampaignLifecycleConflictError(
+                "This Campaign cannot be deleted because it has already been used "
+                "for research."
+            )
+
+    app.dependency_overrides[get_campaign_service] = lambda: UsedCampaignService(
+        campaign()
+    )
+    conflict_response = TestClient(app).delete(f"/api/v1/campaigns/{uuid4()}")
+    assert conflict_response.status_code == 409
+    assert conflict_response.json() == {
+        "detail": "This Campaign cannot be deleted because it has already been "
+        "used for research."
+    }
+
+
+def test_campaign_delete_openapi_documents_success_not_found_and_conflict() -> None:
+    operation = app.openapi()["paths"]["/api/v1/campaigns/{campaign_id}"]["delete"]
+    assert "204" in operation["responses"]
+    assert "404" in operation["responses"]
+    assert "409" in operation["responses"]
 
 
 def test_campaign_status_validation_and_missing_campaign_return_errors() -> None:

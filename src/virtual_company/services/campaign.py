@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import Campaign, ResearchCompany
 from virtual_company.repositories.campaign import CampaignRepository
+from virtual_company.repositories.campaign_target import CampaignTargetRepository
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
 from virtual_company.repositories.research_company import ResearchCompanyRepository
+from virtual_company.repositories.research_run import ResearchRunRepository
 
 
 class CampaignLimitValidationError(ValueError):
@@ -20,6 +22,10 @@ class CampaignSealedError(ValueError):
     """Raised when a sealed campaign's research definition is changed."""
 
 
+class CampaignLifecycleConflictError(ValueError):
+    """Raised when Campaign research history prevents deletion."""
+
+
 class CampaignService:
     """Coordinate campaign persistence operations."""
 
@@ -27,6 +33,8 @@ class CampaignService:
         self._session = session
         self._campaigns = CampaignRepository(session)
         self._companies = ResearchCompanyRepository(session)
+        self._targets = CampaignTargetRepository(session)
+        self._runs = ResearchRunRepository(session)
 
     async def create(self, data: CampaignCreate) -> Campaign:
         async with self._session.begin():
@@ -37,6 +45,21 @@ class CampaignService:
 
     async def list(self) -> list[Campaign]:
         return await self._campaigns.list()
+
+    async def delete(self, campaign_id: UUID) -> bool:
+        """Hard-delete a Campaign that has never produced a Research Run."""
+        async with self._session.begin():
+            campaign = await self._campaigns.get_by_id_for_update(campaign_id)
+            if campaign is None:
+                return False
+            if await self._runs.exists_for_campaign(campaign_id):
+                raise CampaignLifecycleConflictError(
+                    "This Campaign cannot be deleted because it has already been "
+                    "used for research."
+                )
+            await self._targets.delete_by_campaign_id(campaign_id)
+            await self._campaigns.delete(campaign)
+            return True
 
     async def seal_for_research(self, campaign_id: UUID) -> Campaign | None:
         """Persist the campaign's first-run seal while holding its row lock."""

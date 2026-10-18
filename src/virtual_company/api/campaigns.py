@@ -17,6 +17,7 @@ from virtual_company.api.models import (
 )
 from virtual_company.services import CampaignService
 from virtual_company.services.campaign import (
+    CampaignLifecycleConflictError,
     CampaignLimitValidationError,
     CampaignSealedError,
 )
@@ -83,6 +84,32 @@ async def update_campaign(
             status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
         )
     return CampaignResponse.model_validate(campaign)
+
+
+@router.delete(
+    "/{campaign_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Campaign not found"},
+        status.HTTP_409_CONFLICT: {
+            "description": "Campaign has Research execution history"
+        },
+    },
+)
+async def delete_campaign(
+    campaign_id: UUID, service: CampaignServiceDependency
+) -> None:
+    """Delete a Campaign before it has been used for research."""
+    try:
+        deleted = await service.delete(campaign_id)
+    except CampaignLifecycleConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(error)
+        ) from error
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
+        )
 
 
 @router.get("/{campaign_id}/companies", response_model=list[CompanyResponse])

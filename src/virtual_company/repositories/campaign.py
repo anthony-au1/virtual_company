@@ -45,6 +45,10 @@ class CampaignRepository:
     async def list(self) -> list[Campaign]:
         return list(await self._session.scalars(select(Campaign)))
 
+    async def delete(self, campaign: Campaign) -> None:
+        await self._session.delete(campaign)
+        await self._session.flush()
+
     async def update(self, campaign_id: UUID, data: CampaignUpdate) -> Campaign | None:
         campaign = await self.get_by_id(campaign_id)
         if campaign is None:

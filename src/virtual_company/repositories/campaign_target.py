@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import CampaignTarget
@@ -32,6 +32,12 @@ class CampaignTargetRepository:
 
     async def list(self) -> list[CampaignTarget]:
         return list(await self._session.scalars(select(CampaignTarget)))
+
+    async def delete_by_campaign_id(self, campaign_id: UUID) -> None:
+        await self._session.execute(
+            delete(CampaignTarget).where(CampaignTarget.campaign_id == campaign_id)
+        )
+        await self._session.flush()
 
     async def update(
         self,

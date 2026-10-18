@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -53,6 +53,10 @@ class ResearchRunRepository:
 
     async def list(self) -> list[ResearchRun]:
         return list(await self._session.scalars(select(ResearchRun)))
+
+    async def exists_for_campaign(self, campaign_id: UUID) -> bool:
+        statement = select(exists().where(ResearchRun.campaign_id == campaign_id))
+        return bool(await self._session.scalar(statement))
 
     async def list_with_summary(
         self,

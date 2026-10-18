@@ -14,6 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { DeleteRunAction } from "@/components/research/delete-run-action";
+import { DeleteCampaignAction } from "@/components/campaigns/delete-campaign-action";
 import { getCampaign, type Campaign } from "@/lib/api/campaigns";
 import { apiErrorMessages } from "@/lib/api/client";
 import { listResearchRuns, startResearch } from "@/lib/api/research";
@@ -110,6 +111,7 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <CampaignStatusBadge status={campaign.status} />
+          <DeleteCampaignAction campaignId={campaignId} />
           {campaign.sealed_at === null ? (
             <Link
               className={cn(buttonVariants({ variant: "outline" }))}
@@ -180,11 +182,7 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
                   <CriteriaRow label="Industry" value={campaign.industry} />
                 ) : null}
                 {campaign.keywords.map((keyword) => (
-                  <CriteriaRow
-                    key={keyword}
-                    label="Keyword"
-                    value={keyword}
-                  />
+                  <CriteriaRow key={keyword} label="Keyword" value={keyword} />
                 ))}
                 {sizeRows(campaign)}
                 {!hasCriteria(campaign) ? <EmptyCriteria /> : null}

@@ -78,3 +78,9 @@ export function updateCampaign(
     },
   );
 }
+
+export function deleteCampaign(campaignId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/campaigns/${encodeURIComponent(campaignId)}`, {
+    method: "DELETE",
+  });
+}
