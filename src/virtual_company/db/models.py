@@ -253,6 +253,9 @@ class ResearchRun(Base):
     research_evidence: Mapped[list[ResearchEvidence]] = relationship(
         back_populates="research_run"
     )
+    exploration_runs: Mapped[list[ExplorationRun]] = relationship(
+        back_populates="research_run"
+    )
 
 
 class ResearchCompanyQualification(Base):
@@ -364,10 +367,13 @@ class ExplorationObligation(Base):
 
 
 class ExplorationRun(Base):
-    """One execution of an Exploration."""
+    """One execution of an Exploration based on a ResearchRun result set."""
 
     __tablename__ = "exploration_run"
-    __table_args__ = (Index("ix_exploration_run_exploration_id", "exploration_id"),)
+    __table_args__ = (
+        Index("ix_exploration_run_exploration_id", "exploration_id"),
+        Index("ix_exploration_run_research_run_id", "research_run_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
@@ -377,6 +383,13 @@ class ExplorationRun(Base):
         ForeignKey("exploration.id", name="exploration_run_exploration_id_fkey"),
         nullable=False,
     )
+    research_run_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "research_run.id", name="exploration_run_research_run_id_fkey"
+        ),
+        nullable=False,
+    )
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -384,6 +397,9 @@ class ExplorationRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     exploration: Mapped[Exploration] = relationship(back_populates="runs")
+    research_run: Mapped[ResearchRun] = relationship(
+        back_populates="exploration_runs"
+    )
     companies: Mapped[list[ExplorationCompany]] = relationship(back_populates="run")
 
 

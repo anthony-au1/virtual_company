@@ -162,6 +162,7 @@ class ExplorationObligationUpdate(BaseModel):
 
 class ExplorationRunCreate(BaseModel):
     exploration_id: UUID
+    research_run_id: UUID
     status: str
     started_at: datetime | None = None
     completed_at: datetime | None = None

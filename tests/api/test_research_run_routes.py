@@ -11,6 +11,7 @@ from virtual_company.api.dependencies import get_research_results_service
 from virtual_company.main import app
 from virtual_company.services import (
     ActiveResearchRunError,
+    ReferencedResearchRunError,
     ResearchRunNotFoundError,
 )
 
@@ -213,6 +214,12 @@ def test_delete_run_maps_missing_and_running_runs() -> None:
     )
     response = TestClient(app).delete(f"/api/v1/research-runs/{uuid4()}")
     assert response.status_code == 409
+    app.dependency_overrides[get_research_results_service] = lambda: (
+        ResearchResultsServiceStub(
+            delete_result=ReferencedResearchRunError("referenced")
+        )
+    )
+    assert TestClient(app).delete(f"/api/v1/research-runs/{uuid4()}").status_code == 409
     assert (
         TestClient(app).get("/api/v1/research-runs/not-a-uuid/results").status_code
         == 422

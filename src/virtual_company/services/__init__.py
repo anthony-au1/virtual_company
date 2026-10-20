@@ -18,12 +18,14 @@ from virtual_company.services.research_company import ResearchCompanyService
 from virtual_company.services.research_evidence import ResearchEvidenceService
 from virtual_company.services.research_results import (
     ActiveResearchRunError,
+    ReferencedResearchRunError,
     ResearchResultsService,
     ResearchRunNotFoundError,
 )
 
 __all__ = [
     "ActiveResearchRunError",
+    "ReferencedResearchRunError",
     "CampaignService",
     "ExplorationService",
     "GeneratedObligation",

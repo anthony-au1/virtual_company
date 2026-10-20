@@ -276,6 +276,7 @@ def upgrade() -> None:
         "exploration_run",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("exploration_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("research_run_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("status", sa.String(30), nullable=False),
         sa.Column(
             "started_at",
@@ -289,10 +290,18 @@ def upgrade() -> None:
             ["exploration.id"],
             name="exploration_run_exploration_id_fkey",
         ),
+        sa.ForeignKeyConstraint(
+            ["research_run_id"],
+            ["research_run.id"],
+            name="exploration_run_research_run_id_fkey",
+        ),
         sa.PrimaryKeyConstraint("id", name="exploration_run_pkey"),
     )
     op.create_index(
         "ix_exploration_run_exploration_id", "exploration_run", ["exploration_id"]
+    )
+    op.create_index(
+        "ix_exploration_run_research_run_id", "exploration_run", ["research_run_id"]
     )
     op.create_table(
         "exploration_company",
@@ -464,6 +473,7 @@ def downgrade() -> None:
     op.drop_index("ix_exploration_company_company_id", table_name="exploration_company")
     op.drop_table("exploration_company")
     op.drop_index("ix_exploration_run_exploration_id", table_name="exploration_run")
+    op.drop_index("ix_exploration_run_research_run_id", table_name="exploration_run")
     op.drop_table("exploration_run")
     op.drop_index(
         "ix_exploration_obligation_exploration_id",

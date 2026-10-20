@@ -17,6 +17,7 @@ from virtual_company.repositories.research_company_qualification import (
     ResearchCompanyQualificationRepository,
 )
 from virtual_company.repositories.research_evidence import ResearchEvidenceRepository
+from virtual_company.repositories.exploration_run import ExplorationRunRepository
 from virtual_company.repositories.research_run import ResearchRunRepository
 
 
@@ -26,6 +27,10 @@ class ResearchRunNotFoundError(LookupError):
 
 class ActiveResearchRunError(ValueError):
     """Raised when a non-terminal run cannot be safely deleted."""
+
+
+class ReferencedResearchRunError(ValueError):
+    """Raised when an ExplorationRun preserves provenance to this run."""
 
 
 TERMINAL_RESEARCH_RUN_STATUSES = frozenset({"COMPLETED", "FAILED"})
@@ -143,6 +148,7 @@ class ResearchResultsService:
         self._runs = ResearchRunRepository(session)
         self._qualifications = ResearchCompanyQualificationRepository(session)
         self._evidence = ResearchEvidenceRepository(session)
+        self._exploration_runs = ExplorationRunRepository(session)
 
     async def list_runs(self) -> list[ResearchRunListItemView]:
         """Return compact run summaries without loading result criteria or evidence."""
@@ -273,6 +279,10 @@ class ResearchResultsService:
         if run.status not in TERMINAL_RESEARCH_RUN_STATUSES:
             raise ActiveResearchRunError(
                 "A non-terminal research run cannot be deleted"
+            )
+        if await self._exploration_runs.exists_for_research_run(research_run_id):
+            raise ReferencedResearchRunError(
+                "A research run referenced by an Exploration cannot be deleted"
             )
         await self._evidence.delete_by_research_run_id(research_run_id)
         await self._qualifications.delete_by_research_run_id(research_run_id)

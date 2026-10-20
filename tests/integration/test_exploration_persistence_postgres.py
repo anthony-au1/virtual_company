@@ -10,7 +10,7 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 
 from virtual_company.config import DEFAULT_DATABASE_URL
 from virtual_company.db import Base
-from virtual_company.db.models import ResearchCompany
+from virtual_company.db.models import Campaign, ResearchCompany, ResearchRun
 from virtual_company.repositories.dtos import (
     ExplorationCompanyCreate,
     ExplorationCreate,
@@ -84,6 +84,24 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             fact_repo = ExplorationFactRepository(session)
             hypothesis_repo = ExplorationHypothesisRepository(session)
 
+            campaign = Campaign(
+                name="Exploration source",
+                keywords=[],
+                target_count=1,
+                max_companies_to_research=1,
+                status="COMPLETED",
+            )
+            session.add(campaign)
+            await session.flush()
+            research_a = ResearchRun(
+                campaign_id=campaign.id, status="COMPLETED", companies_found=1
+            )
+            research_b = ResearchRun(
+                campaign_id=campaign.id, status="COMPLETED", companies_found=1
+            )
+            session.add_all([research_a, research_b])
+            await session.flush()
+
             exploration = await exploration_repo.create(
                 ExplorationCreate(
                     business_context="Assess payment-provider fit",
@@ -114,9 +132,20 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             run = await run_repo.create(
                 ExplorationRunCreate(
                     exploration_id=exploration.id,
+                    research_run_id=research_a.id,
                     status="RUNNING",
                 )
             )
+            second_run = await run_repo.create(
+                ExplorationRunCreate(
+                    exploration_id=exploration.id,
+                    research_run_id=research_b.id,
+                    status="RUNNING",
+                )
+            )
+            assert run.research_run_id == research_a.id
+            assert second_run.research_run_id == research_b.id
+            assert second_run.exploration_id == run.exploration_id
             company = ResearchCompany(name="Tyro Payments")
             session.add(company)
             await session.flush()
@@ -184,7 +213,18 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                 fact_two.id,
             }
             assert len(await exploration_repo.list_obligations(exploration.id)) == 2
-            assert len(await exploration_repo.list_runs(exploration.id)) == 1
+            assert len(await exploration_repo.list_runs(exploration.id)) == 2
+            await session.commit()
+
+            with pytest.raises(IntegrityError):
+                await run_repo.create(
+                    ExplorationRunCreate(
+                        exploration_id=exploration.id,
+                        research_run_id=uuid4(),
+                        status="RUNNING",
+                    )
+                )
+            await session.rollback()
 
             # Exercise Exploration CRUD/read access and internal obligation
             # persistence independently of the public API.

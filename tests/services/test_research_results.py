@@ -15,6 +15,7 @@ from virtual_company.db.models import (
     ResearchRun,
 )
 from virtual_company.services.research_results import (
+    ReferencedResearchRunError,
     ResearchResultsService,
 )
 
@@ -31,6 +32,7 @@ def build_service() -> tuple[ResearchResultsService, MagicMock]:
     service._evidence.delete_by_research_run_id = AsyncMock()
     service._qualifications.delete_by_research_run_id = AsyncMock()
     service._runs.delete = AsyncMock()
+    service._exploration_runs.exists_for_research_run = AsyncMock(return_value=False)
     return service, session
 
 
@@ -215,3 +217,22 @@ async def test_deleting_run_rejects_non_terminal_and_unknown_runs() -> None:
 
     service._runs.get_by_id_for_update.return_value = None
     assert not await service.delete_run(uuid4())
+
+
+@pytest.mark.asyncio
+async def test_deleting_run_rejects_exploration_provenance() -> None:
+    service, session = build_service()
+    run_id = uuid4()
+    service._runs.get_by_id_for_update.return_value = ResearchRun(
+        id=run_id, campaign_id=uuid4(), status="COMPLETED"
+    )
+    service._exploration_runs.exists_for_research_run.return_value = True
+
+    with pytest.raises(ReferencedResearchRunError, match="referenced by an Exploration"):
+        await service.delete_run(run_id)
+
+    service._exploration_runs.exists_for_research_run.assert_awaited_once_with(run_id)
+    service._evidence.delete_by_research_run_id.assert_not_awaited()
+    service._qualifications.delete_by_research_run_id.assert_not_awaited()
+    service._runs.delete.assert_not_awaited()
+    session.commit.assert_not_awaited()

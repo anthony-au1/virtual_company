@@ -24,6 +24,12 @@ class ExplorationRunRepository:
         )
         return bool(await self._session.scalar(statement))
 
+    async def exists_for_research_run(self, research_run_id: UUID) -> bool:
+        statement = select(
+            exists().where(ExplorationRun.research_run_id == research_run_id)
+        )
+        return bool(await self._session.scalar(statement))
+
     async def create(self, data: ExplorationRunCreate) -> ExplorationRun:
         run = ExplorationRun(**create_values(data))
         self._session.add(run)

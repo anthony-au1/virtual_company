@@ -153,7 +153,8 @@ async def test_initial_migration_creates_current_schema() -> None:
                         "exploration_obligation_exploration_id_fkey": "exploration"
                     },
                     "exploration_run": {
-                        "exploration_run_exploration_id_fkey": "exploration"
+                        "exploration_run_exploration_id_fkey": "exploration",
+                        "exploration_run_research_run_id_fkey": "research_run",
                     },
                     "exploration_company": {
                         "exploration_company_exploration_run_id_fkey": "exploration_run",
@@ -210,6 +211,7 @@ async def test_initial_migration_creates_current_schema() -> None:
                         "ix_exploration_obligation_exploration_id",
                     ),
                     ("exploration_run", "ix_exploration_run_exploration_id"),
+                    ("exploration_run", "ix_exploration_run_research_run_id"),
                     ("exploration_company", "ix_exploration_company_company_id"),
                     (
                         "exploration_evidence",
@@ -244,6 +246,7 @@ async def test_initial_migration_creates_current_schema() -> None:
                     "exploration_run": {
                         "id",
                         "exploration_id",
+                        "research_run_id",
                         "status",
                         "started_at",
                         "completed_at",
@@ -295,7 +298,9 @@ async def test_initial_migration_creates_current_schema() -> None:
                         "description",
                         "created_at",
                     },
-                    "exploration_run": {"id", "exploration_id", "status", "started_at"},
+                    "exploration_run": {
+                        "id", "exploration_id", "research_run_id", "status", "started_at"
+                    },
                     "exploration_company": {
                         "id",
                         "exploration_run_id",

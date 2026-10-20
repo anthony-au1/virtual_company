@@ -48,6 +48,13 @@ is valid.
 Obligations remain shared, reusable questions or conditions to establish about
 each selected company. They do not discover or shortlist companies.
 
+Each ExplorationRun references exactly one ResearchRun, which identifies the
+Research result set used to select that run's companies. Campaign is obtained
+through ResearchRun and is not duplicated on ExplorationRun. Each
+ExplorationCompany continues to reference a ResearchCompany. Runs under one
+Exploration may use different ResearchRuns. A referenced ResearchRun cannot be
+deleted, preserving the provenance link.
+
 Exploration CRUD and obligation generation/regeneration are implemented. Company
 selection, run start/execution, Company × Obligation investigation, query
 generation, external search, Evidence orchestration, Fact derivation, and

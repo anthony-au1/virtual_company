@@ -261,28 +261,37 @@ Relationship: `exploration` 1 -> N `exploration_obligation`.
 
 Table: `exploration_run`
 
-Represents one execution of an Exploration. The persistence entity exists;
-starting and executing an Exploration Run is planned behavior.
+Represents one execution of an Exploration based on exactly one Research Run.
+The Research Run identifies the result set from which companies for this
+Exploration Run are selected. Starting and executing an Exploration Run remains
+planned behavior.
 
-| Column           | PostgreSQL type | Nullable | Description           |
-|------------------|-----------------|---------:|-----------------------|
-| `id`             | UUID            |       NO | Run ID                |
-| `exploration_id` | UUID            |       NO | Exploration being run |
-| `status`         | VARCHAR(30)     |       NO | Run status            |
-| `started_at`     | TIMESTAMPTZ     |       NO | Execution start time  |
-| `completed_at`   | TIMESTAMPTZ     |      YES | Completion time       |
+| Column            | PostgreSQL type | Nullable | Description                          |
+|-------------------|-----------------|---------:|--------------------------------------|
+| `id`              | UUID            |       NO | Run ID                               |
+| `exploration_id`  | UUID            |       NO | Exploration being run                |
+| `research_run_id` | UUID            |       NO | Research result set used by this run |
+| `status`          | VARCHAR(30)     |       NO | Run status                           |
+| `started_at`      | TIMESTAMPTZ     |       NO | Execution start time                 |
+| `completed_at`    | TIMESTAMPTZ     |      YES | Completion time                      |
 
 Constraints:
 
 - PK (`id`)
 - FK (`exploration_id`) -> `exploration` (`id`)
+- FK (`research_run_id`) -> `research_run` (`id`)
 
 Indexes:
 
 - PK (`id`)
 - `ix_exploration_run_exploration_id` (`exploration_id`)
+- `ix_exploration_run_research_run_id` (`research_run_id`)
 
 Relationship: `exploration` 1 -> N `exploration_run`.
+Each run references one ResearchRun; Campaign is derived through that
+ResearchRun and is not duplicated here. ResearchRun deletion is restricted
+while an ExplorationRun references it, preserving provenance. Multiple runs
+under one Exploration may reference different ResearchRuns.
 
 Table: `exploration_company`
 
@@ -448,6 +457,9 @@ Exploration
 │
 └── ExplorationRun
        │
+       ├── ResearchRun ─────────────→ Campaign
+       │      (selected companies originate from this result set)
+       │
        └── ExplorationCompany ─────→ ResearchCompany
               │
               └── ExplorationEvidence
@@ -482,6 +494,7 @@ workflow requirement only; no run-start repository behavior is implemented.
 erDiagram
     exploration ||--o{ exploration_obligation: defines
     exploration ||--o{ exploration_run: executes
+    research_run ||--o{ exploration_run: supplies_results
     exploration_run ||--o{ exploration_company: associates_selected
     research_company ||--o{ exploration_company: identifies
     exploration_company ||--o{ exploration_evidence: concerns

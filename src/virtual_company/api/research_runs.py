@@ -18,7 +18,10 @@ from virtual_company.services import (
     ResearchResultsService,
     ResearchRunNotFoundError,
 )
-from virtual_company.services.research_results import ActiveResearchRunError
+from virtual_company.services.research_results import (
+    ActiveResearchRunError,
+    ReferencedResearchRunError,
+)
 
 router = APIRouter(prefix="/api/v1/research-runs", tags=["research-runs"])
 ResearchResultsServiceDependency = Annotated[
@@ -72,6 +75,10 @@ async def delete_research_run(
     try:
         deleted = await service.delete_run(run_id)
     except ActiveResearchRunError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(error)
+        ) from error
+    except ReferencedResearchRunError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(error)
         ) from error
