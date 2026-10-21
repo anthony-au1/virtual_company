@@ -149,6 +149,20 @@ class ExplorationRunResponse(BaseModel):
     company_ids: list[UUID]
 
 
+class ExplorationRunSummaryResponse(BaseModel):
+    """Compact run provenance and selection summary for Exploration detail."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    research_run_id: UUID
+    status: str
+    started_at: datetime
+    completed_at: datetime | None
+    campaign_name: str
+    selected_company_count: int
+
+
 class CampaignResponse(BaseModel):
     """Campaign data returned by the API."""
 

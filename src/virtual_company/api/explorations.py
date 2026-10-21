@@ -13,6 +13,7 @@ from virtual_company.api.models import (
     ExplorationObligationResponse,
     ExplorationResponse,
     ExplorationRunResponse,
+    ExplorationRunSummaryResponse,
     ExplorationRunStartRequest,
     ExplorationUpdateRequest,
 )
@@ -65,6 +66,20 @@ async def start_exploration_run(
         completed_at=started.run.completed_at,
         company_ids=started.company_ids,
     )
+
+
+@router.get(
+    "/{exploration_id}/runs",
+    response_model=list[ExplorationRunSummaryResponse],
+)
+async def list_exploration_runs(
+    exploration_id: UUID,
+    service: ExplorationServiceDependency,
+) -> list[ExplorationRunSummaryResponse]:
+    runs = await service.list_runs(exploration_id)
+    if runs is None:
+        raise HTTPException(status_code=404, detail="Exploration not found")
+    return [ExplorationRunSummaryResponse.model_validate(run) for run in runs]
 
 
 @router.post(

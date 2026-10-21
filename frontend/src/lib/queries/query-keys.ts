@@ -9,3 +9,5 @@ export const explorationQueryKey = (explorationId: string) =>
   ["exploration", explorationId] as const;
 export const explorationObligationsQueryKey = (explorationId: string) =>
   ["exploration-obligations", explorationId] as const;
+export const explorationRunsQueryKey = (explorationId: string) =>
+  ["exploration-runs", explorationId] as const;

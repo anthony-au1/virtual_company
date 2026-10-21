@@ -15,6 +15,7 @@ import { ExplorationsPage } from "@/components/explorations/explorations-page";
 import type {
   Exploration,
   ExplorationObligation,
+  ExplorationRunSummary,
 } from "@/lib/api/explorations";
 import { ApiError } from "@/lib/api/client";
 import { explorationsQueryKey } from "@/lib/queries/query-keys";
@@ -32,6 +33,7 @@ vi.mock("@/lib/api/explorations", () => ({
   updateExploration: vi.fn(),
   deleteExploration: vi.fn(),
   listExplorationObligations: vi.fn(),
+  listExplorationRuns: vi.fn(),
 }));
 
 import {
@@ -39,6 +41,7 @@ import {
   deleteExploration,
   getExploration,
   listExplorationObligations,
+  listExplorationRuns,
   listExplorations,
   updateExploration,
 } from "@/lib/api/explorations";
@@ -49,6 +52,7 @@ const mockCreate = vi.mocked(createExploration);
 const mockUpdate = vi.mocked(updateExploration);
 const mockDelete = vi.mocked(deleteExploration);
 const mockObligations = vi.mocked(listExplorationObligations);
+const mockRuns = vi.mocked(listExplorationRuns);
 
 function renderWithQuery(ui: React.ReactNode) {
   const client = new QueryClient({
@@ -79,7 +83,10 @@ function obligation(description: string): ExplorationObligation {
   return { description, created_at: "2026-10-06T00:00:00Z" };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockRuns.mockResolvedValue([]);
+});
 afterEach(() => cleanup());
 
 describe("ExplorationsPage", () => {
@@ -375,8 +382,14 @@ describe("ExplorationDetailsPage", () => {
     expect(screen.getByText("Assess market demand.")).toBeInTheDocument();
     expect(screen.getByText("2 generated")).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Edit Exploration" }),
+      await screen.findByRole("link", { name: "Edit Exploration" }),
     ).toHaveAttribute("href", "/explorations/exploration-1/edit");
+    expect(
+      screen.getByRole("link", { name: "New Exploration Run" }),
+    ).toHaveAttribute("href", "/explorations/exploration-1/runs/new");
+    expect(
+      await screen.findByText(/No Exploration Runs yet/),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /add obligation/i }),
     ).not.toBeInTheDocument();
@@ -386,6 +399,37 @@ describe("ExplorationDetailsPage", () => {
     expect(
       screen.queryByRole("button", { name: /delete obligation/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("lists run provenance and disables editing after a run exists", async () => {
+    const runs: ExplorationRunSummary[] = [
+      {
+        id: "exploration-run-1",
+        research_run_id: "research-run-1",
+        status: "RUNNING",
+        started_at: "2026-10-10T10:00:00Z",
+        completed_at: null,
+        campaign_name: "Payments research",
+        selected_company_count: 2,
+      },
+    ];
+    mockGet.mockResolvedValue(exploration());
+    mockObligations.mockResolvedValue([]);
+    mockRuns.mockResolvedValue(runs);
+
+    renderWithQuery(<ExplorationDetailsPage explorationId="exploration-1" />);
+
+    expect(
+      await screen.findByText("Research Run from Payments research"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("2 selected companies")).toBeInTheDocument();
+    expect(screen.getByText("RUNNING")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Edit Exploration" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("link", { name: "New Exploration Run" }),
+    ).toBeInTheDocument();
   });
 
   it("treats zero generated obligations as a valid empty state", async () => {

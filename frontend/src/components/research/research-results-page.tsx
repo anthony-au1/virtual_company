@@ -217,7 +217,7 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
         ) : (
           <div className="space-y-3">
             {visibleCompanies.map((company) => (
-              <CompanyCard company={company} key={company.company_id} />
+              <ResearchCompanyCard company={company} key={company.company_id} />
             ))}
           </div>
         )}
@@ -330,12 +330,31 @@ function ConfiguredCriterion({
   );
 }
 
-function CompanyCard({ company }: { company: ResearchCompany }) {
+export function ResearchCompanyCard({
+  company,
+  selected,
+  onSelectedChange,
+}: {
+  company: ResearchCompany;
+  selected?: boolean;
+  onSelectedChange?: (selected: boolean) => void;
+}) {
   return (
     <article className="rounded-lg border p-4 sm:p-5">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
+            {onSelectedChange ? (
+              <label className="text-muted-foreground inline-flex min-h-8 shrink-0 items-center gap-2 text-sm">
+                <input
+                  checked={selected ?? false}
+                  className="border-input accent-primary size-4 rounded"
+                  onChange={(event) => onSelectedChange(event.target.checked)}
+                  type="checkbox"
+                />
+                <span className="sr-only">Select {company.name}</span>
+              </label>
+            ) : null}
             <h3 className="text-base font-semibold">{company.name}</h3>
             {company.website ? (
               <a

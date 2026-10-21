@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.db.models import ExplorationCompany, ExplorationRun
+from virtual_company.db.models import (
+    Campaign,
+    ExplorationCompany,
+    ExplorationRun,
+    ResearchRun,
+)
 from virtual_company.repositories._helpers import apply_updates, create_values
 from virtual_company.repositories.dtos import ExplorationRunCreate, ExplorationRunUpdate
 
@@ -56,3 +61,26 @@ class ExplorationRunRepository:
             ExplorationCompany.exploration_run_id == run_id
         )
         return list(await self._session.scalars(statement))
+
+    async def list_with_summary(
+        self, exploration_id: UUID
+    ) -> list[tuple[ExplorationRun, str, int]]:
+        """Load run provenance and selected-company counts in one query."""
+        statement = (
+            select(
+                ExplorationRun,
+                Campaign.name,
+                func.count(ExplorationCompany.id).label("selected_company_count"),
+            )
+            .join(ResearchRun, ResearchRun.id == ExplorationRun.research_run_id)
+            .join(Campaign, Campaign.id == ResearchRun.campaign_id)
+            .outerjoin(
+                ExplorationCompany,
+                ExplorationCompany.exploration_run_id == ExplorationRun.id,
+            )
+            .where(ExplorationRun.exploration_id == exploration_id)
+            .group_by(ExplorationRun.id, Campaign.id)
+            .order_by(ExplorationRun.started_at.desc())
+        )
+        rows = (await self._session.execute(statement)).all()
+        return [(run, campaign_name, count) for run, campaign_name, count in rows]

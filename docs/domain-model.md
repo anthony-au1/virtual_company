@@ -66,6 +66,11 @@ the same ResearchRun may be reused. Starting a run creates only the
 ExplorationRun and its ExplorationCompany references. It does not execute
 Exploration research. The parent Exploration is locked at start using the same
 row lock as PATCH and DELETE, establishing the existing immutability boundary.
+In the UI, the user starts from Exploration Detail, selects a completed
+ResearchRun, reviews that run's results and qualification context, selects
+companies, and starts the run. The UI returns to Exploration Detail, where the
+run's ResearchRun provenance and selected-company count are listed. This flow
+stops after saving the selection snapshot.
 
 Company × Obligation investigation, query generation, external search,
 Evidence orchestration, Fact derivation, and Hypothesis derivation remain

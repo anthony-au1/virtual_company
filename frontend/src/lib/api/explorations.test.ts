@@ -5,6 +5,45 @@ import * as explorationApi from "@/lib/api/explorations";
 afterEach(() => vi.restoreAllMocks());
 
 describe("Exploration API", () => {
+  it("lists Exploration runs and starts a run with only its ResearchRun and companies", async () => {
+    const responsePayload = {
+      id: "exploration-run-1",
+      exploration_id: "exploration/1",
+      research_run_id: "research-run-1",
+      status: "RUNNING",
+      started_at: "2026-10-15T10:00:00Z",
+      completed_at: null,
+      company_ids: ["company-1", "company-2"],
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(JSON.stringify(responsePayload), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    await explorationApi.listExplorationRuns("exploration/1");
+    await explorationApi.startExplorationRun("exploration/1", {
+      research_run_id: "research-run-1",
+      company_ids: ["company-1", "company-2"],
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/backend/api/v1/explorations/exploration%2F1/runs",
+    );
+    expect(fetchMock.mock.calls[1]).toEqual([
+      "/api/backend/api/v1/explorations/exploration%2F1/runs",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          research_run_id: "research-run-1",
+          company_ids: ["company-1", "company-2"],
+        }),
+      }),
+    ]);
+  });
+
   it("uses the existing list, create, read, update, and obligation endpoints", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       async () =>

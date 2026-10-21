@@ -14,6 +14,31 @@ export type ExplorationObligation = {
   created_at: string;
 };
 
+export type ExplorationRunSummary = {
+  id: string;
+  research_run_id: string;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  campaign_name: string;
+  selected_company_count: number;
+};
+
+export type StartExplorationRunPayload = {
+  research_run_id: string;
+  company_ids: string[];
+};
+
+export type StartedExplorationRun = {
+  id: string;
+  exploration_id: string;
+  research_run_id: string;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  company_ids: string[];
+};
+
 export type CreateExplorationPayload = {
   business_context: string;
   max_obligations: number;
@@ -62,5 +87,23 @@ export function listExplorationObligations(
 ): Promise<ExplorationObligation[]> {
   return apiFetch<ExplorationObligation[]>(
     `/api/v1/explorations/${encodeURIComponent(explorationId)}/obligations`,
+  );
+}
+
+export function listExplorationRuns(
+  explorationId: string,
+): Promise<ExplorationRunSummary[]> {
+  return apiFetch<ExplorationRunSummary[]>(
+    `/api/v1/explorations/${encodeURIComponent(explorationId)}/runs`,
+  );
+}
+
+export function startExplorationRun(
+  explorationId: string,
+  payload: StartExplorationRunPayload,
+): Promise<StartedExplorationRun> {
+  return apiFetch<StartedExplorationRun>(
+    `/api/v1/explorations/${encodeURIComponent(explorationId)}/runs`,
+    { method: "POST", body: payload },
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Pencil, RefreshCw } from "lucide-react";
+import { ArrowLeft, Plus, Pencil, RefreshCw } from "lucide-react";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
@@ -10,10 +10,12 @@ import { DeleteExplorationAction } from "@/components/explorations/delete-explor
 import {
   getExploration,
   listExplorationObligations,
+  listExplorationRuns,
 } from "@/lib/api/explorations";
 import {
   explorationObligationsQueryKey,
   explorationQueryKey,
+  explorationRunsQueryKey,
 } from "@/lib/queries/query-keys";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +31,10 @@ export function ExplorationDetailsPage({
   const obligationsQuery = useQuery({
     queryKey: explorationObligationsQueryKey(explorationId),
     queryFn: () => listExplorationObligations(explorationId),
+  });
+  const runsQuery = useQuery({
+    queryKey: explorationRunsQueryKey(explorationId),
+    queryFn: () => listExplorationRuns(explorationId),
   });
 
   if (explorationQuery.isPending) {
@@ -74,6 +80,10 @@ export function ExplorationDetailsPage({
   }
 
   const exploration = explorationQuery.data;
+  const editLocked =
+    runsQuery.isPending ||
+    runsQuery.isError ||
+    Boolean(runsQuery.data && runsQuery.data.length > 0);
 
   return (
     <section aria-labelledby="page-title" className="mx-auto max-w-5xl">
@@ -93,15 +103,107 @@ export function ExplorationDetailsPage({
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">{exploration.status}</Badge>
           <DeleteExplorationAction explorationId={explorationId} />
-          <Link
-            className={cn(buttonVariants({ variant: "outline" }))}
-            href={`/explorations/${explorationId}/edit`}
-          >
-            <Pencil aria-hidden="true" data-icon="inline-start" />
-            Edit Exploration
-          </Link>
+          {editLocked ? (
+            <Button
+              disabled
+              title={
+                runsQuery.data && runsQuery.data.length > 0
+                  ? "Business Context and obligation settings are locked after the first run."
+                  : "Run status is being checked before editing."
+              }
+              variant="outline"
+            >
+              <Pencil aria-hidden="true" data-icon="inline-start" />
+              Edit Exploration
+            </Button>
+          ) : (
+            <Link
+              className={cn(buttonVariants({ variant: "outline" }))}
+              href={`/explorations/${explorationId}/edit`}
+            >
+              <Pencil aria-hidden="true" data-icon="inline-start" />
+              Edit Exploration
+            </Link>
+          )}
         </div>
       </header>
+
+      <section
+        aria-labelledby="runs-title"
+        className="mt-6 rounded-lg border p-4 sm:p-5"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="runs-title" className="text-sm font-semibold">
+              Exploration Runs
+            </h2>
+            <p className="text-muted-foreground mt-1 text-xs leading-5">
+              Each run saves a company selection from one Research Run.
+            </p>
+          </div>
+          <Link
+            className={cn(buttonVariants({ size: "sm" }))}
+            href={`/explorations/${explorationId}/runs/new`}
+          >
+            <Plus aria-hidden="true" data-icon="inline-start" />
+            New Exploration Run
+          </Link>
+        </div>
+
+        {runsQuery.isPending ? (
+          <p className="text-muted-foreground mt-4 text-sm" role="status">
+            Loading Exploration Runs…
+          </p>
+        ) : runsQuery.isError ? (
+          <div className="mt-4" role="alert">
+            <p className="text-destructive text-sm">
+              Exploration Runs could not be loaded.
+            </p>
+            <Button
+              className="mt-2"
+              onClick={() => void runsQuery.refetch()}
+              size="sm"
+              variant="outline"
+            >
+              Try again
+            </Button>
+          </div>
+        ) : runsQuery.data.length === 0 ? (
+          <p className="text-muted-foreground mt-4 rounded-md border border-dashed p-4 text-sm">
+            No Exploration Runs yet. Start one to save a company selection from
+            Research.
+          </p>
+        ) : (
+          <ul className="mt-4 space-y-2">
+            {runsQuery.data.map((run, index) => (
+              <li
+                className="bg-muted/40 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-md px-3 py-3"
+                key={run.id}
+              >
+                <div className="min-w-0">
+                  <p className="font-medium">Run {index + 1}</p>
+                  <p className="text-muted-foreground mt-0.5 text-sm">
+                    Research Run from {run.campaign_name}
+                  </p>
+                  <p className="text-muted-foreground mt-1 font-mono text-xs">
+                    Research Run {run.research_run_id}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Badge variant="secondary">{run.status}</Badge>
+                  <span className="text-muted-foreground text-sm">
+                    {run.selected_company_count} selected{" "}
+                    {run.selected_company_count === 1 ? "company" : "companies"}
+                  </span>
+                  <span className="text-muted-foreground text-xs">
+                    Started {formatDate(run.started_at)}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.85fr)]">
         <section className="h-fit rounded-lg border p-4 sm:p-5">

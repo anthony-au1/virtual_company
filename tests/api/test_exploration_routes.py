@@ -69,6 +69,11 @@ class ExplorationServiceStub:
             if item.exploration_id == exploration_id
         ]
 
+    async def list_runs(self, exploration_id):
+        if exploration_id not in self.explorations:
+            return None
+        return []
+
     async def delete(self, exploration_id: UUID) -> bool:
         item = self.explorations.get(exploration_id)
         if item is None:

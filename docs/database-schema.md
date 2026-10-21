@@ -167,6 +167,8 @@ have a persisted `ResearchCompanyQualification` row for the chosen ResearchRun;
 qualification status does not gate eligibility. One Exploration can have
 multiple ExplorationRuns, and each may refer to a different ResearchRun. A
 ResearchRun may be reused. Run creation does not execute Exploration research.
+`GET /api/v1/explorations/{exploration_id}/runs` returns compact run summaries
+with Campaign name and selected-company count for Exploration Detail.
 
 ```text
 Business Context

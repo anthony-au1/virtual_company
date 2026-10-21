@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +62,17 @@ class ExplorationCompanySelectionError(ValueError):
 class StartedExplorationRun:
     run: ExplorationRun
     company_ids: list[UUID]
+
+
+@dataclass(frozen=True)
+class ExplorationRunSummary:
+    id: UUID
+    research_run_id: UUID
+    status: str
+    started_at: datetime
+    completed_at: datetime | None
+    campaign_name: str
+    selected_company_count: int
 
 
 class ExplorationService:
@@ -199,6 +211,26 @@ class ExplorationService:
             )
             await self._run_companies.create_many(run.id, unique_company_ids)
             return StartedExplorationRun(run=run, company_ids=unique_company_ids)
+
+    async def list_runs(
+        self, exploration_id: UUID
+    ) -> list[ExplorationRunSummary] | None:
+        """List run summaries, returning None when the Exploration is missing."""
+        if await self._explorations.get_by_id(exploration_id) is None:
+            return None
+        return [
+            ExplorationRunSummary(
+                id=run.id,
+                research_run_id=run.research_run_id,
+                status=run.status,
+                started_at=run.started_at,
+                completed_at=run.completed_at,
+                campaign_name=campaign_name,
+                selected_company_count=selected_company_count,
+            )
+            for run, campaign_name, selected_company_count in
+            await self._runs.list_with_summary(exploration_id)
+        ]
 
     async def list_obligations(
         self, exploration_id: UUID
