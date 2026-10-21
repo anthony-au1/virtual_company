@@ -31,13 +31,16 @@ class Settings(BaseSettings):
     llm_research_provider: str | None = None
     llm_extraction_provider: str | None = None
     llm_obligation_generation_provider: str | None = None
+    llm_exploration_query_generation_provider: str | None = None
     openai_api_key: SecretStr | None = None
     openai_research_model: str = "gpt-5.6-terra"
     openai_extraction_model: str = "gpt-5.6-luna"
     openai_obligation_generation_model: str = "gpt-5.6-terra"
+    openai_exploration_query_generation_model: str = "gpt-5.6-terra"
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-sonnet-5"
     anthropic_obligation_generation_model: str = "claude-sonnet-5"
+    anthropic_exploration_query_generation_model: str = "claude-sonnet-5"
     web_search_provider: Literal["tavily", "exa"] = "tavily"
     web_search_max_results: int = Field(default=10, ge=1, le=10)
     web_search_max_total_results: int = Field(default=30, ge=1)
