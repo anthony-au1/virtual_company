@@ -14,6 +14,18 @@ class ResearchCompanyQualificationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def list_member_company_ids(
+        self, research_run_id: UUID, company_ids: list[UUID]
+    ) -> set[UUID]:
+        """Return selected IDs present in this run's persisted qualification snapshot."""
+        if not company_ids:
+            return set()
+        statement = select(ResearchCompanyQualification.company_id).where(
+            ResearchCompanyQualification.research_run_id == research_run_id,
+            ResearchCompanyQualification.company_id.in_(company_ids),
+        )
+        return set(await self._session.scalars(statement))
+
     async def upsert(
         self, data: ResearchCompanyQualificationUpsert
     ) -> ResearchCompanyQualification:

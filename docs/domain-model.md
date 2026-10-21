@@ -55,11 +55,21 @@ ExplorationCompany continues to reference a ResearchCompany. Runs under one
 Exploration may use different ResearchRuns. A referenced ResearchRun cannot be
 deleted, preserving the provenance link.
 
-Exploration CRUD and obligation generation/regeneration are implemented. Company
-selection, run start/execution, Company × Obligation investigation, query
-generation, external search, Evidence orchestration, Fact derivation, and
-Hypothesis derivation are future workflow work. Future execution must lock the
-parent Exploration row at run start against PATCH/DELETE and enforce same-
-Exploration Evidence associations plus same-company Evidence→Fact and
-Fact→Hypothesis provenance. Those execution invariants are not currently
-enforced by an Exploration workflow.
+To start an ExplorationRun, the user chooses one ResearchRun and one or more
+companies from that run's persisted qualification results, then calls the
+Exploration run-start endpoint. Each selected company must have a
+`ResearchCompanyQualification` snapshot for that ResearchRun. Qualification
+status does not gate selection: `QUALIFIED`, `NOT_QUALIFIED`, and
+`INSUFFICIENT_EVIDENCE` companies are all eligible. One Exploration may have
+multiple ExplorationRuns; those runs may reference different ResearchRuns, and
+the same ResearchRun may be reused. Starting a run creates only the
+ExplorationRun and its ExplorationCompany references. It does not execute
+Exploration research. The parent Exploration is locked at start using the same
+row lock as PATCH and DELETE, establishing the existing immutability boundary.
+
+Company × Obligation investigation, query generation, external search,
+Evidence orchestration, Fact derivation, and Hypothesis derivation remain
+future workflow work. Future execution must enforce same-Exploration Evidence
+associations plus same-company Evidence→Fact and Fact→Hypothesis provenance.
+Those execution invariants are not currently enforced by an Exploration
+workflow.

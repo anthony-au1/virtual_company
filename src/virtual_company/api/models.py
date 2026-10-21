@@ -102,6 +102,15 @@ class ExplorationUpdateRequest(BaseModel):
         return self
 
 
+class ExplorationRunStartRequest(BaseModel):
+    """Research result set and companies selected to start an ExplorationRun."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    research_run_id: UUID
+    company_ids: list[UUID] = Field(min_length=1)
+
+
 class ExplorationResponse(BaseModel):
     """Exploration data returned by the API."""
 
@@ -124,6 +133,20 @@ class ExplorationObligationResponse(BaseModel):
     exploration_id: UUID
     description: str
     created_at: datetime
+
+
+class ExplorationRunResponse(BaseModel):
+    """Created ExplorationRun and its selected ResearchCompany references."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    exploration_id: UUID
+    research_run_id: UUID
+    status: str
+    started_at: datetime
+    completed_at: datetime | None
+    company_ids: list[UUID]
 
 
 class CampaignResponse(BaseModel):

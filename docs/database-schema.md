@@ -152,13 +152,21 @@ criterion-level results for that run/company pair.
 
 ## Exploration entities
 
-These tables describe the Exploration domain and its planned provenance model.
-Currently implemented behavior includes Exploration CRUD, obligation generation
-and regeneration, persistence entities/repositories, and lifecycle restrictions.
-Company selection and Exploration Run start/execution are planned, followed by
+These tables describe the Exploration domain and its provenance model.
+Implemented behavior includes Exploration CRUD, obligation generation and
+regeneration, lifecycle restrictions, and starting an ExplorationRun with a
+selected-company snapshot. Exploration research execution remains future work:
 Company × Obligation investigation, query generation, external search, Evidence
-collection orchestration, Fact derivation, and Hypothesis derivation. These
-execution steps are not currently orchestrated by the application.
+collection orchestration, Fact derivation, and Hypothesis derivation are not
+currently orchestrated by the application.
+
+The API lifecycle is Exploration → choose one ResearchRun → choose one or more
+companies from that run → `POST /api/v1/explorations/{exploration_id}/runs` →
+ExplorationRun plus ExplorationCompany references. Every selected company must
+have a persisted `ResearchCompanyQualification` row for the chosen ResearchRun;
+qualification status does not gate eligibility. One Exploration can have
+multiple ExplorationRuns, and each may refer to a different ResearchRun. A
+ResearchRun may be reused. Run creation does not execute Exploration research.
 
 ```text
 Business Context
@@ -261,10 +269,11 @@ Relationship: `exploration` 1 -> N `exploration_obligation`.
 
 Table: `exploration_run`
 
-Represents one execution of an Exploration based on exactly one Research Run.
-The Research Run identifies the result set from which companies for this
-Exploration Run are selected. Starting and executing an Exploration Run remains
-planned behavior.
+Represents one Exploration run based on exactly one Research Run. The Research
+Run identifies the persisted qualification result set from which its selected
+companies must come. Starting the run stores that company selection as
+`ExplorationCompany` references; investigation and research execution remain
+separate future behavior.
 
 | Column            | PostgreSQL type | Nullable | Description                          |
 |-------------------|-----------------|---------:|--------------------------------------|
@@ -486,9 +495,9 @@ resolve through their Evidence to the same `ExplorationCompany`. These rules
 are not currently enforced by an executing Exploration workflow. Company
 ownership is not duplicated on Fact or Hypothesis.
 
-Future run creation/start must acquire the same parent Exploration row lock used
-by PATCH and DELETE before establishing the run lifecycle boundary. This is a
-workflow requirement only; no run-start repository behavior is implemented.
+Run start acquires the same parent Exploration row lock used by PATCH and DELETE
+before validating the ResearchRun or creating the ExplorationRun and selected
+company rows. The transaction commits or rolls back the complete snapshot.
 
 ```mermaid
 erDiagram

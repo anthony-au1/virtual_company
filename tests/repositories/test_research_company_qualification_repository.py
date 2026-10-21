@@ -34,3 +34,21 @@ async def test_upsert_updates_only_snapshot_payload() -> None:
     )
     assert "RETURNING research_company_qualification.id" in sql
     session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_membership_query_checks_snapshot_without_filtering_status() -> None:
+    company_id = uuid4()
+    session = MagicMock(spec=AsyncSession)
+    session.scalars = AsyncMock(return_value=[company_id])
+
+    eligible = await ResearchCompanyQualificationRepository(
+        session
+    ).list_member_company_ids(uuid4(), [company_id])
+
+    assert eligible == {company_id}
+    statement = session.scalars.await_args.args[0]
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+    assert "research_company_qualification.research_run_id" in sql
+    assert "research_company_qualification.company_id IN" in sql
+    assert "research_company_qualification.status" not in sql

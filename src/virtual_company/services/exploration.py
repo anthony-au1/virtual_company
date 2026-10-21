@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.db.models import Exploration, ExplorationObligation
+from virtual_company.db.models import Exploration, ExplorationObligation, ExplorationRun
 from virtual_company.repositories.dtos import (
     ExplorationCreate,
+    ExplorationRunCreate,
     ExplorationUpdate,
+)
+from virtual_company.repositories.exploration_company import (
+    ExplorationCompanyRepository,
 )
 from virtual_company.repositories.exploration import ExplorationRepository
 from virtual_company.repositories.exploration_obligation import (
     ExplorationObligationRepository,
 )
 from virtual_company.repositories.exploration_run import ExplorationRunRepository
+from virtual_company.repositories.research_company_qualification import (
+    ResearchCompanyQualificationRepository,
+)
+from virtual_company.repositories.research_run import ResearchRunRepository
 from virtual_company.services.obligation_generator import (
     ObligationGenerationResult,
     ObligationGenerator,
@@ -36,6 +45,24 @@ class ExplorationObligationGenerationError(RuntimeError):
     """Raised when obligation generation fails for technical reasons."""
 
 
+class ExplorationStartNotFoundError(LookupError):
+    """Raised when a source ResearchRun does not exist."""
+
+
+class ExplorationStartConflictError(ValueError):
+    """Raised when a source ResearchRun is not finalized."""
+
+
+class ExplorationCompanySelectionError(ValueError):
+    """Raised when one or more selected companies are outside the result set."""
+
+
+@dataclass(frozen=True)
+class StartedExplorationRun:
+    run: ExplorationRun
+    company_ids: list[UUID]
+
+
 class ExplorationService:
     """Coordinate application behavior for Explorations and Obligations."""
 
@@ -48,6 +75,9 @@ class ExplorationService:
         self._explorations = ExplorationRepository(session)
         self._obligations = ExplorationObligationRepository(session)
         self._runs = ExplorationRunRepository(session)
+        self._run_companies = ExplorationCompanyRepository(session)
+        self._research_runs = ResearchRunRepository(session)
+        self._qualifications = ResearchCompanyQualificationRepository(session)
         self._generator = generator or create_configured_obligation_generator()
 
     async def create(
@@ -133,6 +163,42 @@ class ExplorationService:
             await self._obligations.delete_for_exploration_id(exploration_id)
             await self._explorations.delete(exploration)
             return True
+
+    async def start_run(
+        self, exploration_id: UUID, research_run_id: UUID, company_ids: list[UUID]
+    ) -> StartedExplorationRun | None:
+        """Create a run and its selected-company snapshot under the parent lock."""
+        unique_company_ids = list(dict.fromkeys(company_ids))
+        async with self._session.begin():
+            exploration = await self._explorations.get_by_id_for_update(exploration_id)
+            if exploration is None:
+                return None
+
+            research_run = await self._research_runs.get_by_id(research_run_id)
+            if research_run is None:
+                raise ExplorationStartNotFoundError("Research run not found")
+            if research_run.status != "COMPLETED":
+                raise ExplorationStartConflictError(
+                    "Only completed ResearchRuns can start an ExplorationRun"
+                )
+
+            eligible_ids = await self._qualifications.list_member_company_ids(
+                research_run_id, unique_company_ids
+            )
+            if eligible_ids != set(unique_company_ids):
+                raise ExplorationCompanySelectionError(
+                    "One or more selected companies are not in this ResearchRun"
+                )
+
+            run = await self._runs.create(
+                ExplorationRunCreate(
+                    exploration_id=exploration_id,
+                    research_run_id=research_run_id,
+                    status="RUNNING",
+                )
+            )
+            await self._run_companies.create_many(run.id, unique_company_ids)
+            return StartedExplorationRun(run=run, company_ids=unique_company_ids)
 
     async def list_obligations(
         self, exploration_id: UUID

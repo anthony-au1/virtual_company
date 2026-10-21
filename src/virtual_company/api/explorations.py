@@ -12,6 +12,8 @@ from virtual_company.api.models import (
     ExplorationCreateRequest,
     ExplorationObligationResponse,
     ExplorationResponse,
+    ExplorationRunResponse,
+    ExplorationRunStartRequest,
     ExplorationUpdateRequest,
 )
 from virtual_company.repositories.dtos import (
@@ -19,6 +21,9 @@ from virtual_company.repositories.dtos import (
 )
 from virtual_company.services import ExplorationService
 from virtual_company.services.exploration import (
+    ExplorationCompanySelectionError,
+    ExplorationStartConflictError,
+    ExplorationStartNotFoundError,
     ExplorationLifecycleConflictError,
     ExplorationObligationGenerationError,
 )
@@ -27,6 +32,39 @@ router = APIRouter(prefix="/api/v1/explorations", tags=["explorations"])
 ExplorationServiceDependency = Annotated[
     ExplorationService, Depends(get_exploration_service)
 ]
+
+
+@router.post(
+    "/{exploration_id}/runs",
+    response_model=ExplorationRunResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def start_exploration_run(
+    exploration_id: UUID,
+    payload: ExplorationRunStartRequest,
+    service: ExplorationServiceDependency,
+) -> ExplorationRunResponse:
+    try:
+        started = await service.start_run(
+            exploration_id, payload.research_run_id, payload.company_ids
+        )
+    except ExplorationStartNotFoundError as error:
+        raise HTTPException(status_code=404, detail="ResearchRun not found") from error
+    except ExplorationStartConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ExplorationCompanySelectionError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if started is None:
+        raise HTTPException(status_code=404, detail="Exploration not found")
+    return ExplorationRunResponse(
+        id=started.run.id,
+        exploration_id=started.run.exploration_id,
+        research_run_id=started.run.research_run_id,
+        status=started.run.status,
+        started_at=started.run.started_at,
+        completed_at=started.run.completed_at,
+        company_ids=started.company_ids,
+    )
 
 
 @router.post(

@@ -26,6 +26,20 @@ class ExplorationCompanyRepository:
         await self._session.refresh(link)
         return link
 
+    async def create_many(
+        self, exploration_run_id: UUID, company_ids: list[UUID]
+    ) -> list[ExplorationCompany]:
+        """Stage the selected company references together and flush atomically."""
+        links = [
+            ExplorationCompany(
+                exploration_run_id=exploration_run_id, company_id=company_id
+            )
+            for company_id in company_ids
+        ]
+        self._session.add_all(links)
+        await self._session.flush()
+        return links
+
     async def get_by_id(self, link_id: UUID) -> ExplorationCompany | None:
         return await self._session.get(ExplorationCompany, link_id)
 
