@@ -5,9 +5,8 @@ from __future__ import annotations
 from time import perf_counter
 
 from virtual_company.observability import Observability, get_observability
-from virtual_company.research.models import WebPage
-from virtual_company.research.normalization import sanitize_observability_url
-from virtual_company.tools.web_fetch import WebFetchTool
+from virtual_company.tools.web_fetch import WebFetchTool, WebPage
+from virtual_company.utils.url_normalization import sanitize_observability_url
 
 
 class InstrumentedWebFetchTool:

@@ -6,7 +6,15 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Protocol
 
-from virtual_company.research.models import SearchResult
+from pydantic import BaseModel
+
+
+class SearchResult(BaseModel):
+    """One generic result returned by a web search provider."""
+
+    title: str
+    url: str
+    snippet: str | None = None
 
 
 @dataclass(frozen=True)

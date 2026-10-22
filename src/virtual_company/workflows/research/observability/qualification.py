@@ -10,9 +10,9 @@ from virtual_company.domain.qualification import (
     QualificationStatus,
     ResearchCompanyQualification,
 )
+from virtual_company.domain.research import QualificationFacts
 from virtual_company.observability import Observability, get_observability
-from virtual_company.research.models import (
-    QualificationFacts,
+from virtual_company.workflows.research.models import (
     QualificationFactsCacheEntry,
     QualificationFactsCacheStatus,
 )

@@ -8,9 +8,9 @@ import httpx
 from pydantic import SecretStr
 from tavily import AsyncTavilyClient, InvalidAPIKeyError, UsageLimitExceededError
 
-from virtual_company.research.models import SearchResult
 from virtual_company.tools.web_search import (
     SearchResponse,
+    SearchResult,
     SearchUsage,
     WebSearchAuthenticationError,
     WebSearchConfigurationError,

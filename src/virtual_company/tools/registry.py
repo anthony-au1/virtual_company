@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from virtual_company.config import Settings, get_settings
-from virtual_company.tools.exa_web_search import ExaWebSearchTool
-from virtual_company.tools.httpx_web_fetch import HttpxWebFetchTool
-from virtual_company.tools.instrumented_web_fetch import InstrumentedWebFetchTool
-from virtual_company.tools.instrumented_web_search import InstrumentedWebSearchTool
-from virtual_company.tools.tavily_web_search import TavilyWebSearchTool
-from virtual_company.tools.web_fetch import WebFetchTool
 from virtual_company.tools.web_search import WebSearchTool
+
+if TYPE_CHECKING:
+    from virtual_company.tools.web_fetch import WebFetchTool
 
 
 def create_web_search_tool(settings: Settings | None = None) -> WebSearchTool:
     """Build exactly one configured and instrumented web-search provider."""
+    from virtual_company.tools.exa_web_search import ExaWebSearchTool
+    from virtual_company.tools.instrumented_web_search import InstrumentedWebSearchTool
+    from virtual_company.tools.tavily_web_search import TavilyWebSearchTool
+
     resolved_settings = settings or get_settings()
     if resolved_settings.web_search_provider == "tavily":
         tool = TavilyWebSearchTool(
@@ -29,6 +32,9 @@ def create_web_search_tool(settings: Settings | None = None) -> WebSearchTool:
 
 def create_web_fetch_tool(settings: Settings | None = None) -> WebFetchTool:
     """Build the instrumented direct-HTTP fetch implementation."""
+    from virtual_company.tools.httpx_web_fetch import HttpxWebFetchTool
+    from virtual_company.tools.instrumented_web_fetch import InstrumentedWebFetchTool
+
     resolved_settings = settings or get_settings()
     return InstrumentedWebFetchTool(
         HttpxWebFetchTool(

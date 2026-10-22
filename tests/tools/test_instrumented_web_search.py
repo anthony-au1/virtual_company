@@ -7,10 +7,10 @@ from contextlib import contextmanager
 
 import pytest
 
-from virtual_company.research.models import SearchResult, WebPage
 from virtual_company.tools.instrumented_web_fetch import InstrumentedWebFetchTool
 from virtual_company.tools.instrumented_web_search import InstrumentedWebSearchTool
-from virtual_company.tools.web_search import SearchResponse, SearchUsage
+from virtual_company.tools.web_fetch import WebPage
+from virtual_company.tools.web_search import SearchResponse, SearchResult, SearchUsage
 
 
 class ObservabilityFake:

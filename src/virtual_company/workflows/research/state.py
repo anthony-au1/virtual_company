@@ -9,17 +9,15 @@ from virtual_company.domain.qualification import (
     CriterionQualification,
     ResearchCompanyQualification,
 )
-from virtual_company.research.models import (
-    DiscoveredCompany,
-    QualificationFactsCacheEntry,
-    SearchResult,
-    WebPage,
-)
+from virtual_company.domain.research import DiscoveredCompany
+from virtual_company.tools.web_fetch import WebPage
+from virtual_company.tools.web_search import SearchResult
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
     CompanyInvestigationState,
     ExtractedCompanyCandidate,
+    QualificationFactsCacheEntry,
     ResearchCompany,
     ValidatedResearchEvidence,
 )

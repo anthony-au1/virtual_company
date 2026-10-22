@@ -15,9 +15,9 @@ from virtual_company.domain.criteria import (
     campaign_criteria,
     normalize_subject,
 )
+from virtual_company.domain.research import QualificationFacts
 from virtual_company.llm.base import LLMProvider
-from virtual_company.research.models import (
-    QualificationFacts,
+from virtual_company.workflows.research.models import (
     QualificationFactsCacheEntry,
     QualificationFactsCacheStatus,
 )

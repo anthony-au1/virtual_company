@@ -12,9 +12,9 @@ import httpx
 from exa_py import AsyncExa
 from pydantic import SecretStr
 
-from virtual_company.research.models import SearchResult
 from virtual_company.tools.web_search import (
     SearchResponse,
+    SearchResult,
     WebSearchAuthenticationError,
     WebSearchConfigurationError,
     WebSearchError,

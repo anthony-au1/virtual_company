@@ -20,25 +20,22 @@ from virtual_company.domain.qualification import (
     ResearchCompanyQualification,
     ResearchCompanyQualificationStatus,
 )
-from virtual_company.repositories.dtos import ResearchEvidenceCreate
-from virtual_company.research.models import (
+from virtual_company.domain.research import (
     CategoricalEvidenceFact,
     DiscoveredCompany,
     EmployeeCountEvidenceFact,
     EvidenceCriterion,
     ExtractedEvidence,
-    ExtractedEvidenceItems,
     QualificationFacts,
-    QualificationFactsCacheEntry,
-    QualificationFactsCacheStatus,
-    SearchResult,
-    WebPage,
 )
+from virtual_company.repositories.dtos import ResearchEvidenceCreate
 from virtual_company.services.research import ResearchService
 from virtual_company.tools.web_fetch import (
     WebFetchHttpError,
     WebFetchTimeoutError,
+    WebPage,
 )
+from virtual_company.tools.web_search import SearchResult
 from virtual_company.workflows.research.graph import (
     ResearchWorkflow,
     _research_run_stop_reason,
@@ -57,9 +54,12 @@ from virtual_company.workflows.research.models import (
     ExtractedCompanyCandidate,
     ExtractedCompanyIdentities,
     ExtractedCompanyIdentity,
+    ExtractedEvidenceItems,
     GeneratedCompanySearchQueries,
     GeneratedSearchQueries,
     InvestigationStopReason,
+    QualificationFactsCacheEntry,
+    QualificationFactsCacheStatus,
     ResearchCompany,
     ValidatedResearchEvidence,
 )

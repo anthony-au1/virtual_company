@@ -7,8 +7,8 @@ import os
 import pytest
 
 from virtual_company.config import Settings
-from virtual_company.research.models import SearchResult
 from virtual_company.tools.registry import create_web_search_tool
+from virtual_company.tools.web_search import SearchResult
 
 
 @pytest.mark.integration

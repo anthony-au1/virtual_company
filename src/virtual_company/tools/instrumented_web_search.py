@@ -6,8 +6,8 @@ import json
 from time import perf_counter
 
 from virtual_company.observability import Observability, get_observability
-from virtual_company.research.normalization import sanitize_observability_url
 from virtual_company.tools.web_search import SearchResponse, WebSearchTool
+from virtual_company.utils.url_normalization import sanitize_observability_url
 
 
 def _trace_search_results(response: SearchResponse) -> str:

@@ -14,27 +14,15 @@ from virtual_company.domain.qualification import (
     ResearchCompanyQualification,
     ResearchCompanyQualificationStatus,
 )
-from virtual_company.llm.base import LLMProvider
-from virtual_company.observability import get_observability
-from virtual_company.repositories.dtos import ResearchEvidenceCreate
-from virtual_company.research.models import (
+from virtual_company.domain.research import (
     DiscoveredCompany,
     EvidenceCriterion,
     ExtractedEvidence,
-    ExtractedEvidenceItems,
     QualificationFacts,
-    QualificationFactsCacheEntry,
-    QualificationFactsCacheStatus,
-    SearchResult,
-    WebPage,
 )
-from virtual_company.research.normalization import (
-    normalize_company_name,
-    normalize_domain,
-    normalize_fetch_url,
-    normalize_url,
-    sanitize_observability_url,
-)
+from virtual_company.llm.base import LLMProvider
+from virtual_company.observability import get_observability
+from virtual_company.repositories.dtos import ResearchEvidenceCreate
 from virtual_company.services import CampaignService, ResearchService
 from virtual_company.services.coverage import assess_evidence_coverage
 from virtual_company.services.qualification import (
@@ -51,8 +39,15 @@ from virtual_company.tools.web_fetch import (
     WebFetchNetworkError,
     WebFetchTimeoutError,
     WebFetchTool,
+    WebPage,
 )
-from virtual_company.tools.web_search import SearchResponse, WebSearchTool
+from virtual_company.tools.web_search import SearchResponse, SearchResult, WebSearchTool
+from virtual_company.utils.url_normalization import (
+    normalize_domain,
+    normalize_fetch_url,
+    normalize_url,
+    sanitize_observability_url,
+)
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,
@@ -63,12 +58,16 @@ from virtual_company.workflows.research.models import (
     DiscoveredCompanies,
     ExtractedCompanyCandidate,
     ExtractedCompanyIdentities,
+    ExtractedEvidenceItems,
     GeneratedCompanySearchQueries,
     GeneratedSearchQueries,
     InvestigationStopReason,
+    QualificationFactsCacheEntry,
+    QualificationFactsCacheStatus,
     ResearchCompany,
     ValidatedResearchEvidence,
 )
+from virtual_company.workflows.research.normalization import normalize_company_name
 from virtual_company.workflows.research.observability import (
     QualificationObservability,
     SearchProvenanceRecorder,

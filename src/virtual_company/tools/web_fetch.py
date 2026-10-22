@@ -4,7 +4,18 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from virtual_company.research.models import WebPage
+from pydantic import BaseModel
+
+
+class WebPage(BaseModel):
+    """Result contract for a fetched web page."""
+
+    url: str
+    final_url: str | None = None
+    title: str | None = None
+    content: str
+    content_type: str | None = None
+    truncated: bool = False
 
 
 class WebFetchTool(Protocol):

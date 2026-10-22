@@ -10,13 +10,13 @@ from pydantic import SecretStr
 from tavily import InvalidAPIKeyError, UsageLimitExceededError
 
 from virtual_company.config import Settings
-from virtual_company.research.models import SearchResult
 from virtual_company.tools.exa_web_search import ExaWebSearchTool
 from virtual_company.tools.instrumented_web_search import InstrumentedWebSearchTool
 from virtual_company.tools.registry import create_web_search_tool
 from virtual_company.tools.tavily_web_search import TavilyWebSearchTool
 from virtual_company.tools.web_search import (
     SearchResponse,
+    SearchResult,
     WebSearchAuthenticationError,
     WebSearchConfigurationError,
     WebSearchError,

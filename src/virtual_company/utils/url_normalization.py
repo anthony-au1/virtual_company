@@ -1,24 +1,19 @@
-"""Normalization helpers shared by research persistence and workflows."""
+"""Generic URL canonicalization helpers."""
 
 from __future__ import annotations
 
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-_LEGAL_SUFFIX_PATTERN = re.compile(
-    r"(?:,?\s+)(?:pty\.?\s+ltd\.?|proprietary\s+limited|limited|ltd\.?)$",
-    re.IGNORECASE,
-)
 _TRACKING_QUERY_PARAMETER_PATTERN = re.compile(
     r"^(?:utm_[a-z0-9_]+|gclid|dclid|fbclid|msclkid)$", re.IGNORECASE
 )
 
 
 def normalize_domain(value: str | None) -> str | None:
-    """Return a comparable lowercase domain without a leading ``www.``."""
+    """Return a lowercase hostname without a leading ``www.``."""
     if not value:
         return None
-
     candidate = value.strip()
     if not candidate:
         return None
@@ -30,7 +25,7 @@ def normalize_domain(value: str | None) -> str | None:
 
 
 def normalize_url(value: str) -> str:
-    """Return a stable comparison key for search-result URLs."""
+    """Return a stable canonical key for a URL, preserving its query string."""
     parsed = urlsplit(value.strip())
     hostname = parsed.hostname.lower() if parsed.hostname else ""
     scheme = parsed.scheme.lower()
@@ -83,9 +78,3 @@ def sanitize_observability_url(value: str) -> str:
         return urlunsplit((parsed.scheme.lower(), host, parsed.path, "", ""))[:500]
     except ValueError:
         return value.split("?", 1)[0].split("#", 1)[0][:500]
-
-
-def normalize_company_name(value: str) -> str:
-    """Return a conservative comparison key for obvious company-name variants."""
-    normalized = " ".join(value.strip().casefold().split())
-    return _LEGAL_SUFFIX_PATTERN.sub("", normalized).strip()

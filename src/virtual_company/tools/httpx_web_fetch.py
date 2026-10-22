@@ -11,7 +11,6 @@ import httpx
 from trafilatura import extract
 from trafilatura.metadata import extract_metadata
 
-from virtual_company.research.models import WebPage
 from virtual_company.tools.web_fetch import (
     WebFetchEmptyContentError,
     WebFetchError,
@@ -22,6 +21,7 @@ from virtual_company.tools.web_fetch import (
     WebFetchSsrfError,
     WebFetchTimeoutError,
     WebFetchUnsupportedContentError,
+    WebPage,
 )
 
 Resolver = Callable[[str], Awaitable[list[str]]]

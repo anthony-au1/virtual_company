@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import ResearchCompany, ResearchEvidence, ResearchRun
 from virtual_company.domain.qualification import ResearchCompanyQualification
+from virtual_company.domain.research import DiscoveredCompany
 from virtual_company.repositories.campaign import CampaignRepository
 from virtual_company.repositories.campaign_target import CampaignTargetRepository
 from virtual_company.repositories.dtos import (
@@ -27,8 +28,7 @@ from virtual_company.repositories.research_company_qualification import (
 )
 from virtual_company.repositories.research_evidence import ResearchEvidenceRepository
 from virtual_company.repositories.research_run import ResearchRunRepository
-from virtual_company.research.models import DiscoveredCompany
-from virtual_company.research.normalization import normalize_domain
+from virtual_company.utils.url_normalization import normalize_domain
 
 
 @dataclass(frozen=True)

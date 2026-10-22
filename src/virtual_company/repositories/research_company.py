@@ -13,7 +13,7 @@ from virtual_company.repositories.dtos import (
     ResearchCompanyCreate,
     ResearchCompanyUpdate,
 )
-from virtual_company.research.normalization import normalize_domain
+from virtual_company.utils.url_normalization import normalize_domain
 
 
 class ResearchCompanyRepository:

@@ -12,15 +12,17 @@ from luna_semantic_regressions import (
     actual_result,
 )
 
-from virtual_company.research.models import (
+from virtual_company.domain.research import (
     CategoricalEvidenceFact,
     EmployeeCountEvidenceFact,
     QualificationFacts,
-    QualificationFactsCacheEntry,
-    QualificationFactsCacheStatus,
 )
 from virtual_company.services.qualification_evidence_extractor import (
     QualificationEvidenceExtractor,
+)
+from virtual_company.workflows.research.models import (
+    QualificationFactsCacheEntry,
+    QualificationFactsCacheStatus,
 )
 
 

@@ -10,7 +10,7 @@ from virtual_company.domain.qualification import QualificationStatus as Status
 from virtual_company.domain.qualification import (
     ResearchCompanyQualificationStatus as Overall,
 )
-from virtual_company.research.models import (
+from virtual_company.domain.research import (
     CategoricalEvidenceFact,
     EmployeeCountEvidenceFact,
     QualificationFacts,

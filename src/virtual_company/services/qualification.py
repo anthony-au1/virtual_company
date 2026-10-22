@@ -16,7 +16,7 @@ from virtual_company.domain.qualification import (
     ResearchCompanyQualification,
     ResearchCompanyQualificationStatus,
 )
-from virtual_company.research.models import (
+from virtual_company.domain.research import (
     CategoricalEvidenceFact,
     EmployeeCountFact,
     QualificationFacts,

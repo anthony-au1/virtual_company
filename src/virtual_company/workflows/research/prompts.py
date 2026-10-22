@@ -9,7 +9,8 @@ from uuid import UUID
 
 from virtual_company.domain.qualification import CriterionQualification
 from virtual_company.llm.prompts import PromptIdentity
-from virtual_company.research.models import SearchResult, WebPage
+from virtual_company.tools.web_fetch import WebPage
+from virtual_company.tools.web_search import SearchResult
 from virtual_company.workflows.research.models import (
     AggregatedCompanyCandidate,
     CampaignCriteria,

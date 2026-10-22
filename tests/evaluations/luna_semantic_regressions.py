@@ -15,14 +15,14 @@ from uuid import UUID, uuid5
 from virtual_company.config import get_settings
 from virtual_company.domain.criteria import CompanySizeCriteria, campaign_criteria
 from virtual_company.llm import LLMRegistry, LLMRole
-from virtual_company.research.models import (
-    QualificationFactsCacheEntry,
-    QualificationFactsCacheStatus,
-)
 from virtual_company.services.qualification import qualify_company
 from virtual_company.services.qualification_evidence_extractor import (
     QualificationEvidenceExtractor,
     ResearchEvidenceForExtraction,
+)
+from virtual_company.workflows.research.models import (
+    QualificationFactsCacheEntry,
+    QualificationFactsCacheStatus,
 )
 from virtual_company.workflows.research.prompts import (
     EXTRACT_QUALIFICATION_FACTS_PROMPT,

@@ -8,8 +8,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from virtual_company.observability import Observability
-from virtual_company.research.models import SearchResult
-from virtual_company.research.normalization import (
+from virtual_company.tools.web_search import SearchResult
+from virtual_company.utils.url_normalization import (
     normalize_fetch_url,
     sanitize_observability_url,
 )
