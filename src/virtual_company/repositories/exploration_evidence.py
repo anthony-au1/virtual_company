@@ -8,12 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from virtual_company.db.models import ExplorationEvidence
-from virtual_company.repositories._helpers import apply_updates, create_values
-from virtual_company.repositories.dtos import (
-    ExplorationEvidenceCreate,
-    ExplorationEvidenceUpdate,
+from virtual_company.db.models import (
+    ExplorationCompany,
+    ExplorationEvidence,
+    ExplorationObligation,
+    ExplorationRun,
 )
+from virtual_company.repositories._helpers import create_values
+from virtual_company.repositories.dtos import ExplorationEvidenceCreate
 
 
 class ExplorationEvidenceRepository:
@@ -23,6 +25,27 @@ class ExplorationEvidenceRepository:
         self._session = session
 
     async def create(self, data: ExplorationEvidenceCreate) -> ExplorationEvidence:
+        company_exploration_id = await self._session.scalar(
+            select(ExplorationRun.exploration_id)
+            .join(
+                ExplorationCompany,
+                ExplorationCompany.exploration_run_id == ExplorationRun.id,
+            )
+            .where(ExplorationCompany.id == data.exploration_company_id)
+        )
+        if company_exploration_id is None:
+            raise ValueError("Exploration company does not exist")
+
+        obligation = await self._session.get(
+            ExplorationObligation, data.exploration_obligation_id
+        )
+        if obligation is None:
+            raise ValueError("Exploration obligation does not exist")
+        if obligation.exploration_id != company_exploration_id:
+            raise ValueError(
+                "Evidence company and obligation must belong to the same Exploration"
+            )
+
         evidence = ExplorationEvidence(**create_values(data))
         self._session.add(evidence)
         await self._session.flush()
@@ -57,14 +80,3 @@ class ExplorationEvidenceRepository:
             ExplorationEvidence.exploration_obligation_id == obligation_id
         )
         return list(await self._session.scalars(statement))
-
-    async def update(
-        self, evidence_id: UUID, data: ExplorationEvidenceUpdate
-    ) -> ExplorationEvidence | None:
-        evidence = await self.get_by_id(evidence_id)
-        if evidence is None:
-            return None
-        apply_updates(evidence, data)
-        await self._session.flush()
-        await self._session.refresh(evidence)
-        return evidence

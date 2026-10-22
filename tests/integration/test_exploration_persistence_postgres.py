@@ -4,13 +4,23 @@ import os
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from virtual_company.config import DEFAULT_DATABASE_URL
 from virtual_company.db import Base
-from virtual_company.db.models import Campaign, ResearchCompany, ResearchRun
+from virtual_company.db.models import (
+    Campaign,
+    ExplorationCompany,
+    ExplorationEvidence,
+    ExplorationObligation,
+    ExplorationRun,
+    ResearchCompany,
+    ResearchRun,
+)
 from virtual_company.repositories.dtos import (
     ExplorationCompanyCreate,
     ExplorationCreate,
@@ -159,43 +169,145 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             assert (
                 await company_repo.get_by_run_and_company(run.id, company.id)
             ).company.name == "Tyro Payments"
+            other_company = ResearchCompany(name="Different company")
+            session.add(other_company)
+            await session.flush()
+            other_link = await company_repo.create(
+                ExplorationCompanyCreate(
+                    exploration_run_id=run.id,
+                    company_id=other_company.id,
+                )
+            )
 
             evidence_one = await evidence_repo.create(
                 ExplorationEvidenceCreate(
                     exploration_company_id=link.id,
                     exploration_obligation_id=obligation_one.id,
+                    claim="The company serves Australian businesses.",
+                    supporting_excerpt="Serves Australian businesses.",
                     source_url="https://example.com/market",
-                    source_type="company-site",
-                    content="Serves Australian businesses.",
+                    source_title="Markets",
                 )
             )
             evidence_two = await evidence_repo.create(
                 ExplorationEvidenceCreate(
                     exploration_company_id=link.id,
                     exploration_obligation_id=obligation_two.id,
+                    claim="The company offers payment processing.",
+                    supporting_excerpt="Offers payment processing.",
                     source_url="https://example.com/product",
-                    source_type="product-page",
-                    content="Offers payment processing.",
+                    requested_url="https://example.com/product",
                 )
             )
+            assert evidence_two.requested_url is None
+            evidence_other_company = await evidence_repo.create(
+                ExplorationEvidenceCreate(
+                    exploration_company_id=other_link.id,
+                    exploration_obligation_id=obligation_one.id,
+                    claim="The other company provides consulting.",
+                    supporting_excerpt="Provides consulting.",
+                    source_url="https://other.example/",
+                )
+            )
+            other_exploration = await exploration_repo.create(
+                ExplorationCreate(
+                    business_context="Separate context",
+                    max_obligations=2,
+                    status="DRAFT",
+                )
+            )
+            other_obligation = await obligation_repo.create(
+                ExplorationObligationCreate(
+                    exploration_id=other_exploration.id,
+                    description="Separate obligation",
+                )
+            )
+            with pytest.raises(ValueError, match="same Exploration"):
+                await evidence_repo.create(
+                    ExplorationEvidenceCreate(
+                        exploration_company_id=link.id,
+                        exploration_obligation_id=other_obligation.id,
+                        claim="Cross-Exploration claim.",
+                        supporting_excerpt="Cross-Exploration excerpt.",
+                        source_url="https://example.com/cross",
+                    )
+                )
             fact_one = await fact_repo.create(
                 ExplorationFactCreate(
+                    exploration_company_id=link.id,
                     statement="The company serves Australian businesses.",
                     evidence_ids=[evidence_one.id, evidence_two.id],
                 )
             )
             fact_two = await fact_repo.create(
                 ExplorationFactCreate(
+                    exploration_company_id=link.id,
                     statement="The company offers payment processing.",
                     evidence_ids=[evidence_two.id],
                 )
             )
+            other_fact = await fact_repo.create(
+                ExplorationFactCreate(
+                    exploration_company_id=other_link.id,
+                    statement="The other company provides consulting.",
+                    evidence_ids=[evidence_other_company.id],
+                )
+            )
+            with pytest.raises(ValueError, match="belong to its company"):
+                await fact_repo.create(
+                    ExplorationFactCreate(
+                        exploration_company_id=link.id,
+                        statement="Invalid cross-company fact.",
+                        evidence_ids=[evidence_one.id, evidence_other_company.id],
+                    )
+                )
+            with pytest.raises(ValueError, match="does not exist"):
+                await fact_repo.create(
+                    ExplorationFactCreate(
+                        exploration_company_id=link.id,
+                        statement="Missing evidence fact.",
+                        evidence_ids=[uuid4()],
+                    )
+                )
+            with pytest.raises(ValueError, match="company does not exist"):
+                await fact_repo.create(
+                    ExplorationFactCreate(
+                        exploration_company_id=uuid4(),
+                        statement="Missing company fact.",
+                        evidence_ids=[evidence_one.id],
+                    )
+                )
             hypothesis = await hypothesis_repo.create(
                 ExplorationHypothesisCreate(
+                    exploration_company_id=link.id,
                     statement="The company may fit the Exploration target.",
                     fact_ids=[fact_one.id, fact_two.id],
                 )
             )
+            with pytest.raises(ValueError, match="belong to its company"):
+                await hypothesis_repo.create(
+                    ExplorationHypothesisCreate(
+                        exploration_company_id=link.id,
+                        statement="Invalid cross-company hypothesis.",
+                        fact_ids=[fact_one.id, other_fact.id],
+                    )
+                )
+            with pytest.raises(ValueError, match="does not exist"):
+                await hypothesis_repo.create(
+                    ExplorationHypothesisCreate(
+                        exploration_company_id=link.id,
+                        statement="Missing fact hypothesis.",
+                        fact_ids=[uuid4()],
+                    )
+                )
+            with pytest.raises(ValueError, match="company does not exist"):
+                await hypothesis_repo.create(
+                    ExplorationHypothesisCreate(
+                        exploration_company_id=uuid4(),
+                        statement="Missing company hypothesis.",
+                        fact_ids=[fact_one.id],
+                    )
+                )
             await session.commit()
 
             loaded_fact = await fact_repo.get_by_id_with_evidence(fact_one.id)
@@ -212,6 +324,65 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                 fact_one.id,
                 fact_two.id,
             }
+            assert loaded_fact.exploration_company_id == link.id
+            assert loaded_hypothesis.exploration_company_id == link.id
+            assert {item.id for item in loaded_fact.evidence} == {
+                evidence_one.id,
+                evidence_two.id,
+            }
+            evidence_with_facts = await evidence_repo.get_by_id_with_facts(
+                evidence_two.id
+            )
+            assert evidence_with_facts is not None
+            assert {item.id for item in evidence_with_facts.facts} == {
+                fact_one.id,
+                fact_two.id,
+            }
+            company_with_reasoning = await session.scalar(
+                select(ExplorationCompany)
+                .options(
+                    selectinload(ExplorationCompany.evidence),
+                    selectinload(ExplorationCompany.facts),
+                    selectinload(ExplorationCompany.hypotheses),
+                )
+                .where(ExplorationCompany.id == link.id)
+            )
+            assert company_with_reasoning is not None
+            assert {item.id for item in company_with_reasoning.evidence} == {
+                evidence_one.id,
+                evidence_two.id,
+            }
+            assert {item.id for item in company_with_reasoning.facts} == {
+                fact_one.id,
+                fact_two.id,
+            }
+            assert {item.id for item in company_with_reasoning.hypotheses} == {
+                hypothesis.id
+            }
+            provenance_query = (
+                select(ExplorationEvidence)
+                .options(
+                    selectinload(ExplorationEvidence.obligation).selectinload(
+                        ExplorationObligation.exploration
+                    ),
+                    selectinload(ExplorationEvidence.exploration_company)
+                    .selectinload(ExplorationCompany.run)
+                    .selectinload(ExplorationRun.exploration),
+                    selectinload(ExplorationEvidence.exploration_company)
+                    .selectinload(ExplorationCompany.run)
+                    .selectinload(ExplorationRun.research_run),
+                    selectinload(ExplorationEvidence.exploration_company).selectinload(
+                        ExplorationCompany.company
+                    ),
+                )
+                .where(ExplorationEvidence.id == evidence_one.id)
+            )
+            provenance = await session.scalar(provenance_query)
+            assert provenance is not None
+            assert provenance.obligation.exploration.id == exploration.id
+            assert provenance.exploration_company.run.exploration.id == exploration.id
+            assert provenance.exploration_company.run.research_run.id == research_a.id
+            assert provenance.exploration_company.company.id == company.id
             assert len(await exploration_repo.list_obligations(exploration.id)) == 2
             assert len(await exploration_repo.list_runs(exploration.id)) == 2
             await session.commit()

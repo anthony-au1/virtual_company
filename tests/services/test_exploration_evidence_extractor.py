@@ -77,7 +77,11 @@ class ProviderStub:
         self.max_active = max(self.max_active, self.active)
         try:
             if self.delay:
-                await asyncio.sleep(self.delay * (4 - int(content[-1])) if content[-1:].isdigit() else self.delay)
+                await asyncio.sleep(
+                    self.delay * (4 - int(content[-1]))
+                    if content[-1:].isdigit()
+                    else self.delay
+                )
             response = self.responses[content]
             if isinstance(response, BaseException):
                 raise response
@@ -169,7 +173,9 @@ def batch(*results: ExplorationFetchResult) -> ExplorationFetchBatchResult:
 
 
 @pytest.mark.asyncio
-async def test_supported_page_maps_to_validated_evidence_with_application_provenance() -> None:
+async def test_supported_page_maps_to_validated_evidence_with_application_provenance() -> (
+    None
+):
     page = fetch_result(
         "https://acme.example/platform",
         "Acme is replacing its legacy platform with a cloud system.",
@@ -198,7 +204,10 @@ async def test_supported_page_maps_to_validated_evidence_with_application_proven
     assert evidence.exploration_run_id == selected_company.exploration_run_id
     assert evidence.exploration_company_id == selected_company.exploration_company_id
     assert evidence.company_id == selected_company.company_id
-    assert evidence.exploration_obligation_id == selected_obligation.exploration_obligation_id
+    assert (
+        evidence.exploration_obligation_id
+        == selected_obligation.exploration_obligation_id
+    )
     assert evidence.query == page.query
     assert evidence.search_result_url == page.search_result.url
     assert evidence.search_result_title == page.search_result.title
@@ -222,7 +231,9 @@ async def test_empty_evidence_is_a_successful_no_evidence_outcome() -> None:
 
 
 @pytest.mark.asyncio
-async def test_whitespace_normalized_excerpt_is_accepted_and_missing_excerpt_rejected() -> None:
+async def test_whitespace_normalized_excerpt_is_accepted_and_missing_excerpt_rejected() -> (
+    None
+):
     result_page = fetch_result(
         "https://acme.example/about", "Acme operates\nin Australia."
     )
@@ -239,7 +250,7 @@ async def test_whitespace_normalized_excerpt_is_accepted_and_missing_excerpt_rej
         company(), obligation(), batch(result_page)
     )
 
-    assert [item.evidence_text for item in result.results[0].evidence] == [
+    assert [item.supporting_excerpt for item in result.results[0].evidence] == [
         "Acme operates in Australia."
     ]
     assert result.results[0].rejected_evidence_count == 1
@@ -251,7 +262,15 @@ async def test_whitespace_normalized_excerpt_is_accepted_and_missing_excerpt_rej
     [
         {"evidence": [{"claim": "", "evidence_text": "Support."}]},
         {"evidence": [{"claim": "A claim.", "evidence_text": ""}]},
-        {"evidence": [{"claim": "A claim.", "evidence_text": "Support.", "company_id": "forged"}]},
+        {
+            "evidence": [
+                {
+                    "claim": "A claim.",
+                    "evidence_text": "Support.",
+                    "company_id": "forged",
+                }
+            ]
+        },
     ],
 )
 async def test_empty_fields_or_unexpected_provenance_fields_fail_safely(
@@ -265,7 +284,10 @@ async def test_empty_fields_or_unexpected_provenance_fields_fail_safely(
     )
 
     assert result.results[0].outcome is ExplorationEvidenceExtractionOutcome.FAILED
-    assert result.results[0].failure_category is ExplorationEvidenceExtractionFailureCategory.MALFORMED_OUTPUT
+    assert (
+        result.results[0].failure_category
+        is ExplorationEvidenceExtractionFailureCategory.MALFORMED_OUTPUT
+    )
     assert result.results[0].evidence == []
 
 
@@ -338,7 +360,11 @@ async def test_exact_duplicates_removed_within_page_but_not_across_sources() -> 
     )
 
     assert [len(item.evidence) for item in result.results] == [1, 1]
-    assert [item.source_url for page_result in result.results for item in page_result.evidence] == [
+    assert [
+        item.source_url
+        for page_result in result.results
+        for item in page_result.evidence
+    ] == [
         one.page.url,
         two.page.url,
     ]
@@ -346,7 +372,9 @@ async def test_exact_duplicates_removed_within_page_but_not_across_sources() -> 
 
 
 @pytest.mark.asyncio
-async def test_duplicate_normalized_url_uses_one_call_and_preserves_associations() -> None:
+async def test_duplicate_normalized_url_uses_one_call_and_preserves_associations() -> (
+    None
+):
     first = fetch_result(
         "https://acme.example/page",
         "Acme is investing in cloud migration.",
@@ -362,7 +390,10 @@ async def test_duplicate_normalized_url_uses_one_call_and_preserves_associations
     provider = ProviderStub(
         {
             first.page.content: evidence_items(
-                ("Acme is investing in migration.", "Acme is investing in cloud migration.")
+                (
+                    "Acme is investing in migration.",
+                    "Acme is investing in cloud migration.",
+                )
             )
         }
     )
@@ -406,7 +437,10 @@ async def test_page_failures_are_isolated_and_raw_error_text_is_not_exposed() ->
         ExplorationEvidenceExtractionOutcome.SUCCEEDED,
         ExplorationEvidenceExtractionOutcome.FAILED,
     ]
-    assert result.results[1].failure_category is ExplorationEvidenceExtractionFailureCategory.UNEXPECTED_ERROR
+    assert (
+        result.results[1].failure_category
+        is ExplorationEvidenceExtractionFailureCategory.UNEXPECTED_ERROR
+    )
     assert secret not in str(result.model_dump())
     assert secret not in str(observability.events)
     assert "Acme is modernizing." not in str(observability.events)
@@ -426,16 +460,28 @@ async def test_provider_error_is_called_once_without_application_retry() -> None
 
     assert len(provider.calls) == 1
     assert result.results[0].outcome is ExplorationEvidenceExtractionOutcome.FAILED
-    assert result.results[0].failure_category is ExplorationEvidenceExtractionFailureCategory.PROVIDER_ERROR
+    assert (
+        result.results[0].failure_category
+        is ExplorationEvidenceExtractionFailureCategory.PROVIDER_ERROR
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("error", "category"),
     [
-        (TimeoutError("secret timeout"), ExplorationEvidenceExtractionFailureCategory.TIMEOUT),
-        (LLMConfigurationError("secret configuration"), ExplorationEvidenceExtractionFailureCategory.CONFIGURATION),
-        (LLMResponseError("secret malformed response"), ExplorationEvidenceExtractionFailureCategory.MALFORMED_OUTPUT),
+        (
+            TimeoutError("secret timeout"),
+            ExplorationEvidenceExtractionFailureCategory.TIMEOUT,
+        ),
+        (
+            LLMConfigurationError("secret configuration"),
+            ExplorationEvidenceExtractionFailureCategory.CONFIGURATION,
+        ),
+        (
+            LLMResponseError("secret malformed response"),
+            ExplorationEvidenceExtractionFailureCategory.MALFORMED_OUTPUT,
+        ),
     ],
 )
 async def test_provider_failure_categories_are_normalized_safely(
@@ -500,7 +546,9 @@ async def test_cancelled_batch_propagates_cancellation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prompt_has_injection_and_grounding_rules_and_excludes_ids_query() -> None:
+async def test_prompt_has_injection_and_grounding_rules_and_excludes_ids_query() -> (
+    None
+):
     result_page = fetch_result("https://acme.example/page", "PAGE BODY")
     provider = ProviderStub({result_page.page.content: evidence_items()})
     selected_company = company()
@@ -538,10 +586,13 @@ def test_exploration_extractor_has_no_research_semantic_imports() -> None:
     source = Path(
         "src/virtual_company/services/exploration_evidence_extractor.py"
     ).read_text()
-    prompt_source = Path("src/virtual_company/workflows/exploration/prompts.py").read_text()
-    model_source = Path("src/virtual_company/workflows/exploration/models.py").read_text()
+    prompt_source = Path(
+        "src/virtual_company/workflows/exploration/prompts.py"
+    ).read_text()
+    model_source = Path(
+        "src/virtual_company/workflows/exploration/models.py"
+    ).read_text()
 
     for value in (source, prompt_source, model_source):
         assert "virtual_company.domain.research" not in value
         assert "virtual_company.workflows.research" not in value
-

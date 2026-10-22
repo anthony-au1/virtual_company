@@ -72,9 +72,14 @@ companies, and starts the run. The UI returns to Exploration Detail, where the
 run's ResearchRun provenance and selected-company count are listed. This flow
 stops after saving the selection snapshot.
 
-Company × Obligation investigation, query generation, external search,
-Evidence orchestration, Fact derivation, and Hypothesis derivation remain
-future workflow work. Future execution must enforce same-Exploration Evidence
-associations plus same-company Evidence→Fact and Fact→Hypothesis provenance.
-Those execution invariants are not currently enforced by an Exploration
-workflow.
+Company × Obligation investigation orchestration, Fact derivation, and
+Hypothesis derivation remain future workflow work. Persisted Evidence belongs
+to one ExplorationCompany and one ExplorationObligation in the same
+Exploration. Persisted Facts and Hypotheses each belong to one
+ExplorationCompany; Facts can combine Evidence from multiple Obligations, and
+Hypotheses can combine Facts whose Evidence originated from multiple
+Obligations. Repository creation validates these ownership invariants.
+Evidence, Facts, and Hypotheses are immutable derived artifacts for MVP and
+store no confidence or score. Search queries, search-result metadata, and full
+fetched pages are not persisted; Evidence retains its claim, exact supporting
+excerpt, final fetched URL, and fetched title.

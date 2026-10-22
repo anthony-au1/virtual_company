@@ -337,9 +337,11 @@ def upgrade() -> None:
         sa.Column(
             "exploration_obligation_id", postgresql.UUID(as_uuid=True), nullable=False
         ),
-        sa.Column("source_url", sa.Text()),
-        sa.Column("source_type", sa.String(50)),
-        sa.Column("content", sa.Text()),
+        sa.Column("claim", sa.Text(), nullable=False),
+        sa.Column("supporting_excerpt", sa.Text(), nullable=False),
+        sa.Column("source_url", sa.Text(), nullable=False),
+        sa.Column("requested_url", sa.Text()),
+        sa.Column("source_title", sa.Text()),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -371,6 +373,9 @@ def upgrade() -> None:
     op.create_table(
         "exploration_fact",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "exploration_company_id", postgresql.UUID(as_uuid=True), nullable=False
+        ),
         sa.Column("statement", sa.Text(), nullable=False),
         sa.Column(
             "created_at",
@@ -378,11 +383,24 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        sa.ForeignKeyConstraint(
+            ["exploration_company_id"],
+            ["exploration_company.id"],
+            name="exploration_fact_exploration_company_id_fkey",
+        ),
         sa.PrimaryKeyConstraint("id", name="exploration_fact_pkey"),
+    )
+    op.create_index(
+        "ix_exploration_fact_exploration_company_id",
+        "exploration_fact",
+        ["exploration_company_id"],
     )
     op.create_table(
         "exploration_hypothesis",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "exploration_company_id", postgresql.UUID(as_uuid=True), nullable=False
+        ),
         sa.Column("statement", sa.Text(), nullable=False),
         sa.Column(
             "created_at",
@@ -390,7 +408,17 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        sa.ForeignKeyConstraint(
+            ["exploration_company_id"],
+            ["exploration_company.id"],
+            name="exploration_hypothesis_exploration_company_id_fkey",
+        ),
         sa.PrimaryKeyConstraint("id", name="exploration_hypothesis_pkey"),
+    )
+    op.create_index(
+        "ix_exploration_hypothesis_exploration_company_id",
+        "exploration_hypothesis",
+        ["exploration_company_id"],
     )
     op.create_table(
         "exploration_fact_evidence",
@@ -449,6 +477,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_exploration_hypothesis_exploration_company_id",
+        table_name="exploration_hypothesis",
+    )
+    op.drop_index(
+        "ix_exploration_fact_exploration_company_id",
+        table_name="exploration_fact",
+    )
     op.drop_index(
         "ix_exploration_hypothesis_fact_exploration_fact_id",
         table_name="exploration_hypothesis_fact",

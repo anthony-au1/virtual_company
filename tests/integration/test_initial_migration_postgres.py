@@ -164,6 +164,9 @@ async def test_initial_migration_creates_current_schema() -> None:
                         "exploration_evidence_exploration_company_id_fkey": "exploration_company",
                         "exploration_evidence_exploration_obligation_id_fkey": "exploration_obligation",
                     },
+                    "exploration_fact": {
+                        "exploration_fact_exploration_company_id_fkey": "exploration_company",
+                    },
                     "exploration_fact_evidence": {
                         "exploration_fact_evidence_fact_id_fkey": "exploration_fact",
                         "exploration_fact_evidence_evidence_id_fkey": "exploration_evidence",
@@ -171,6 +174,9 @@ async def test_initial_migration_creates_current_schema() -> None:
                     "exploration_hypothesis_fact": {
                         "exploration_hypothesis_fact_hypothesis_id_fkey": "exploration_hypothesis",
                         "exploration_hypothesis_fact_fact_id_fkey": "exploration_fact",
+                    },
+                    "exploration_hypothesis": {
+                        "exploration_hypothesis_exploration_company_id_fkey": "exploration_company",
                     },
                 }
                 for table, expected in expected_exploration_foreign_keys.items():
@@ -181,6 +187,10 @@ async def test_initial_migration_creates_current_schema() -> None:
                     }
                     for constraint_name, referred_table in expected.items():
                         assert references[constraint_name] == referred_table
+                    assert all(
+                        not foreign_key.get("options", {}).get("ondelete")
+                        for foreign_key in foreign_keys
+                    )
 
                 exploration_company_uniques = inspector.get_unique_constraints(
                     "exploration_company", schema=schema
@@ -221,6 +231,11 @@ async def test_initial_migration_creates_current_schema() -> None:
                         "exploration_evidence",
                         "ix_exploration_evidence_exploration_obligation_id",
                     ),
+                    ("exploration_fact", "ix_exploration_fact_exploration_company_id"),
+                    (
+                        "exploration_hypothesis",
+                        "ix_exploration_hypothesis_exploration_company_id",
+                    ),
                 )
                 for table, expected_index in expected_exploration_indexes:
                     assert any(
@@ -260,17 +275,29 @@ async def test_initial_migration_creates_current_schema() -> None:
                         "id",
                         "exploration_company_id",
                         "exploration_obligation_id",
+                        "claim",
+                        "supporting_excerpt",
                         "source_url",
-                        "source_type",
-                        "content",
+                        "requested_url",
+                        "source_title",
                         "created_at",
                     },
-                    "exploration_fact": {"id", "statement", "created_at"},
+                    "exploration_fact": {
+                        "id",
+                        "exploration_company_id",
+                        "statement",
+                        "created_at",
+                    },
                     "exploration_fact_evidence": {
                         "exploration_fact_id",
                         "exploration_evidence_id",
                     },
-                    "exploration_hypothesis": {"id", "statement", "created_at"},
+                    "exploration_hypothesis": {
+                        "id",
+                        "exploration_company_id",
+                        "statement",
+                        "created_at",
+                    },
                     "exploration_hypothesis_fact": {
                         "exploration_hypothesis_id",
                         "exploration_fact_id",
@@ -299,7 +326,11 @@ async def test_initial_migration_creates_current_schema() -> None:
                         "created_at",
                     },
                     "exploration_run": {
-                        "id", "exploration_id", "research_run_id", "status", "started_at"
+                        "id",
+                        "exploration_id",
+                        "research_run_id",
+                        "status",
+                        "started_at",
                     },
                     "exploration_company": {
                         "id",
@@ -310,14 +341,27 @@ async def test_initial_migration_creates_current_schema() -> None:
                         "id",
                         "exploration_company_id",
                         "exploration_obligation_id",
+                        "claim",
+                        "supporting_excerpt",
+                        "source_url",
                         "created_at",
                     },
-                    "exploration_fact": {"id", "statement", "created_at"},
+                    "exploration_fact": {
+                        "id",
+                        "exploration_company_id",
+                        "statement",
+                        "created_at",
+                    },
                     "exploration_fact_evidence": {
                         "exploration_fact_id",
                         "exploration_evidence_id",
                     },
-                    "exploration_hypothesis": {"id", "statement", "created_at"},
+                    "exploration_hypothesis": {
+                        "id",
+                        "exploration_company_id",
+                        "statement",
+                        "created_at",
+                    },
                     "exploration_hypothesis_fact": {
                         "exploration_hypothesis_id",
                         "exploration_fact_id",

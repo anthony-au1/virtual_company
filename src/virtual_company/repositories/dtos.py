@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from virtual_company.domain.research.criteria import CompanySizeCriteria
 
@@ -181,31 +181,68 @@ class ExplorationCompanyCreate(BaseModel):
 class ExplorationEvidenceCreate(BaseModel):
     exploration_company_id: UUID
     exploration_obligation_id: UUID
-    source_url: str | None = None
-    source_type: str | None = None
-    content: str | None = None
+    claim: str
+    supporting_excerpt: str
+    source_url: str
+    requested_url: str | None = None
+    source_title: str | None = None
 
+    @field_validator("claim", "supporting_excerpt", "source_url")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
 
-class ExplorationEvidenceUpdate(BaseModel):
-    exploration_obligation_id: UUID | None = None
-    source_url: str | None = None
-    source_type: str | None = None
-    content: str | None = None
+    @field_validator("requested_url")
+    @classmethod
+    def strip_requested_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("requested_url must not be blank")
+        return value
+
+    @field_validator("source_title")
+    @classmethod
+    def normalize_source_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def omit_unredirected_requested_url(self) -> ExplorationEvidenceCreate:
+        if self.requested_url == self.source_url:
+            self.requested_url = None
+        return self
 
 
 class ExplorationFactCreate(BaseModel):
+    exploration_company_id: UUID
     statement: str
     evidence_ids: list[UUID] = Field(min_length=1)
 
-
-class ExplorationFactUpdate(BaseModel):
-    statement: str | None = None
+    @field_validator("statement")
+    @classmethod
+    def strip_statement(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("statement must not be blank")
+        return value
 
 
 class ExplorationHypothesisCreate(BaseModel):
+    exploration_company_id: UUID
     statement: str
     fact_ids: list[UUID] = Field(min_length=1)
 
-
-class ExplorationHypothesisUpdate(BaseModel):
-    statement: str | None = None
+    @field_validator("statement")
+    @classmethod
+    def strip_statement(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("statement must not be blank")
+        return value

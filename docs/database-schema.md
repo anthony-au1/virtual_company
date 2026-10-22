@@ -338,22 +338,24 @@ Relationships:
 
 Table: `exploration_evidence`
 
-Represents the planned external supporting material for one
+Represents one grounded factual claim for one
 `ExplorationCompany × ExplorationObligation` investigation. Both associations
 are required: `exploration_company_id` identifies which selected company the
 evidence concerns, and `exploration_obligation_id` identifies the shared
-question/condition it addresses. Future workflow logic must ensure both belong
-to the same Exploration. Run ownership is derived through `exploration_company`
-and does not need a duplicate `exploration_run_id`.
+question/condition it addresses. Persistence validates that both belong to
+the same Exploration. Run ownership is derived through `exploration_company`.
+Evidence is an immutable derived artifact for MVP.
 
 | Column                      | PostgreSQL type | Nullable | Description                       |
 |-----------------------------|-----------------|---------:|-----------------------------------|
 | `id`                        | UUID            |       NO | Evidence ID                       |
 | `exploration_company_id`    | UUID            |       NO | Company context for this evidence |
 | `exploration_obligation_id` | UUID            |       NO | Obligation motivating collection  |
-| `source_url`                | TEXT            |      YES | Source URL                        |
-| `source_type`               | VARCHAR(50)     |      YES | Source classification             |
-| `content`                   | TEXT            |      YES | Captured content or excerpt       |
+| `claim`                     | TEXT            |       NO | Concise factual assertion         |
+| `supporting_excerpt`        | TEXT            |       NO | Exact grounded source excerpt     |
+| `source_url`                | TEXT            |       NO | Final fetched URL inspected       |
+| `requested_url`             | TEXT            |      YES | Original URL when redirected      |
+| `source_title`              | TEXT            |      YES | Title from fetched page           |
 | `created_at`                | TIMESTAMPTZ     |       NO | When evidence was saved           |
 
 Constraints:
@@ -369,25 +371,32 @@ Indexes:
 - `ix_exploration_evidence_exploration_obligation_id`
   (`exploration_obligation_id`)
 
+Search query, search-result title/snippet, provider metadata, and fetched page
+body are not persisted. `requested_url` is NULL when it equals the final
+`source_url`.
+
 Table: `exploration_fact`
 
-Represents a factual statement derived from one or more Evidence records.
-Company context is derived through its supporting Evidence rather than stored
-on the Fact.
+Represents a normalized factual statement about one ExplorationCompany,
+derived from one or more Evidence records. A Fact is immutable for MVP and may
+combine Evidence collected for different Obligations.
 
-| Column       | PostgreSQL type | Nullable | Description       |
-|--------------|-----------------|---------:|-------------------|
-| `id`         | UUID            |       NO | Fact ID           |
-| `statement`  | TEXT            |       NO | Factual statement |
-| `created_at` | TIMESTAMPTZ     |       NO | Creation time     |
+| Column                   | PostgreSQL type | Nullable | Description               |
+|--------------------------|-----------------|---------:|---------------------------|
+| `id`                     | UUID            |       NO | Fact ID                   |
+| `exploration_company_id` | UUID            |       NO | Owning ExplorationCompany |
+| `statement`              | TEXT            |       NO | Factual statement         |
+| `created_at`             | TIMESTAMPTZ     |       NO | Creation time             |
 
 Constraints:
 
 - PK (`id`)
+- FK (`exploration_company_id`) -> `exploration_company` (`id`)
 
 Indexes:
 
 - PK (`id`)
+- `ix_exploration_fact_exploration_company_id` (`exploration_company_id`)
 
 Table: `exploration_fact_evidence`
 
@@ -415,23 +424,32 @@ Indexes:
 
 Table: `exploration_hypothesis`
 
-Represents a higher-level inference derived from one or more Facts. Company
-provenance is derived through its Facts and their supporting Evidence rather
-than stored on the Hypothesis.
+Represents a higher-level inference about one ExplorationCompany, derived from
+one or more Facts. A Hypothesis is immutable for MVP and may combine Facts
+ultimately originating from different Obligations.
 
-| Column       | PostgreSQL type | Nullable | Description        |
-|--------------|-----------------|---------:|--------------------|
-| `id`         | UUID            |       NO | Hypothesis ID      |
-| `statement`  | TEXT            |       NO | Inferred statement |
-| `created_at` | TIMESTAMPTZ     |       NO | Creation time      |
+| Column                   | PostgreSQL type | Nullable | Description               |
+|--------------------------|-----------------|---------:|---------------------------|
+| `id`                     | UUID            |       NO | Hypothesis ID             |
+| `exploration_company_id` | UUID            |       NO | Owning ExplorationCompany |
+| `statement`              | TEXT            |       NO | Inferred statement        |
+| `created_at`             | TIMESTAMPTZ     |       NO | Creation time             |
 
 Constraints:
 
 - PK (`id`)
+- FK (`exploration_company_id`) -> `exploration_company` (`id`)
 
 Indexes:
 
 - PK (`id`)
+- `ix_exploration_hypothesis_exploration_company_id`
+  (`exploration_company_id`)
+
+No confidence, score, status, or update timestamp is modeled for Evidence,
+Fact, or Hypothesis. Their semantic content and ownership are immutable after
+creation. No semantic update API is provided. Deletion remains restrictive
+and no graph-wide deletion operation is defined.
 
 Table: `exploration_hypothesis_fact`
 

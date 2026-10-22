@@ -8,12 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from virtual_company.db.models import ExplorationEvidence, ExplorationFact
-from virtual_company.repositories._helpers import apply_updates
-from virtual_company.repositories.dtos import (
-    ExplorationFactCreate,
-    ExplorationFactUpdate,
+from virtual_company.db.models import (
+    ExplorationCompany,
+    ExplorationEvidence,
+    ExplorationFact,
 )
+from virtual_company.repositories.dtos import ExplorationFactCreate
 
 
 class ExplorationFactRepository:
@@ -23,20 +23,34 @@ class ExplorationFactRepository:
         self._session = session
 
     async def create(self, data: ExplorationFactCreate) -> ExplorationFact:
-        fact = ExplorationFact(statement=data.statement)
-        if data.evidence_ids:
-            evidence = list(
-                await self._session.scalars(
-                    select(ExplorationEvidence).where(
-                        ExplorationEvidence.id.in_(data.evidence_ids)
-                    )
+        company = await self._session.get(
+            ExplorationCompany, data.exploration_company_id
+        )
+        if company is None:
+            raise ValueError("Exploration company does not exist")
+
+        evidence = list(
+            await self._session.scalars(
+                select(ExplorationEvidence).where(
+                    ExplorationEvidence.id.in_(data.evidence_ids)
                 )
             )
-            if len(evidence) != len(set(data.evidence_ids)):
-                raise ValueError(
-                    "One or more Exploration evidence records do not exist"
-                )
-            fact.evidence = evidence
+        )
+        if len(evidence) != len(set(data.evidence_ids)):
+            raise ValueError("One or more Exploration evidence records do not exist")
+        if any(
+            item.exploration_company_id != data.exploration_company_id
+            for item in evidence
+        ):
+            raise ValueError(
+                "All Evidence supporting a Fact must belong to its company"
+            )
+
+        fact = ExplorationFact(
+            exploration_company_id=data.exploration_company_id,
+            statement=data.statement,
+            evidence=evidence,
+        )
         self._session.add(fact)
         await self._session.flush()
         await self._session.refresh(fact)
@@ -52,14 +66,3 @@ class ExplorationFactRepository:
             .where(ExplorationFact.id == fact_id)
         )
         return await self._session.scalar(statement)
-
-    async def update(
-        self, fact_id: UUID, data: ExplorationFactUpdate
-    ) -> ExplorationFact | None:
-        fact = await self.get_by_id(fact_id)
-        if fact is None:
-            return None
-        apply_updates(fact, data)
-        await self._session.flush()
-        await self._session.refresh(fact)
-        return fact

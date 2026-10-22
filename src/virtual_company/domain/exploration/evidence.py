@@ -17,7 +17,7 @@ class ExplorationEvidence(BaseModel):
     company_id: UUID
     exploration_obligation_id: UUID
     claim: str = Field(min_length=1, max_length=2_000)
-    evidence_text: str = Field(min_length=1)
+    supporting_excerpt: str = Field(min_length=1)
     query: str = Field(min_length=1)
     search_result_url: str = Field(min_length=1)
     search_result_title: str
@@ -25,4 +25,3 @@ class ExplorationEvidence(BaseModel):
     source_url: str = Field(min_length=1)
     final_url: str | None = None
     source_title: str | None = None
-

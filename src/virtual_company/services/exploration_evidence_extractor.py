@@ -184,16 +184,16 @@ class ExplorationEvidenceExtractor:
                                 ExplorationEvidenceExtractionFailureCategory.UNEXPECTED_ERROR.value
                             ),
                             error_type=type(error).__name__,
-                            source_url=sanitize_observability_url(
-                                association.page.url
-                            ),
+                            source_url=sanitize_observability_url(association.page.url),
                             capability="exploration_evidence_extraction",
                         )
                 finally:
                     queue.task_done()
 
         try:
-            with self._observability.span("exploration.evidence_extraction", **metadata):
+            with self._observability.span(
+                "exploration.evidence_extraction", **metadata
+            ):
                 await asyncio.gather(
                     *(worker() for _ in range(min(self._concurrency, len(group_items))))
                 )
@@ -215,9 +215,7 @@ class ExplorationEvidenceExtractor:
         results = []
         for association in associations:
             assert association.page is not None
-            extraction = group_result_by_key[
-                self._page_key(association.page.url)
-            ]
+            extraction = group_result_by_key[self._page_key(association.page.url)]
             results.append(
                 self._association_result(company, obligation, association, extraction)
             )
@@ -294,9 +292,7 @@ class ExplorationEvidenceExtractor:
                     response_model=ExtractedExplorationEvidenceItems,
                 )
             parsed = ExtractedExplorationEvidenceItems.model_validate(
-                response.model_dump()
-                if isinstance(response, BaseModel)
-                else response
+                response.model_dump() if isinstance(response, BaseModel) else response
             )
         except asyncio.CancelledError:
             raise
@@ -362,7 +358,7 @@ class ExplorationEvidenceExtractor:
                 company_id=company.company_id,
                 exploration_obligation_id=obligation.exploration_obligation_id,
                 claim=item["claim"],
-                evidence_text=item["evidence_text"],
+                supporting_excerpt=item["evidence_text"],
                 query=association.query,
                 search_result_url=association.search_result.url,
                 search_result_title=association.search_result.title,
@@ -408,13 +404,17 @@ class ExplorationEvidenceExtractor:
     ) -> ExplorationEvidenceExtractionFailureCategory:
         if isinstance(error, LLMConfigurationError):
             return ExplorationEvidenceExtractionFailureCategory.CONFIGURATION
-        if isinstance(error, (TimeoutError, asyncio.TimeoutError)) or type(error).__name__ in {
+        if isinstance(error, (TimeoutError, asyncio.TimeoutError)) or type(
+            error
+        ).__name__ in {
             "APITimeoutError",
             "ConnectTimeout",
             "ReadTimeout",
         }:
             return ExplorationEvidenceExtractionFailureCategory.TIMEOUT
-        if isinstance(error, (LLMResponseError, ValidationError, ValueError, TypeError)):
+        if isinstance(
+            error, (LLMResponseError, ValidationError, ValueError, TypeError)
+        ):
             return ExplorationEvidenceExtractionFailureCategory.MALFORMED_OUTPUT
         if type(error).__module__.startswith(("openai", "anthropic")):
             return ExplorationEvidenceExtractionFailureCategory.PROVIDER_ERROR

@@ -385,9 +385,7 @@ class ExplorationRun(Base):
     )
     research_run_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
-        ForeignKey(
-            "research_run.id", name="exploration_run_research_run_id_fkey"
-        ),
+        ForeignKey("research_run.id", name="exploration_run_research_run_id_fkey"),
         nullable=False,
     )
     status: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -397,9 +395,7 @@ class ExplorationRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     exploration: Mapped[Exploration] = relationship(back_populates="runs")
-    research_run: Mapped[ResearchRun] = relationship(
-        back_populates="exploration_runs"
-    )
+    research_run: Mapped[ResearchRun] = relationship(back_populates="exploration_runs")
     companies: Mapped[list[ExplorationCompany]] = relationship(back_populates="run")
 
 
@@ -435,6 +431,12 @@ class ExplorationCompany(Base):
     run: Mapped[ExplorationRun] = relationship(back_populates="companies")
     company: Mapped[ResearchCompany] = relationship(back_populates="exploration_links")
     evidence: Mapped[list[ExplorationEvidence]] = relationship(
+        back_populates="exploration_company"
+    )
+    facts: Mapped[list[ExplorationFact]] = relationship(
+        back_populates="exploration_company"
+    )
+    hypotheses: Mapped[list[ExplorationHypothesis]] = relationship(
         back_populates="exploration_company"
     )
 
@@ -473,9 +475,11 @@ class ExplorationEvidence(Base):
         ),
         nullable=False,
     )
-    source_url: Mapped[str | None] = mapped_column(Text)
-    source_type: Mapped[str | None] = mapped_column(String(50))
-    content: Mapped[str | None] = mapped_column(Text)
+    claim: Mapped[str] = mapped_column(Text, nullable=False)
+    supporting_excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_url: Mapped[str | None] = mapped_column(Text)
+    source_title: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -493,15 +497,29 @@ class ExplorationFact(Base):
     """A factual statement derived from supporting Evidence."""
 
     __tablename__ = "exploration_fact"
+    __table_args__ = (
+        Index("ix_exploration_fact_exploration_company_id", "exploration_company_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    exploration_company_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "exploration_company.id",
+            name="exploration_fact_exploration_company_id_fkey",
+        ),
+        nullable=False,
     )
     statement: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
+    exploration_company: Mapped[ExplorationCompany] = relationship(
+        back_populates="facts"
+    )
     evidence: Mapped[list[ExplorationEvidence]] = relationship(
         secondary=exploration_fact_evidence, back_populates="facts"
     )
@@ -514,15 +532,32 @@ class ExplorationHypothesis(Base):
     """A higher-level inference derived from Facts."""
 
     __tablename__ = "exploration_hypothesis"
+    __table_args__ = (
+        Index(
+            "ix_exploration_hypothesis_exploration_company_id",
+            "exploration_company_id",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    exploration_company_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "exploration_company.id",
+            name="exploration_hypothesis_exploration_company_id_fkey",
+        ),
+        nullable=False,
     )
     statement: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
+    exploration_company: Mapped[ExplorationCompany] = relationship(
+        back_populates="hypotheses"
+    )
     facts: Mapped[list[ExplorationFact]] = relationship(
         secondary=exploration_hypothesis_fact, back_populates="hypotheses"
     )

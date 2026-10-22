@@ -8,12 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from virtual_company.db.models import ExplorationFact, ExplorationHypothesis
-from virtual_company.repositories._helpers import apply_updates
-from virtual_company.repositories.dtos import (
-    ExplorationHypothesisCreate,
-    ExplorationHypothesisUpdate,
+from virtual_company.db.models import (
+    ExplorationCompany,
+    ExplorationFact,
+    ExplorationHypothesis,
 )
+from virtual_company.repositories.dtos import ExplorationHypothesisCreate
 
 
 class ExplorationHypothesisRepository:
@@ -23,16 +23,31 @@ class ExplorationHypothesisRepository:
         self._session = session
 
     async def create(self, data: ExplorationHypothesisCreate) -> ExplorationHypothesis:
-        hypothesis = ExplorationHypothesis(statement=data.statement)
-        if data.fact_ids:
-            facts = list(
-                await self._session.scalars(
-                    select(ExplorationFact).where(ExplorationFact.id.in_(data.fact_ids))
-                )
+        company = await self._session.get(
+            ExplorationCompany, data.exploration_company_id
+        )
+        if company is None:
+            raise ValueError("Exploration company does not exist")
+
+        facts = list(
+            await self._session.scalars(
+                select(ExplorationFact).where(ExplorationFact.id.in_(data.fact_ids))
             )
-            if len(facts) != len(set(data.fact_ids)):
-                raise ValueError("One or more Exploration facts do not exist")
-            hypothesis.facts = facts
+        )
+        if len(facts) != len(set(data.fact_ids)):
+            raise ValueError("One or more Exploration facts do not exist")
+        if any(
+            item.exploration_company_id != data.exploration_company_id for item in facts
+        ):
+            raise ValueError(
+                "All Facts supporting a Hypothesis must belong to its company"
+            )
+
+        hypothesis = ExplorationHypothesis(
+            exploration_company_id=data.exploration_company_id,
+            statement=data.statement,
+            facts=facts,
+        )
         self._session.add(hypothesis)
         await self._session.flush()
         await self._session.refresh(hypothesis)
@@ -50,14 +65,3 @@ class ExplorationHypothesisRepository:
             .where(ExplorationHypothesis.id == hypothesis_id)
         )
         return await self._session.scalar(statement)
-
-    async def update(
-        self, hypothesis_id: UUID, data: ExplorationHypothesisUpdate
-    ) -> ExplorationHypothesis | None:
-        hypothesis = await self.get_by_id(hypothesis_id)
-        if hypothesis is None:
-            return None
-        apply_updates(hypothesis, data)
-        await self._session.flush()
-        await self._session.refresh(hypothesis)
-        return hypothesis
