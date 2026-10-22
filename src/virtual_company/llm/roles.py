@@ -10,3 +10,4 @@ class LLMRole(StrEnum):
     EXTRACTION = "extraction"
     OBLIGATION_GENERATION = "obligation_generation"
     EXPLORATION_QUERY_GENERATION = "exploration_query_generation"
+    EXPLORATION_EVIDENCE_EXTRACTION = "exploration_evidence_extraction"

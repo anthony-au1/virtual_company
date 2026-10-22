@@ -36,13 +36,26 @@ class ObservabilityFake:
     def __init__(self) -> None:
         self.events: list[str] = []
         self.metrics: list[tuple[str, dict[str, str]]] = []
+        self.span_errors: list[str] = []
+        self.updates: list[object] = []
 
     def event(self, name: str, **_: object) -> None:
         self.events.append(name)
 
     @contextmanager
     def span(self, *_: object, **__: object):
-        yield object()
+        class Observation:
+            def __init__(self, updates: list[object]) -> None:
+                self._updates = updates
+
+            def update(self, **data: object) -> None:
+                self._updates.append(data)
+
+        try:
+            yield Observation(self.updates)
+        except Exception as error:
+            self.span_errors.append(str(error))
+            raise
 
     def record(self, name: str, _value: float = 1, **attributes: str) -> None:
         self.metrics.append((name, attributes))
@@ -76,3 +89,27 @@ async def test_instrumented_provider_preserves_original_error() -> None:
 
     assert "llm_request_failed" in observability.events
     assert any(name == "llm_request_failures_total" for name, _ in observability.metrics)
+
+
+@pytest.mark.asyncio
+async def test_safe_instrumentation_disables_io_capture_and_sanitizes_span_errors() -> None:
+    observability = ObservabilityFake()
+    observability.capture_io = True
+    secret = "raw provider detail and page contents"
+    provider = InstrumentedLLMProvider(
+        ProviderFake(RuntimeError(secret)),  # type: ignore[arg-type]
+        observability=observability,  # type: ignore[arg-type]
+        capture_io=False,
+        sanitize_errors=True,
+    )
+
+    with pytest.raises(RuntimeError, match=secret):
+        await provider.generate_structured(
+            system_prompt="private system",
+            user_prompt="private page content",
+            response_model=Output,
+        )
+
+    assert observability.updates == []
+    assert observability.span_errors == []
+    assert all(secret not in str(event) for event in observability.events)

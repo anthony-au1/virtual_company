@@ -64,6 +64,11 @@ class LLMRegistry:
                 self._settings.llm_obligation_generation_provider
                 or self._settings.llm_provider
             ).lower()
+        if role is LLMRole.EXPLORATION_EVIDENCE_EXTRACTION:
+            return (
+                self._settings.llm_exploration_evidence_extraction_provider
+                or self._settings.llm_provider
+            ).lower()
         return (
             self._settings.llm_exploration_query_generation_provider
             or self._settings.llm_provider
@@ -76,6 +81,8 @@ class LLMRegistry:
             return self._settings.openai_extraction_model
         if role is LLMRole.OBLIGATION_GENERATION:
             return self._settings.openai_obligation_generation_model
+        if role is LLMRole.EXPLORATION_EVIDENCE_EXTRACTION:
+            return self._settings.openai_exploration_evidence_extraction_model
         return self._settings.openai_exploration_query_generation_model
 
     def _anthropic_model_for_role(self, role: LLMRole) -> str:
@@ -83,4 +90,6 @@ class LLMRegistry:
             return self._settings.anthropic_obligation_generation_model
         if role is LLMRole.EXPLORATION_QUERY_GENERATION:
             return self._settings.anthropic_exploration_query_generation_model
+        if role is LLMRole.EXPLORATION_EVIDENCE_EXTRACTION:
+            return self._settings.anthropic_exploration_evidence_extraction_model
         return self._settings.anthropic_model

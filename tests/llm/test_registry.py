@@ -81,6 +81,33 @@ def test_exploration_query_provider_and_model_can_be_overridden() -> None:
     assert isinstance(registry.for_role(LLMRole.OBLIGATION_GENERATION), OpenAIProvider)
 
 
+def test_exploration_evidence_extraction_defaults_to_luna_independently() -> None:
+    registry = LLMRegistry(Settings(openai_api_key=SecretStr("test-key")))
+
+    provider = registry.for_role(LLMRole.EXPLORATION_EVIDENCE_EXTRACTION)
+
+    assert isinstance(provider, OpenAIProvider)
+    assert provider._model == "gpt-5.6-luna"
+    assert provider.role == "exploration_evidence_extraction"
+
+
+def test_exploration_evidence_provider_and_models_are_independently_configurable() -> None:
+    registry = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("openai-key"),
+            anthropic_api_key=SecretStr("anthropic-key"),
+            llm_exploration_evidence_extraction_provider="anthropic",
+            anthropic_exploration_evidence_extraction_model="custom-extraction-model",
+        )
+    )
+
+    provider = registry.for_role(LLMRole.EXPLORATION_EVIDENCE_EXTRACTION)
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._model == "custom-extraction-model"
+    assert isinstance(registry.for_role(LLMRole.RESEARCH), OpenAIProvider)
+
+
 def test_anthropic_configuration_resolves_sonnet_for_research() -> None:
     registry = LLMRegistry(
         Settings(
