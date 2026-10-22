@@ -9,13 +9,13 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from virtual_company.domain.criteria import (
+from virtual_company.domain.research.criteria import (
     CampaignCriterion,
     CampaignForQualification,
     campaign_criteria,
     normalize_subject,
 )
-from virtual_company.domain.research import QualificationFacts
+from virtual_company.domain.research.facts import QualificationFacts
 from virtual_company.llm.base import LLMProvider
 from virtual_company.workflows.research.models import (
     QualificationFactsCacheEntry,

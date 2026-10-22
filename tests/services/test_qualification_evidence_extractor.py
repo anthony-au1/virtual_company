@@ -9,13 +9,16 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from virtual_company.domain.criteria import CompanySizeCriteria, normalize_subject
-from virtual_company.domain.qualification import QualificationStatus
-from virtual_company.domain.research import (
+from virtual_company.domain.research.criteria import (
+    CompanySizeCriteria,
+    normalize_subject,
+)
+from virtual_company.domain.research.facts import (
     CategoricalEvidenceFact,
     EmployeeCountEvidenceFact,
     QualificationFacts,
 )
+from virtual_company.domain.research.qualification import QualificationStatus
 from virtual_company.services.qualification import qualify_company
 from virtual_company.services.qualification_evidence_extractor import (
     QualificationEvidenceExtractor,

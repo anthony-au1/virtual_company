@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from virtual_company.domain.criteria import CompanySizeCriteria
+from virtual_company.domain.research.criteria import CompanySizeCriteria
 
 
 class CampaignCreate(BaseModel):

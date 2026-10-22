@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import TypedDict
 from uuid import UUID
 
-from virtual_company.domain.qualification import (
+from virtual_company.domain.research.discovery import DiscoveredCompany
+from virtual_company.domain.research.qualification import (
     CriterionQualification,
     ResearchCompanyQualification,
 )
-from virtual_company.domain.research import DiscoveredCompany
 from virtual_company.tools.web_fetch import WebPage
 from virtual_company.tools.web_search import SearchResult
 from virtual_company.workflows.research.models import (

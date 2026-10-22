@@ -12,7 +12,7 @@ from luna_semantic_regressions import (
     actual_result,
 )
 
-from virtual_company.domain.research import (
+from virtual_company.domain.research.facts import (
     CategoricalEvidenceFact,
     EmployeeCountEvidenceFact,
     QualificationFacts,

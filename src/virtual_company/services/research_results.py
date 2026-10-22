@@ -8,16 +8,16 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.domain.criteria import CompanySizeCriteria
-from virtual_company.domain.qualification import (
+from virtual_company.domain.research.criteria import CompanySizeCriteria
+from virtual_company.domain.research.qualification import (
     QualificationStatus,
     ResearchCompanyQualificationStatus,
 )
+from virtual_company.repositories.exploration_run import ExplorationRunRepository
 from virtual_company.repositories.research_company_qualification import (
     ResearchCompanyQualificationRepository,
 )
 from virtual_company.repositories.research_evidence import ResearchEvidenceRepository
-from virtual_company.repositories.exploration_run import ExplorationRunRepository
 from virtual_company.repositories.research_run import ResearchRunRepository
 
 

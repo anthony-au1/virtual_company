@@ -6,11 +6,11 @@ from contextlib import AbstractContextManager
 from typing import Any
 from uuid import UUID
 
-from virtual_company.domain.qualification import (
+from virtual_company.domain.research.facts import QualificationFacts
+from virtual_company.domain.research.qualification import (
     QualificationStatus,
     ResearchCompanyQualification,
 )
-from virtual_company.domain.research import QualificationFacts
 from virtual_company.observability import Observability, get_observability
 from virtual_company.workflows.research.models import (
     QualificationFactsCacheEntry,

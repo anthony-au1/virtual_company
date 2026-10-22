@@ -6,7 +6,10 @@ import pytest
 from pydantic import ValidationError
 
 from virtual_company.api.models import CampaignCreateRequest
-from virtual_company.domain.criteria import CompanySizeCriteria, campaign_criteria
+from virtual_company.domain.research.criteria import (
+    CompanySizeCriteria,
+    campaign_criteria,
+)
 from virtual_company.workflows.research.models import CampaignCriteria
 
 

@@ -1,8 +1,9 @@
-"""Campaign criterion configuration and shared subject normalization."""
+"""Research Campaign criterion configuration and matching rules."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -12,6 +13,15 @@ _KEYWORD_FORMAT_VARIANTS = {
     "spring-boot": "spring boot",
     "spring_boot": "spring boot",
 }
+
+
+class EvidenceCriterion(StrEnum):
+    """Campaign criteria which may be supported by Research evidence."""
+
+    TARGET_MARKET = "target_market"
+    INDUSTRY = "industry"
+    KEYWORD = "keyword"
+    COMPANY_SIZE = "company_size"
 
 
 def normalize_subject(criterion: str, value: str | None) -> str:

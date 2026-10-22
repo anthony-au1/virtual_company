@@ -10,8 +10,8 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import ResearchCompany, ResearchEvidence, ResearchRun
-from virtual_company.domain.qualification import ResearchCompanyQualification
-from virtual_company.domain.research import DiscoveredCompany
+from virtual_company.domain.research.discovery import DiscoveredCompany
+from virtual_company.domain.research.qualification import ResearchCompanyQualification
 from virtual_company.repositories.campaign import CampaignRepository
 from virtual_company.repositories.campaign_target import CampaignTargetRepository
 from virtual_company.repositories.dtos import (

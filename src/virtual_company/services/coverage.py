@@ -7,11 +7,11 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
-from virtual_company.domain.criteria import (
+from virtual_company.domain.research.criteria import (
+    EvidenceCriterion,
     campaign_criteria,
     normalize_subject,
 )
-from virtual_company.domain.research import EvidenceCriterion
 from virtual_company.workflows.research.models import (
     CampaignCriteria,
     CoverageStatus,

@@ -13,7 +13,10 @@ from types import SimpleNamespace
 from uuid import UUID, uuid5
 
 from virtual_company.config import get_settings
-from virtual_company.domain.criteria import CompanySizeCriteria, campaign_criteria
+from virtual_company.domain.research.criteria import (
+    CompanySizeCriteria,
+    campaign_criteria,
+)
 from virtual_company.llm import LLMRegistry, LLMRole
 from virtual_company.services.qualification import qualify_company
 from virtual_company.services.qualification_evidence_extractor import (

@@ -1,40 +1,11 @@
-"""Research-specific company, evidence, and qualification contracts."""
+"""Evidence-grounded facts used by Research qualification."""
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
-
-
-class DiscoveredCompany(BaseModel):
-    """A company found by Research before persistence."""
-
-    name: str
-    website: str | None = None
-    domain: str | None = None
-    discovery_reason: str = Field(min_length=1)
-    supporting_urls: list[str] = Field(max_length=3)
-
-
-class EvidenceCriterion(StrEnum):
-    """Campaign criteria which may be supported by Research evidence."""
-
-    TARGET_MARKET = "target_market"
-    INDUSTRY = "industry"
-    KEYWORD = "keyword"
-    COMPANY_SIZE = "company_size"
-
-
-class ExtractedEvidence(BaseModel):
-    """Research-extracted evidence content without authoritative source identity."""
-
-    criterion: EvidenceCriterion
-    subject: str | None = None
-    claim: str = Field(min_length=1)
-    evidence_text: str = Field(min_length=1)
 
 
 class EmployeeCountFact(BaseModel):

@@ -5,15 +5,15 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from virtual_company.domain.criteria import CompanySizeCriteria
-from virtual_company.domain.qualification import QualificationStatus as Status
-from virtual_company.domain.qualification import (
-    ResearchCompanyQualificationStatus as Overall,
-)
-from virtual_company.domain.research import (
+from virtual_company.domain.research.criteria import CompanySizeCriteria
+from virtual_company.domain.research.facts import (
     CategoricalEvidenceFact,
     EmployeeCountEvidenceFact,
     QualificationFacts,
+)
+from virtual_company.domain.research.qualification import QualificationStatus as Status
+from virtual_company.domain.research.qualification import (
+    ResearchCompanyQualificationStatus as Overall,
 )
 from virtual_company.services.qualification import (
     aggregate_qualification,

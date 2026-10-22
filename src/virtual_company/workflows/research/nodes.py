@@ -7,18 +7,20 @@ from collections.abc import Callable, Sequence
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from virtual_company.domain.criteria import campaign_criteria, normalize_subject
-from virtual_company.domain.qualification import (
+from virtual_company.domain.research.criteria import (
+    EvidenceCriterion,
+    campaign_criteria,
+    normalize_subject,
+)
+from virtual_company.domain.research.discovery import DiscoveredCompany
+from virtual_company.domain.research.facts import (
+    QualificationFacts,
+)
+from virtual_company.domain.research.qualification import (
     CriterionQualification,
     QualificationStatus,
     ResearchCompanyQualification,
     ResearchCompanyQualificationStatus,
-)
-from virtual_company.domain.research import (
-    DiscoveredCompany,
-    EvidenceCriterion,
-    ExtractedEvidence,
-    QualificationFacts,
 )
 from virtual_company.llm.base import LLMProvider
 from virtual_company.observability import get_observability
@@ -58,6 +60,7 @@ from virtual_company.workflows.research.models import (
     DiscoveredCompanies,
     ExtractedCompanyCandidate,
     ExtractedCompanyIdentities,
+    ExtractedEvidence,
     ExtractedEvidenceItems,
     GeneratedCompanySearchQueries,
     GeneratedSearchQueries,

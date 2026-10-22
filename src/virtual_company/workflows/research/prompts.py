@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
-from virtual_company.domain.qualification import CriterionQualification
+from virtual_company.domain.research.qualification import CriterionQualification
 from virtual_company.llm.prompts import PromptIdentity
 from virtual_company.tools.web_fetch import WebPage
 from virtual_company.tools.web_search import SearchResult

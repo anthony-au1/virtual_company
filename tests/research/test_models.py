@@ -3,13 +3,11 @@
 import pytest
 from pydantic import ValidationError
 
-from virtual_company.domain.research import (
-    DiscoveredCompany,
-    EvidenceCriterion,
-    ExtractedEvidence,
-)
+from virtual_company.domain.research.criteria import EvidenceCriterion
+from virtual_company.domain.research.discovery import DiscoveredCompany
 from virtual_company.tools.web_fetch import WebPage
 from virtual_company.tools.web_search import SearchResult
+from virtual_company.workflows.research.models import ExtractedEvidence
 
 
 def test_research_models_accept_expected_data() -> None:

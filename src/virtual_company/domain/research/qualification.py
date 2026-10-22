@@ -1,4 +1,6 @@
-"""Transient evidence-grounded qualification results."""
+"""Transient results for evidence-grounded Research qualification."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum

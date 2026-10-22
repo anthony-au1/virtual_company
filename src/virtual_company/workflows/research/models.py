@@ -8,18 +8,24 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from virtual_company.domain.criteria import (
+from virtual_company.domain.research.criteria import (
     CompanySizeCriteria,
-)
-from virtual_company.domain.research import (
-    DiscoveredCompany,
     EvidenceCriterion,
-    ExtractedEvidence,
-    QualificationFacts,
 )
+from virtual_company.domain.research.discovery import DiscoveredCompany
+from virtual_company.domain.research.facts import QualificationFacts
 from virtual_company.tools.web_search import SearchResult
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class ExtractedEvidence(BaseModel):
+    """Research page-scoped extraction output before source validation."""
+
+    criterion: EvidenceCriterion
+    subject: str | None = None
+    claim: str = Field(min_length=1)
+    evidence_text: str = Field(min_length=1)
 
 
 class ExtractedEvidenceItems(BaseModel):

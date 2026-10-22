@@ -5,21 +5,21 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from virtual_company.domain.criteria import (
+from virtual_company.domain.research.criteria import (
     CampaignCriterion,
     CampaignForQualification,
     campaign_criteria,
 )
-from virtual_company.domain.qualification import (
+from virtual_company.domain.research.facts import (
+    CategoricalEvidenceFact,
+    EmployeeCountFact,
+    QualificationFacts,
+)
+from virtual_company.domain.research.qualification import (
     CriterionQualification,
     QualificationStatus,
     ResearchCompanyQualification,
     ResearchCompanyQualificationStatus,
-)
-from virtual_company.domain.research import (
-    CategoricalEvidenceFact,
-    EmployeeCountFact,
-    QualificationFacts,
 )
 
 

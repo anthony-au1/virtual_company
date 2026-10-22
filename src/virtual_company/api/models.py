@@ -10,10 +10,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from virtual_company.domain.criteria import (
+from virtual_company.domain.research.criteria import (
     CompanySizeCriteria,
 )
-from virtual_company.domain.qualification import (
+from virtual_company.domain.research.qualification import (
     QualificationStatus,
 )
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate

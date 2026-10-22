@@ -14,19 +14,18 @@ import pytest
 
 from virtual_company.config import Settings
 from virtual_company.db.models import Campaign
-from virtual_company.domain.qualification import (
+from virtual_company.domain.research.criteria import EvidenceCriterion
+from virtual_company.domain.research.discovery import DiscoveredCompany
+from virtual_company.domain.research.facts import (
+    CategoricalEvidenceFact,
+    EmployeeCountEvidenceFact,
+    QualificationFacts,
+)
+from virtual_company.domain.research.qualification import (
     CriterionQualification,
     QualificationStatus,
     ResearchCompanyQualification,
     ResearchCompanyQualificationStatus,
-)
-from virtual_company.domain.research import (
-    CategoricalEvidenceFact,
-    DiscoveredCompany,
-    EmployeeCountEvidenceFact,
-    EvidenceCriterion,
-    ExtractedEvidence,
-    QualificationFacts,
 )
 from virtual_company.repositories.dtos import ResearchEvidenceCreate
 from virtual_company.services.research import ResearchService
@@ -54,6 +53,7 @@ from virtual_company.workflows.research.models import (
     ExtractedCompanyCandidate,
     ExtractedCompanyIdentities,
     ExtractedCompanyIdentity,
+    ExtractedEvidence,
     ExtractedEvidenceItems,
     GeneratedCompanySearchQueries,
     GeneratedSearchQueries,
@@ -3605,7 +3605,9 @@ async def test_adaptive_pages_must_pass_attribution() -> None:
 async def test_qualification_reads_current_run_evidence_without_external_calls() -> (
     None
 ):
-    from virtual_company.domain.qualification import ResearchCompanyQualificationStatus
+    from virtual_company.domain.research.qualification import (
+        ResearchCompanyQualificationStatus,
+    )
 
     model = campaign()
     model.target_market = None
@@ -3755,7 +3757,7 @@ async def test_workflow_node_events_bind_campaign_and_research_run_ids(
 async def test_persistence_rejects_incomplete_final_state(invalid: str) -> None:
     from unittest.mock import AsyncMock
 
-    from virtual_company.domain.qualification import (
+    from virtual_company.domain.research.qualification import (
         ResearchCompanyQualification,
         ResearchCompanyQualificationStatus,
     )
@@ -3823,7 +3825,7 @@ async def test_final_qualification_normalizes_dated_size_without_campaign_failur
 ) -> None:
     from unittest.mock import AsyncMock
 
-    from virtual_company.domain.qualification import QualificationStatus
+    from virtual_company.domain.research.qualification import QualificationStatus
 
     model = campaign()
     model.target_market = None

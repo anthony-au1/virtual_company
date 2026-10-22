@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.domain.qualification import (
+from virtual_company.domain.research.qualification import (
     CriterionQualification,
     QualificationStatus,
     ResearchCompanyQualification,
