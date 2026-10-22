@@ -29,6 +29,8 @@ _EXPORT_MODULES = {
     "ExplorationEvidenceExtractionOutcome": "virtual_company.services.exploration_evidence_extractor",
     "ExplorationEvidenceExtractor": "virtual_company.services.exploration_evidence_extractor",
     "ExplorationEvidencePageResult": "virtual_company.services.exploration_evidence_extractor",
+    "ExplorationEvidencePersistenceResult": "virtual_company.services.exploration_evidence_persistence",
+    "ExplorationEvidencePersistenceService": "virtual_company.services.exploration_evidence_persistence",
     "ExplorationSearchBatchResult": "virtual_company.services.exploration_search",
     "ExplorationSearchFailureCategory": "virtual_company.services.exploration_search",
     "ExplorationSearchOutcome": "virtual_company.services.exploration_search",

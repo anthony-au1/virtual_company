@@ -21,6 +21,9 @@ from virtual_company.db.models import (
     ResearchCompany,
     ResearchRun,
 )
+from virtual_company.domain.exploration.evidence import (
+    ExplorationEvidence as DomainExplorationEvidence,
+)
 from virtual_company.repositories.dtos import (
     ExplorationCompanyCreate,
     ExplorationCreate,
@@ -50,6 +53,14 @@ from virtual_company.repositories.exploration_run import ExplorationRunRepositor
 from virtual_company.services.exploration import (
     ExplorationGenerationConflictError,
     ExplorationService,
+)
+from virtual_company.services.exploration_evidence_extractor import (
+    ExplorationEvidenceExtractionBatchResult,
+    ExplorationEvidenceExtractionOutcome,
+    ExplorationEvidencePageResult,
+)
+from virtual_company.services.exploration_evidence_persistence import (
+    ExplorationEvidencePersistenceService,
 )
 from virtual_company.services.obligation_generator import (
     GeneratedObligation,
@@ -200,6 +211,57 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                 )
             )
             assert evidence_two.requested_url is None
+            extraction_evidence = DomainExplorationEvidence(
+                exploration_run_id=run.id,
+                exploration_company_id=link.id,
+                company_id=company.id,
+                exploration_obligation_id=obligation_one.id,
+                claim="The company supports card payments.",
+                supporting_excerpt="Supports card payments.",
+                query="payment processing provider",
+                search_result_url="https://search.example/result",
+                search_result_title="Search-engine title",
+                search_result_snippet="Search-engine snippet",
+                source_url="https://example.com/requested",
+                final_url="https://example.com/final",
+                source_title="Fetched page title",
+            )
+            persisted_batch = await ExplorationEvidencePersistenceService(
+                session
+            ).persist(
+                ExplorationEvidenceExtractionBatchResult(
+                    provider="test",
+                    model="test",
+                    results=[
+                        ExplorationEvidencePageResult(
+                            query=extraction_evidence.query,
+                            search_result_url=extraction_evidence.search_result_url,
+                            search_result_title=extraction_evidence.search_result_title,
+                            search_result_snippet=extraction_evidence.search_result_snippet,
+                            source_url=extraction_evidence.source_url,
+                            final_url=extraction_evidence.final_url,
+                            source_title=extraction_evidence.source_title,
+                            outcome=ExplorationEvidenceExtractionOutcome.SUCCEEDED,
+                            evidence=[extraction_evidence],
+                        )
+                    ],
+                )
+            )
+            persisted_from_extractor = persisted_batch.evidence[0]
+            assert persisted_from_extractor.exploration_company_id == link.id
+            assert (
+                persisted_from_extractor.exploration_obligation_id == obligation_one.id
+            )
+            assert persisted_from_extractor.claim == extraction_evidence.claim
+            assert (
+                persisted_from_extractor.supporting_excerpt
+                == extraction_evidence.supporting_excerpt
+            )
+            assert persisted_from_extractor.source_url == extraction_evidence.final_url
+            assert (
+                persisted_from_extractor.requested_url == extraction_evidence.source_url
+            )
+            assert persisted_from_extractor.source_title == "Fetched page title"
             evidence_other_company = await evidence_repo.create(
                 ExplorationEvidenceCreate(
                     exploration_company_id=other_link.id,
@@ -351,6 +413,7 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             assert {item.id for item in company_with_reasoning.evidence} == {
                 evidence_one.id,
                 evidence_two.id,
+                persisted_from_extractor.id,
             }
             assert {item.id for item in company_with_reasoning.facts} == {
                 fact_one.id,
@@ -429,9 +492,9 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             await obligation_repo.delete(changed_obligation)
             assert await service.list_obligations(app_exploration.id) == []
             assert len(await run_repo.list_companies(run.id)) == 1
-            assert len(await evidence_repo.list_by_exploration_company_id(link.id)) == 2
+            assert len(await evidence_repo.list_by_exploration_company_id(link.id)) == 3
             assert (
-                len(await evidence_repo.list_by_obligation_id(obligation_one.id)) == 1
+                len(await evidence_repo.list_by_obligation_id(obligation_one.id)) == 2
             )
 
             with pytest.raises(ExplorationGenerationConflictError):
