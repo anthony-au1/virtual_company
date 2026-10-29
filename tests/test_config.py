@@ -37,3 +37,12 @@ def test_fetch_success_targets_are_configurable_and_keep_existing_defaults(
     configured = Settings()
     assert configured.company_research_successful_fetch_target_per_company == 7
     assert configured.company_research_followup_successful_fetch_target_per_company == 4
+
+
+def test_exploration_fact_extraction_limits_have_independent_defaults() -> None:
+    settings = Settings()
+
+    assert settings.exploration_fact_extraction_concurrency == 3
+    assert settings.exploration_fact_extraction_timeout_seconds == 60
+    assert settings.exploration_fact_extraction_max_evidence_per_chunk == 20
+    assert settings.exploration_fact_extraction_max_chars_per_chunk == 30_000

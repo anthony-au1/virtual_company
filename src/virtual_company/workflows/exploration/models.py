@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from virtual_company.domain.exploration.facts import ExplorationFact
 
 
 class ExtractedExplorationEvidence(BaseModel):
@@ -49,3 +52,87 @@ class ExplorationEvidenceObligationContext(BaseModel):
     exploration_obligation_id: UUID
     description: str = Field(min_length=1)
 
+
+class ExplorationFactCompanyContext(BaseModel):
+    """Minimal selected-company context for factual normalization."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    exploration_company_id: UUID
+    company_name: str = Field(min_length=1)
+
+    @field_validator("company_name")
+    @classmethod
+    def normalize_company_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("company_name must not be blank")
+        return value
+
+
+class ExplorationFactEvidenceInput(BaseModel):
+    """Persisted Evidence fields explicitly supplied to fact extraction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: UUID
+    exploration_company_id: UUID
+    exploration_obligation_id: UUID
+    claim: str = Field(min_length=1)
+    supporting_excerpt: str = Field(min_length=1)
+
+
+class ExtractedExplorationFact(BaseModel):
+    """Raw structured statement and chunk-local Evidence labels."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    statement: str
+    evidence_refs: list[str]
+
+
+class ExtractedExplorationFacts(BaseModel):
+    """Strict structured result; an empty facts list is valid."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    facts: list[ExtractedExplorationFact]
+
+
+class ExplorationFactExtractionOutcome(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class ExplorationFactExtractionFailureCategory(StrEnum):
+    CONFIGURATION = "configuration"
+    TIMEOUT = "timeout"
+    PROVIDER_ERROR = "provider_error"
+    MALFORMED_OUTPUT = "malformed_output"
+    INPUT_LIMIT = "input_limit"
+    UNEXPECTED_ERROR = "unexpected_error"
+
+
+class ExplorationFactExtractionChunkResult(BaseModel):
+    """One deterministic outcome for an ordered Evidence chunk."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_index: int = Field(ge=0)
+    evidence_count: int = Field(ge=1)
+    outcome: ExplorationFactExtractionOutcome
+    facts: list[ExplorationFact] = Field(default_factory=list)
+    failure_category: ExplorationFactExtractionFailureCategory | None = None
+    rejected_fact_count: int = Field(default=0, ge=0)
+
+
+class ExplorationFactExtractionBatchResult(BaseModel):
+    """Ordered chunk outcomes and exact-deduplicated validated Facts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    exploration_company_id: UUID
+    provider: str
+    model: str
+    outcomes: list[ExplorationFactExtractionChunkResult]
+    facts: list[ExplorationFact]

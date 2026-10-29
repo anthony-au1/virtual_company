@@ -33,17 +33,20 @@ class Settings(BaseSettings):
     llm_obligation_generation_provider: str | None = None
     llm_exploration_query_generation_provider: str | None = None
     llm_exploration_evidence_extraction_provider: str | None = None
+    llm_exploration_fact_extraction_provider: str | None = None
     openai_api_key: SecretStr | None = None
     openai_research_model: str = "gpt-5.6-terra"
     openai_extraction_model: str = "gpt-5.6-luna"
     openai_obligation_generation_model: str = "gpt-5.6-terra"
     openai_exploration_query_generation_model: str = "gpt-5.6-terra"
     openai_exploration_evidence_extraction_model: str = "gpt-5.6-luna"
+    openai_exploration_fact_extraction_model: str = "gpt-5.6-terra"
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-sonnet-5"
     anthropic_obligation_generation_model: str = "claude-sonnet-5"
     anthropic_exploration_query_generation_model: str = "claude-sonnet-5"
     anthropic_exploration_evidence_extraction_model: str = "claude-sonnet-5"
+    anthropic_exploration_fact_extraction_model: str = "claude-sonnet-5"
     web_search_provider: Literal["tavily", "exa"] = "tavily"
     web_search_max_results: int = Field(default=10, ge=1, le=10)
     web_search_max_total_results: int = Field(default=30, ge=1)
@@ -67,11 +70,15 @@ class Settings(BaseSettings):
     web_fetch_concurrency: int = Field(default=5, ge=1, le=20)
     evidence_extraction_concurrency: int = Field(default=3, ge=1, le=10)
     evidence_max_excerpt_chars: int = Field(default=1_000, ge=1, le=10_000)
-    exploration_evidence_extraction_concurrency: int = Field(
-        default=3, ge=1, le=10
+    exploration_evidence_extraction_concurrency: int = Field(default=3, ge=1, le=10)
+    exploration_evidence_max_excerpt_chars: int = Field(default=1_000, ge=1, le=10_000)
+    exploration_fact_extraction_concurrency: int = Field(default=3, ge=1, le=10)
+    exploration_fact_extraction_timeout_seconds: float = Field(default=60, gt=0, le=300)
+    exploration_fact_extraction_max_evidence_per_chunk: int = Field(
+        default=20, ge=1, le=100
     )
-    exploration_evidence_max_excerpt_chars: int = Field(
-        default=1_000, ge=1, le=10_000
+    exploration_fact_extraction_max_chars_per_chunk: int = Field(
+        default=30_000, ge=1, le=200_000
     )
     tavily_api_key: SecretStr | None = None
     tavily_search_depth: Literal["basic", "advanced"] = "basic"

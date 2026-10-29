@@ -91,7 +91,55 @@ def test_exploration_evidence_extraction_defaults_to_luna_independently() -> Non
     assert provider.role == "exploration_evidence_extraction"
 
 
-def test_exploration_evidence_provider_and_models_are_independently_configurable() -> None:
+def test_exploration_fact_extraction_defaults_to_terra_independently() -> None:
+    registry = LLMRegistry(Settings(openai_api_key=SecretStr("test-key")))
+
+    provider = registry.for_role(LLMRole.EXPLORATION_FACT_EXTRACTION)
+
+    assert isinstance(provider, OpenAIProvider)
+    assert provider._model == "gpt-5.6-terra"
+    assert provider.role == "exploration_fact_extraction"
+    assert registry.for_role(LLMRole.EXPLORATION_EVIDENCE_EXTRACTION)._model == (
+        "gpt-5.6-luna"
+    )
+
+
+def test_exploration_fact_provider_and_models_are_independently_configurable() -> None:
+    registry = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("openai-key"),
+            anthropic_api_key=SecretStr("anthropic-key"),
+            llm_exploration_fact_extraction_provider="anthropic",
+            anthropic_exploration_fact_extraction_model="custom-fact-model",
+        )
+    )
+
+    provider = registry.for_role(LLMRole.EXPLORATION_FACT_EXTRACTION)
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._model == "custom-fact-model"
+    assert isinstance(
+        registry.for_role(LLMRole.EXPLORATION_EVIDENCE_EXTRACTION), OpenAIProvider
+    )
+
+
+def test_exploration_fact_anthropic_default_and_global_provider_fallback() -> None:
+    registry = LLMRegistry(
+        Settings(
+            llm_provider="anthropic",
+            anthropic_api_key=SecretStr("anthropic-key"),
+        )
+    )
+
+    provider = registry.for_role(LLMRole.EXPLORATION_FACT_EXTRACTION)
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider._model == "claude-sonnet-5"
+
+
+def test_exploration_evidence_provider_and_models_are_independently_configurable() -> (
+    None
+):
     registry = LLMRegistry(
         Settings(
             openai_api_key=SecretStr("openai-key"),
