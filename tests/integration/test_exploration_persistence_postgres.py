@@ -24,6 +24,7 @@ from virtual_company.db.models import (
 from virtual_company.domain.exploration.evidence import (
     ExplorationEvidence as DomainExplorationEvidence,
 )
+from virtual_company.domain.exploration.facts import ExplorationFact as DomainFact
 from virtual_company.repositories.dtos import (
     ExplorationCompanyCreate,
     ExplorationCreate,
@@ -62,9 +63,15 @@ from virtual_company.services.exploration_evidence_extractor import (
 from virtual_company.services.exploration_evidence_persistence import (
     ExplorationEvidencePersistenceService,
 )
+from virtual_company.services.exploration_fact_persistence import (
+    ExplorationFactPersistenceService,
+)
 from virtual_company.services.obligation_generator import (
     GeneratedObligation,
     ObligationGenerationResult,
+)
+from virtual_company.workflows.exploration.models import (
+    ExplorationFactExtractionBatchResult,
 )
 
 
@@ -294,13 +301,23 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                         source_url="https://example.com/cross",
                     )
                 )
-            fact_one = await fact_repo.create(
-                ExplorationFactCreate(
-                    exploration_company_id=link.id,
-                    statement="The company serves Australian businesses.",
-                    evidence_ids=[evidence_one.id, evidence_two.id],
-                )
+            fact_batch = ExplorationFactExtractionBatchResult(
+                exploration_company_id=link.id,
+                provider="test",
+                model="test",
+                outcomes=[],
+                facts=[
+                    DomainFact(
+                        exploration_company_id=link.id,
+                        statement="The company serves Australian businesses.",
+                        evidence_ids=(evidence_one.id, evidence_two.id),
+                    )
+                ],
             )
+            persisted_facts = await ExplorationFactPersistenceService(session).persist(
+                fact_batch
+            )
+            fact_one = persisted_facts.facts[0]
             fact_two = await fact_repo.create(
                 ExplorationFactCreate(
                     exploration_company_id=link.id,
