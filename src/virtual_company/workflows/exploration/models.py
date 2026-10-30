@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from enum import StrEnum
 from uuid import UUID
 
@@ -136,3 +137,69 @@ class ExplorationFactExtractionBatchResult(BaseModel):
     model: str
     outcomes: list[ExplorationFactExtractionChunkResult]
     facts: list[ExplorationFact]
+
+
+class ExplorationHypothesisCompanyContext(BaseModel):
+    """Minimal company identity supplied to Hypothesis Generation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    exploration_company_id: UUID
+    company_name: str = Field(min_length=1)
+
+    @field_validator("company_name")
+    @classmethod
+    def normalize_company_name(cls, value: str) -> str:
+        normalized = " ".join(unicodedata.normalize("NFKC", value).split())
+        if not normalized:
+            raise ValueError("company_name must not be blank")
+        return normalized
+
+
+class ExplorationHypothesisFactInput(BaseModel):
+    """One persisted same-company Fact supplied without its ORM entity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    fact_id: UUID
+    exploration_company_id: UUID
+    statement: str = Field(min_length=1, max_length=2_000)
+
+    @field_validator("statement")
+    @classmethod
+    def normalize_statement(cls, value: str) -> str:
+        normalized = " ".join(unicodedata.normalize("NFKC", value).split())
+        if not normalized:
+            raise ValueError("statement must not be blank")
+        return normalized
+
+
+class ExtractedExplorationHypothesis(BaseModel):
+    """One raw model hypothesis and its call-local Fact references."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    statement: str = Field(strict=True)
+    fact_refs: list[str] = Field(strict=True)
+
+
+class ExtractedExplorationHypotheses(BaseModel):
+    """Strict structured result; no hypotheses is a valid response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hypotheses: list[ExtractedExplorationHypothesis] = Field(strict=True)
+
+
+class ExplorationHypothesisGenerationOutcome(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class ExplorationHypothesisGenerationFailureCategory(StrEnum):
+    CONFIGURATION = "configuration"
+    INPUT_LIMIT = "input_limit"
+    PROVIDER_ERROR = "provider_error"
+    TIMEOUT = "timeout"
+    MALFORMED_OUTPUT = "malformed_output"
+    UNEXPECTED_ERROR = "unexpected_error"

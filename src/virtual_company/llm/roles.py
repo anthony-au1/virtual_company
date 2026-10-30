@@ -12,3 +12,4 @@ class LLMRole(StrEnum):
     EXPLORATION_QUERY_GENERATION = "exploration_query_generation"
     EXPLORATION_EVIDENCE_EXTRACTION = "exploration_evidence_extraction"
     EXPLORATION_FACT_EXTRACTION = "exploration_fact_extraction"
+    EXPLORATION_HYPOTHESIS_GENERATION = "exploration_hypothesis_generation"

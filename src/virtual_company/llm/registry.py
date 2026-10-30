@@ -74,6 +74,11 @@ class LLMRegistry:
                 self._settings.llm_exploration_fact_extraction_provider
                 or self._settings.llm_provider
             ).lower()
+        if role is LLMRole.EXPLORATION_HYPOTHESIS_GENERATION:
+            return (
+                self._settings.llm_exploration_hypothesis_generation_provider
+                or self._settings.llm_provider
+            ).lower()
         return (
             self._settings.llm_exploration_query_generation_provider
             or self._settings.llm_provider
@@ -90,6 +95,8 @@ class LLMRegistry:
             return self._settings.openai_exploration_evidence_extraction_model
         if role is LLMRole.EXPLORATION_FACT_EXTRACTION:
             return self._settings.openai_exploration_fact_extraction_model
+        if role is LLMRole.EXPLORATION_HYPOTHESIS_GENERATION:
+            return self._settings.openai_exploration_hypothesis_generation_model
         return self._settings.openai_exploration_query_generation_model
 
     def _anthropic_model_for_role(self, role: LLMRole) -> str:
@@ -101,4 +108,6 @@ class LLMRegistry:
             return self._settings.anthropic_exploration_evidence_extraction_model
         if role is LLMRole.EXPLORATION_FACT_EXTRACTION:
             return self._settings.anthropic_exploration_fact_extraction_model
+        if role is LLMRole.EXPLORATION_HYPOTHESIS_GENERATION:
+            return self._settings.anthropic_exploration_hypothesis_generation_model
         return self._settings.anthropic_model

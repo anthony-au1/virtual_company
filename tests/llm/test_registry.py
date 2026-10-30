@@ -33,7 +33,7 @@ def test_obligation_generation_has_an_independent_reasoning_model() -> None:
     generator = registry.for_role(LLMRole.OBLIGATION_GENERATION)
 
     assert isinstance(generator, OpenAIProvider)
-    assert generator._model == "gpt-5.6-terra"
+    assert generator._model == "gpt-6.1-terra"
     assert generator.role == "obligation_generation"
 
 
@@ -60,7 +60,7 @@ def test_exploration_query_generation_has_an_independent_model() -> None:
     generator = registry.for_role(LLMRole.EXPLORATION_QUERY_GENERATION)
 
     assert isinstance(generator, OpenAIProvider)
-    assert generator._model == "gpt-5.6-terra"
+    assert generator._model == "gpt-6.1-terra"
     assert generator.role == "exploration_query_generation"
 
 
@@ -87,7 +87,7 @@ def test_exploration_evidence_extraction_defaults_to_luna_independently() -> Non
     provider = registry.for_role(LLMRole.EXPLORATION_EVIDENCE_EXTRACTION)
 
     assert isinstance(provider, OpenAIProvider)
-    assert provider._model == "gpt-5.6-luna"
+    assert provider._model == "gpt-6-luna"
     assert provider.role == "exploration_evidence_extraction"
 
 
@@ -97,10 +97,10 @@ def test_exploration_fact_extraction_defaults_to_terra_independently() -> None:
     provider = registry.for_role(LLMRole.EXPLORATION_FACT_EXTRACTION)
 
     assert isinstance(provider, OpenAIProvider)
-    assert provider._model == "gpt-5.6-terra"
+    assert provider._model == "gpt-6.1-terra"
     assert provider.role == "exploration_fact_extraction"
     assert registry.for_role(LLMRole.EXPLORATION_EVIDENCE_EXTRACTION)._model == (
-        "gpt-5.6-luna"
+        "gpt-6-luna"
     )
 
 
@@ -120,6 +120,52 @@ def test_exploration_fact_provider_and_models_are_independently_configurable() -
     assert provider._model == "custom-fact-model"
     assert isinstance(
         registry.for_role(LLMRole.EXPLORATION_EVIDENCE_EXTRACTION), OpenAIProvider
+    )
+
+
+def test_exploration_hypothesis_generation_has_independent_defaults_and_overrides() -> None:
+    default_registry = LLMRegistry(Settings(openai_api_key=SecretStr("openai-key")))
+    default_provider = default_registry.for_role(
+        LLMRole.EXPLORATION_HYPOTHESIS_GENERATION
+    )
+    assert isinstance(default_provider, OpenAIProvider)
+    assert default_provider._model == "gpt-6.1-terra"
+    assert default_provider.role == "exploration_hypothesis_generation"
+
+    overridden = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("openai-key"),
+            anthropic_api_key=SecretStr("anthropic-key"),
+            llm_exploration_hypothesis_generation_provider="anthropic",
+            anthropic_exploration_hypothesis_generation_model="custom-hypothesis-model",
+        )
+    ).for_role(LLMRole.EXPLORATION_HYPOTHESIS_GENERATION)
+    assert isinstance(overridden, AnthropicProvider)
+    assert overridden._model == "custom-hypothesis-model"
+
+
+def test_exploration_openai_defaults_refresh_without_changing_research_or_overrides() -> None:
+    default = LLMRegistry(Settings(openai_api_key=SecretStr("test-key")))
+    assert default.for_role(LLMRole.RESEARCH)._model == "gpt-5.6-terra"
+    assert default.for_role(LLMRole.OBLIGATION_GENERATION)._model == "gpt-6.1-terra"
+    assert default.for_role(LLMRole.EXPLORATION_QUERY_GENERATION)._model == (
+        "gpt-6.1-terra"
+    )
+    assert default.for_role(LLMRole.EXPLORATION_EVIDENCE_EXTRACTION)._model == (
+        "gpt-6-luna"
+    )
+    assert default.for_role(LLMRole.EXPLORATION_FACT_EXTRACTION)._model == (
+        "gpt-6.1-terra"
+    )
+
+    override = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("test-key"),
+            openai_exploration_query_generation_model="explicit-query-model",
+        )
+    )
+    assert override.for_role(LLMRole.EXPLORATION_QUERY_GENERATION)._model == (
+        "explicit-query-model"
     )
 
 

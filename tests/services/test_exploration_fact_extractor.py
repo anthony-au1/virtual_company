@@ -435,7 +435,7 @@ async def test_configured_factory_uses_dedicated_role_and_disables_io_capture() 
     assert extractor._max_evidence_per_chunk == 20
     assert extractor._max_chars_per_chunk == 30_000
     assert extractor._provider.role == "exploration_fact_extraction"
-    assert extractor._provider.model == "gpt-5.6-terra"
+    assert extractor._provider.model == "gpt-6.1-terra"
     assert extractor._provider._capture_io_override is False
     assert extractor._provider._sanitize_errors is True
     assert DEFAULT_EXPLORATION_FACT_EXTRACTION_CONCURRENCY == 3

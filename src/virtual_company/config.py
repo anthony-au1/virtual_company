@@ -34,19 +34,22 @@ class Settings(BaseSettings):
     llm_exploration_query_generation_provider: str | None = None
     llm_exploration_evidence_extraction_provider: str | None = None
     llm_exploration_fact_extraction_provider: str | None = None
+    llm_exploration_hypothesis_generation_provider: str | None = None
     openai_api_key: SecretStr | None = None
-    openai_research_model: str = "gpt-5.6-terra"
-    openai_extraction_model: str = "gpt-5.6-luna"
-    openai_obligation_generation_model: str = "gpt-5.6-terra"
-    openai_exploration_query_generation_model: str = "gpt-5.6-terra"
-    openai_exploration_evidence_extraction_model: str = "gpt-5.6-luna"
-    openai_exploration_fact_extraction_model: str = "gpt-5.6-terra"
+    openai_research_model: str = "gpt-6.1-terra"
+    openai_extraction_model: str = "gpt-6-luna"
+    openai_obligation_generation_model: str = "gpt-6.1-terra"
+    openai_exploration_query_generation_model: str = "gpt-6.1-terra"
+    openai_exploration_evidence_extraction_model: str = "gpt-6-luna"
+    openai_exploration_fact_extraction_model: str = "gpt-6.1-terra"
+    openai_exploration_hypothesis_generation_model: str = "gpt-6.1-terra"
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-sonnet-5"
     anthropic_obligation_generation_model: str = "claude-sonnet-5"
     anthropic_exploration_query_generation_model: str = "claude-sonnet-5"
     anthropic_exploration_evidence_extraction_model: str = "claude-sonnet-5"
     anthropic_exploration_fact_extraction_model: str = "claude-sonnet-5"
+    anthropic_exploration_hypothesis_generation_model: str = "claude-sonnet-5"
     web_search_provider: Literal["tavily", "exa"] = "tavily"
     web_search_max_results: int = Field(default=10, ge=1, le=10)
     web_search_max_total_results: int = Field(default=30, ge=1)
@@ -79,6 +82,12 @@ class Settings(BaseSettings):
     )
     exploration_fact_extraction_max_chars_per_chunk: int = Field(
         default=30_000, ge=1, le=200_000
+    )
+    exploration_hypothesis_generation_timeout_seconds: float = Field(
+        default=60, gt=0, le=300
+    )
+    exploration_hypothesis_generation_max_input_chars: int = Field(
+        default=100_000, ge=1, le=1_000_000
     )
     tavily_api_key: SecretStr | None = None
     tavily_search_depth: Literal["basic", "advanced"] = "basic"
