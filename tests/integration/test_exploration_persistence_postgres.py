@@ -21,16 +21,21 @@ from virtual_company.db.models import (
     ResearchCompany,
     ResearchRun,
 )
+from virtual_company.db.models import (
+    ExplorationHypothesis as PersistedHypothesis,
+)
 from virtual_company.domain.exploration.evidence import (
     ExplorationEvidence as DomainExplorationEvidence,
 )
 from virtual_company.domain.exploration.facts import ExplorationFact as DomainFact
+from virtual_company.domain.exploration.hypotheses import (
+    ExplorationHypothesis as DomainHypothesis,
+)
 from virtual_company.repositories.dtos import (
     ExplorationCompanyCreate,
     ExplorationCreate,
     ExplorationEvidenceCreate,
     ExplorationFactCreate,
-    ExplorationHypothesisCreate,
     ExplorationObligationCreate,
     ExplorationObligationUpdate,
     ExplorationRunCreate,
@@ -66,12 +71,19 @@ from virtual_company.services.exploration_evidence_persistence import (
 from virtual_company.services.exploration_fact_persistence import (
     ExplorationFactPersistenceService,
 )
+from virtual_company.services.exploration_hypothesis_generator import (
+    ExplorationHypothesisGenerationResult,
+)
+from virtual_company.services.exploration_hypothesis_persistence import (
+    ExplorationHypothesisPersistenceService,
+)
 from virtual_company.services.obligation_generator import (
     GeneratedObligation,
     ObligationGenerationResult,
 )
 from virtual_company.workflows.exploration.models import (
     ExplorationFactExtractionBatchResult,
+    ExplorationHypothesisGenerationOutcome,
 )
 
 
@@ -356,35 +368,61 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                         evidence_ids=[evidence_one.id],
                     )
                 )
-            hypothesis = await hypothesis_repo.create(
-                ExplorationHypothesisCreate(
-                    exploration_company_id=link.id,
-                    statement="The company may fit the Exploration target.",
-                    fact_ids=[fact_one.id, fact_two.id],
+            hypothesis_result = await ExplorationHypothesisPersistenceService(
+                session
+            ).persist(
+                ExplorationHypothesisGenerationResult(
+                    outcome=ExplorationHypothesisGenerationOutcome.SUCCEEDED,
+                    hypotheses=(
+                        DomainHypothesis(
+                            exploration_company_id=link.id,
+                            statement="The company may fit the Exploration target.",
+                            fact_ids=(fact_one.id, fact_two.id),
+                        ),
+                    ),
                 )
             )
+            assert hypothesis_result.input_count == 1
+            assert hypothesis_result.persisted_count == 1
+            hypothesis = hypothesis_result.hypotheses[0]
+            assert {item.id for item in hypothesis.facts} == {fact_one.id, fact_two.id}
             with pytest.raises(ValueError, match="belong to its company"):
-                await hypothesis_repo.create(
-                    ExplorationHypothesisCreate(
-                        exploration_company_id=link.id,
-                        statement="Invalid cross-company hypothesis.",
-                        fact_ids=[fact_one.id, other_fact.id],
+                await ExplorationHypothesisPersistenceService(session).persist(
+                    ExplorationHypothesisGenerationResult(
+                        outcome=ExplorationHypothesisGenerationOutcome.SUCCEEDED,
+                        hypotheses=(
+                            DomainHypothesis(
+                                exploration_company_id=link.id,
+                                statement="Invalid cross-company hypothesis.",
+                                fact_ids=(fact_one.id, other_fact.id),
+                            ),
+                        ),
                     )
                 )
             with pytest.raises(ValueError, match="does not exist"):
-                await hypothesis_repo.create(
-                    ExplorationHypothesisCreate(
-                        exploration_company_id=link.id,
-                        statement="Missing fact hypothesis.",
-                        fact_ids=[uuid4()],
+                await ExplorationHypothesisPersistenceService(session).persist(
+                    ExplorationHypothesisGenerationResult(
+                        outcome=ExplorationHypothesisGenerationOutcome.SUCCEEDED,
+                        hypotheses=(
+                            DomainHypothesis(
+                                exploration_company_id=link.id,
+                                statement="Missing fact hypothesis.",
+                                fact_ids=(uuid4(),),
+                            ),
+                        ),
                     )
                 )
             with pytest.raises(ValueError, match="company does not exist"):
-                await hypothesis_repo.create(
-                    ExplorationHypothesisCreate(
-                        exploration_company_id=uuid4(),
-                        statement="Missing company hypothesis.",
-                        fact_ids=[fact_one.id],
+                await ExplorationHypothesisPersistenceService(session).persist(
+                    ExplorationHypothesisGenerationResult(
+                        outcome=ExplorationHypothesisGenerationOutcome.SUCCEEDED,
+                        hypotheses=(
+                            DomainHypothesis(
+                                exploration_company_id=uuid4(),
+                                statement="Missing company hypothesis.",
+                                fact_ids=(fact_one.id,),
+                            ),
+                        ),
                     )
                 )
             await session.commit()
@@ -466,6 +504,32 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             assert len(await exploration_repo.list_obligations(exploration.id)) == 2
             assert len(await exploration_repo.list_runs(exploration.id)) == 2
             await session.commit()
+
+            partial_statement = "Must disappear after caller rollback."
+            with pytest.raises(ValueError, match="do not exist"):
+                await ExplorationHypothesisPersistenceService(session).persist(
+                    ExplorationHypothesisGenerationResult(
+                        outcome=ExplorationHypothesisGenerationOutcome.SUCCEEDED,
+                        hypotheses=(
+                            DomainHypothesis(
+                                exploration_company_id=link.id,
+                                statement=partial_statement,
+                                fact_ids=(fact_one.id,),
+                            ),
+                            DomainHypothesis(
+                                exploration_company_id=link.id,
+                                statement="Second Hypothesis has missing Fact.",
+                                fact_ids=(uuid4(),),
+                            ),
+                        ),
+                    )
+                )
+            await session.rollback()
+            assert await session.scalar(
+                select(PersistedHypothesis).where(
+                    PersistedHypothesis.statement == partial_statement
+                )
+            ) is None
 
             with pytest.raises(IntegrityError):
                 await run_repo.create(
