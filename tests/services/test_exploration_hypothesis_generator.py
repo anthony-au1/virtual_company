@@ -158,7 +158,9 @@ async def test_rejects_cross_company_and_duplicate_fact_ids_before_provider_call
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("max_hypotheses", [True, False, 0, 21, 1.5, "10"])
+@pytest.mark.parametrize(
+    "max_hypotheses", [True, False, 0, 21, -1, 1.5, "10"]
+)
 async def test_rejects_invalid_maximum_before_call(max_hypotheses):
     selected = company()
     instance, provider, _ = service()
@@ -170,6 +172,59 @@ async def test_rejects_invalid_maximum_before_call(max_hypotheses):
             max_hypotheses=max_hypotheses,
         )
     assert provider.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("configured", "override", "expected"),
+    [(10, None, 10), (15, None, 15), (15, 5, 5), (1, None, 1), (20, None, 20)],
+)
+async def test_effective_maximum_is_used_in_prompt_and_observability(
+    configured, override, expected
+):
+    selected = company()
+    telemetry = ObservabilityStub()
+    instance, provider, _ = service(provider=ProviderStub(), max_hypotheses=configured)
+    instance._observability = telemetry
+
+    result = await instance.generate(
+        selected,
+        "Context",
+        [fact(selected.exploration_company_id, "A Fact.")],
+        max_hypotheses=override,
+    )
+
+    assert result.outcome is Outcome.SUCCEEDED
+    assert f'"max_hypotheses":{expected}' in str(provider.calls[0]["user_prompt"])
+    assert all(event[1]["max_hypotheses"] == expected for event in telemetry.events)
+
+
+@pytest.mark.asyncio
+async def test_configured_maximum_is_passed_to_generator_factory():
+    generator = create_configured_exploration_hypothesis_generator(
+        Settings(exploration_hypothesis_max_hypotheses=15)
+    )
+    assert generator._max_hypotheses == 15
+
+
+@pytest.mark.asyncio
+async def test_configured_maximum_rejects_excess_provider_output():
+    selected = company()
+    provider = ProviderStub(
+        {
+            "hypotheses": [
+                {"statement": f"H{i}", "fact_refs": ["F1"]} for i in range(2)
+            ]
+        }
+    )
+    instance, _, _ = service(provider=provider, max_hypotheses=1)
+
+    result = await instance.generate(
+        selected, "Context", [fact(selected.exploration_company_id, "A Fact.")]
+    )
+
+    assert result.outcome is Outcome.FAILED
+    assert result.failure_category is FailureCategory.MALFORMED_OUTPUT
 
 
 @pytest.mark.asyncio

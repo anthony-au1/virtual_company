@@ -22,9 +22,9 @@ def test_default_roles_resolve_to_openai_terra_and_luna() -> None:
     extraction = registry.for_role(LLMRole.EXTRACTION)
 
     assert isinstance(research, OpenAIProvider)
-    assert research._model == "gpt-5.6-terra"
+    assert research._model == "gpt-6.1-terra"
     assert isinstance(extraction, OpenAIProvider)
-    assert extraction._model == "gpt-5.6-luna"
+    assert extraction._model == "gpt-6-luna"
 
 
 def test_obligation_generation_has_an_independent_reasoning_model() -> None:
@@ -146,7 +146,7 @@ def test_exploration_hypothesis_generation_has_independent_defaults_and_override
 
 def test_exploration_openai_defaults_refresh_without_changing_research_or_overrides() -> None:
     default = LLMRegistry(Settings(openai_api_key=SecretStr("test-key")))
-    assert default.for_role(LLMRole.RESEARCH)._model == "gpt-5.6-terra"
+    assert default.for_role(LLMRole.RESEARCH)._model == "gpt-6.1-terra"
     assert default.for_role(LLMRole.OBLIGATION_GENERATION)._model == "gpt-6.1-terra"
     assert default.for_role(LLMRole.EXPLORATION_QUERY_GENERATION)._model == (
         "gpt-6.1-terra"

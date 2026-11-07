@@ -14,10 +14,10 @@ from virtual_company.repositories.dtos import (
     ExplorationRunCreate,
     ExplorationUpdate,
 )
+from virtual_company.repositories.exploration import ExplorationRepository
 from virtual_company.repositories.exploration_company import (
     ExplorationCompanyRepository,
 )
-from virtual_company.repositories.exploration import ExplorationRepository
 from virtual_company.repositories.exploration_obligation import (
     ExplorationObligationRepository,
 )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from virtual_company.config import Settings
 
@@ -46,3 +47,19 @@ def test_exploration_fact_extraction_limits_have_independent_defaults() -> None:
     assert settings.exploration_fact_extraction_timeout_seconds == 60
     assert settings.exploration_fact_extraction_max_evidence_per_chunk == 20
     assert settings.exploration_fact_extraction_max_chars_per_chunk == 30_000
+
+
+def test_exploration_hypothesis_maximum_default_and_environment_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EXPLORATION_HYPOTHESIS_MAX_HYPOTHESES", raising=False)
+    assert Settings().exploration_hypothesis_max_hypotheses == 10
+
+    monkeypatch.setenv("EXPLORATION_HYPOTHESIS_MAX_HYPOTHESES", "15")
+    assert Settings().exploration_hypothesis_max_hypotheses == 15
+
+
+@pytest.mark.parametrize("value", [0, 21, -1, True, 1.5, "bad"])
+def test_invalid_exploration_hypothesis_maximum_fails_settings_validation(value) -> None:
+    with pytest.raises(ValidationError):
+        Settings(exploration_hypothesis_max_hypotheses=value)

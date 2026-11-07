@@ -67,6 +67,7 @@ class ExplorationHypothesisGenerator:
             DEFAULT_EXPLORATION_HYPOTHESIS_GENERATION_TIMEOUT_SECONDS
         ),
         max_input_chars: int = DEFAULT_EXPLORATION_HYPOTHESIS_GENERATION_MAX_INPUT_CHARS,
+        max_hypotheses: int = DEFAULT_MAX_EXPLORATION_HYPOTHESES,
         observability: Observability | None = None,
         configuration_error: bool = False,
     ) -> None:
@@ -74,9 +75,16 @@ class ExplorationHypothesisGenerator:
             raise ValueError("timeout_seconds must be greater than zero")
         if max_input_chars < 1:
             raise ValueError("max_input_chars must be greater than zero")
+        if (
+            not isinstance(max_hypotheses, int)
+            or isinstance(max_hypotheses, bool)
+            or not 1 <= max_hypotheses <= MAX_EXPLORATION_HYPOTHESES
+        ):
+            raise ValueError("max_hypotheses must be between 1 and 20")
         self._provider = provider
         self._timeout_seconds = timeout_seconds
         self._max_input_chars = max_input_chars
+        self._max_hypotheses = max_hypotheses
         self._configuration_error = configuration_error or provider is None
         self._observability = observability or get_observability()
 
@@ -85,13 +93,16 @@ class ExplorationHypothesisGenerator:
         company: ExplorationHypothesisCompanyContext,
         business_context: str,
         facts: Sequence[ExplorationHypothesisFactInput],
-        max_hypotheses: int = DEFAULT_MAX_EXPLORATION_HYPOTHESES,
+        max_hypotheses: int | None = None,
     ) -> ExplorationHypothesisGenerationResult:
         """Generate supported Hypotheses from the complete ordered Fact input."""
+        effective_max_hypotheses = (
+            self._max_hypotheses if max_hypotheses is None else max_hypotheses
+        )
         if (
-            not isinstance(max_hypotheses, int)
-            or isinstance(max_hypotheses, bool)
-            or not 1 <= max_hypotheses <= MAX_EXPLORATION_HYPOTHESES
+            not isinstance(effective_max_hypotheses, int)
+            or isinstance(effective_max_hypotheses, bool)
+            or not 1 <= effective_max_hypotheses <= MAX_EXPLORATION_HYPOTHESES
         ):
             raise ValueError("max_hypotheses must be between 1 and 20")
 
@@ -121,7 +132,7 @@ class ExplorationHypothesisGenerator:
             "prompt_name": GENERATE_EXPLORATION_HYPOTHESES_PROMPT.name,
             "prompt_version": GENERATE_EXPLORATION_HYPOTHESES_PROMPT.version,
             "input_fact_count": len(ordered_facts),
-            "max_hypotheses": max_hypotheses,
+            "max_hypotheses": effective_max_hypotheses,
         }
 
         if not ordered_facts:
@@ -148,7 +159,7 @@ class ExplorationHypothesisGenerator:
             company.company_name,
             normalized_context,
             labeled_facts,
-            max_hypotheses,
+            effective_max_hypotheses,
         )
         if len(system_prompt) + len(user_prompt) > self._max_input_chars:
             return self._failed(
@@ -181,7 +192,7 @@ class ExplorationHypothesisGenerator:
                             response_model=ExtractedExplorationHypotheses,
                         )
                     parsed = self._parse_response(response)
-                    if len(parsed.hypotheses) > max_hypotheses:
+                    if len(parsed.hypotheses) > effective_max_hypotheses:
                         raise _MalformedHypothesisOutput(
                             "Generated hypothesis count exceeds max_hypotheses"
                         )
@@ -354,6 +365,7 @@ def create_configured_exploration_hypothesis_generator(
             max_input_chars=(
                 resolved_settings.exploration_hypothesis_generation_max_input_chars
             ),
+            max_hypotheses=resolved_settings.exploration_hypothesis_max_hypotheses,
             observability=observability,
             configuration_error=True,
         )
@@ -368,5 +380,6 @@ def create_configured_exploration_hypothesis_generator(
         instrumented,
         timeout_seconds=resolved_settings.exploration_hypothesis_generation_timeout_seconds,
         max_input_chars=resolved_settings.exploration_hypothesis_generation_max_input_chars,
+        max_hypotheses=resolved_settings.exploration_hypothesis_max_hypotheses,
         observability=observability,
     )

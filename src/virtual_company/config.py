@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://virtual_company:virtual_company@localhost:5432/virtual_company"
@@ -89,9 +89,21 @@ class Settings(BaseSettings):
     exploration_hypothesis_generation_max_input_chars: int = Field(
         default=100_000, ge=1, le=1_000_000
     )
+    exploration_hypothesis_max_hypotheses: int = Field(
+        default=10, ge=1, le=20
+    )
     tavily_api_key: SecretStr | None = None
     tavily_search_depth: Literal["basic", "advanced"] = "basic"
     exa_api_key: SecretStr | None = None
+
+    @field_validator("exploration_hypothesis_max_hypotheses", mode="before")
+    @classmethod
+    def reject_non_integer_hypothesis_maximum(cls, value: object) -> object:
+        if isinstance(value, (bool, float)):
+            raise ValueError(  # noqa: TRY004 - Pydantic uses ValueError for validation
+                "exploration_hypothesis_max_hypotheses must be an integer"
+            )
+        return value
 
 
 @lru_cache
