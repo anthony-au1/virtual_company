@@ -127,7 +127,7 @@ async def test_start_run_persists_one_run_and_unique_selected_companies(service_
 
     assert result.run.exploration_id == exploration_id
     assert result.run.research_run_id == research_run_id
-    assert result.run.status == "RUNNING"
+    assert result.run.status == "READY"
     assert result.company_ids == company_ids
     assert len(session.store["runs"]) == 1
     assert len(session.store["links"]) == 2

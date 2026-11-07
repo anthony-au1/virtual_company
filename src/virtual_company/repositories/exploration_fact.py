@@ -59,6 +59,18 @@ class ExplorationFactRepository:
     async def get_by_id(self, fact_id: UUID) -> ExplorationFact | None:
         return await self._session.get(ExplorationFact, fact_id)
 
+    async def list_by_exploration_company_id(
+        self, exploration_company_id: UUID
+    ) -> list[ExplorationFact]:
+        statement = (
+            select(ExplorationFact)
+            .where(
+                ExplorationFact.exploration_company_id == exploration_company_id
+            )
+            .order_by(ExplorationFact.created_at.asc(), ExplorationFact.id.asc())
+        )
+        return list(await self._session.scalars(statement))
+
     async def get_by_id_with_evidence(self, fact_id: UUID) -> ExplorationFact | None:
         statement = (
             select(ExplorationFact)

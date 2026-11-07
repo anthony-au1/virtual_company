@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from virtual_company.db.models import Exploration, ExplorationObligation, ExplorationRun
+from virtual_company.domain.exploration.run import ExplorationRunStatus
 from virtual_company.repositories.dtos import (
     ExplorationCreate,
     ExplorationRunCreate,
@@ -206,7 +207,7 @@ class ExplorationService:
                 ExplorationRunCreate(
                     exploration_id=exploration_id,
                     research_run_id=research_run_id,
-                    status="RUNNING",
+                    status=ExplorationRunStatus.READY.value,
                 )
             )
             await self._run_companies.create_many(run.id, unique_company_ids)

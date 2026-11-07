@@ -61,5 +61,6 @@ class ExplorationCompanyRepository:
             select(ExplorationCompany)
             .options(selectinload(ExplorationCompany.company))
             .where(ExplorationCompany.exploration_run_id == run_id)
+            .order_by(ExplorationCompany.id.asc())
         )
         return list(await self._session.scalars(statement))

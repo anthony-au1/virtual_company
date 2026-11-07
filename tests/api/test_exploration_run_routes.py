@@ -25,7 +25,7 @@ def test_start_run_returns_run_and_selected_company_ids():
                     id=uuid4(),
                     exploration_id=exploration_id,
                     research_run_id=research_run_id,
-                    status="RUNNING",
+                    status="READY",
                     started_at=now,
                     completed_at=None,
                 ),
@@ -45,6 +45,7 @@ def test_start_run_returns_run_and_selected_company_ids():
         app.dependency_overrides.clear()
 
     assert response.status_code == 201
+    assert response.json()["status"] == "READY"
     assert response.json()["exploration_id"] == str(exploration_id)
     assert response.json()["research_run_id"] == str(research_run_id)
     assert response.json()["company_ids"] == [str(value) for value in company_ids]

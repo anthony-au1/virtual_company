@@ -70,7 +70,7 @@ class ExplorationEvidenceRepository:
     ) -> list[ExplorationEvidence]:
         statement = select(ExplorationEvidence).where(
             ExplorationEvidence.exploration_company_id == exploration_company_id
-        )
+        ).order_by(ExplorationEvidence.created_at.asc(), ExplorationEvidence.id.asc())
         return list(await self._session.scalars(statement))
 
     async def list_by_obligation_id(

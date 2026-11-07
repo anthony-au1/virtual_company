@@ -50,7 +50,7 @@ class ExplorationObligationRepository:
     ) -> list[ExplorationObligation]:
         statement = select(ExplorationObligation).where(
             ExplorationObligation.exploration_id == exploration_id
-        )
+        ).order_by(ExplorationObligation.created_at.asc(), ExplorationObligation.id.asc())
         return list(await self._session.scalars(statement))
 
     async def replace_for_exploration(

@@ -1,5 +1,6 @@
 """Opt-in PostgreSQL verification for Exploration persistence."""
 
+import asyncio
 import os
 from uuid import uuid4
 
@@ -31,6 +32,7 @@ from virtual_company.domain.exploration.facts import ExplorationFact as DomainFa
 from virtual_company.domain.exploration.hypotheses import (
     ExplorationHypothesis as DomainHypothesis,
 )
+from virtual_company.domain.exploration.run import ExplorationRunStatus
 from virtual_company.repositories.dtos import (
     ExplorationCompanyCreate,
     ExplorationCreate,
@@ -55,7 +57,11 @@ from virtual_company.repositories.exploration_hypothesis import (
 from virtual_company.repositories.exploration_obligation import (
     ExplorationObligationRepository,
 )
-from virtual_company.repositories.exploration_run import ExplorationRunRepository
+from virtual_company.repositories.exploration_run import (
+    ExplorationRunClaimOutcome,
+    ExplorationRunRepository,
+    InvalidExplorationRunTransitionError,
+)
 from virtual_company.services.exploration import (
     ExplorationGenerationConflictError,
     ExplorationService,
@@ -173,14 +179,14 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                 ExplorationRunCreate(
                     exploration_id=exploration.id,
                     research_run_id=research_a.id,
-                    status="RUNNING",
+                    status="READY",
                 )
             )
             second_run = await run_repo.create(
                 ExplorationRunCreate(
                     exploration_id=exploration.id,
                     research_run_id=research_b.id,
-                    status="RUNNING",
+                    status="READY",
                 )
             )
             assert run.research_run_id == research_a.id
@@ -343,6 +349,11 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                     statement="The other company provides consulting.",
                     evidence_ids=[evidence_other_company.id],
                 )
+            )
+            company_facts = await fact_repo.list_by_exploration_company_id(link.id)
+            assert {item.id for item in company_facts} == {fact_one.id, fact_two.id}
+            assert company_facts == sorted(
+                company_facts, key=lambda item: (item.created_at, item.id)
             )
             with pytest.raises(ValueError, match="belong to its company"):
                 await fact_repo.create(
@@ -595,6 +606,105 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                     )
                 )
             await session.rollback()
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(DropSchema(schema, cascade=True, if_exists=True))
+        await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("RUN_EXPLORATION_DB_TESTS") != "true",
+    reason="Opt-in local PostgreSQL Exploration persistence test",
+)
+async def test_exploration_run_claims_are_atomic_and_transactional() -> None:
+    schema = f"test_exploration_lifecycle_{uuid4().hex}"
+    engine = create_async_engine(
+        os.getenv("EXPLORATION_TEST_DATABASE_URL", DEFAULT_DATABASE_URL)
+    )
+    scoped = engine.execution_options(schema_translate_map={None: schema})
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(CreateSchema(schema))
+        async with scoped.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+
+        sessions = async_sessionmaker(scoped, expire_on_commit=False)
+        async with sessions() as session:
+            campaign = Campaign(
+                name="Lifecycle source",
+                keywords=[],
+                target_count=1,
+                max_companies_to_research=1,
+                status="COMPLETED",
+            )
+            session.add(campaign)
+            await session.flush()
+            research_run = ResearchRun(
+                campaign_id=campaign.id, status="COMPLETED", companies_found=0
+            )
+            session.add(research_run)
+            await session.flush()
+            exploration = await ExplorationRepository(session).create(
+                ExplorationCreate(
+                    business_context="Lifecycle verification",
+                    max_obligations=1,
+                    status="DRAFT",
+                )
+            )
+            run = await ExplorationRunRepository(session).create(
+                ExplorationRunCreate(
+                    exploration_id=exploration.id,
+                    research_run_id=research_run.id,
+                    status="READY",
+                )
+            )
+            run_id = run.id
+            await session.commit()
+
+        async def claim_once():
+            async with sessions() as session:
+                result = await ExplorationRunRepository(session).claim_for_execution(
+                    run_id
+                )
+                await session.commit()
+                return result
+
+        claims = await asyncio.gather(claim_once(), claim_once())
+        assert sum(
+            result.outcome is ExplorationRunClaimOutcome.CLAIMED for result in claims
+        ) == 1
+        assert sum(
+            result.outcome is ExplorationRunClaimOutcome.NOT_READY for result in claims
+        ) == 1
+
+        async with sessions() as session:
+            repository = ExplorationRunRepository(session)
+            queued = await repository.get_by_id(run_id)
+            assert queued.status == "QUEUED"
+            creation_timestamp = queued.started_at
+            await repository.transition(run_id, ExplorationRunStatus.RUNNING)
+            await session.rollback()
+
+        async with sessions() as session:
+            repository = ExplorationRunRepository(session)
+            queued = await repository.get_by_id(run_id)
+            assert queued.status == "QUEUED"
+            assert queued.started_at == creation_timestamp
+            running = await repository.transition(run_id, ExplorationRunStatus.RUNNING)
+            assert running.started_at.tzinfo is not None
+            await session.commit()
+
+        async with sessions() as session:
+            repository = ExplorationRunRepository(session)
+            completed = await repository.transition(
+                run_id, ExplorationRunStatus.COMPLETED
+            )
+            assert completed.completed_at.tzinfo is not None
+            await session.commit()
+            with pytest.raises(InvalidExplorationRunTransitionError):
+                await repository.transition(run_id, ExplorationRunStatus.RUNNING)
     finally:
         async with engine.begin() as connection:
             await connection.execute(DropSchema(schema, cascade=True, if_exists=True))
