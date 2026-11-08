@@ -8,7 +8,14 @@ import {
 } from "@tanstack/react-query";
 import { ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,6 +57,12 @@ export function ExplorationRunDetailsPage({
 }) {
   const queryClient = useQueryClient();
   const [companyLinkId, setCompanyLinkId] = useState("");
+  const [expandedHypothesisIds, setExpandedHypothesisIds] = useState<
+    Set<string>
+  >(new Set());
+  const [expandedFactIds, setExpandedFactIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [activeSection, setActiveSection] = useState<ResultSection>("evidence");
   const [executionNeedsRefresh, setExecutionNeedsRefresh] = useState(false);
   const previousStatus = useRef<ExplorationRunStatus | undefined>(undefined);
@@ -103,7 +116,10 @@ export function ExplorationRunDetailsPage({
     ),
     queryFn: () =>
       listExplorationCompanyFacts(explorationId, selectedCompanyLinkId),
-    enabled: Boolean(selectedCompanyLinkId) && activeSection === "facts",
+    enabled:
+      Boolean(selectedCompanyLinkId) &&
+      (activeSection === "facts" ||
+        (activeSection === "hypotheses" && expandedHypothesisIds.size > 0)),
     retry: false,
   });
   const hypothesesQuery = useQuery({
@@ -120,7 +136,11 @@ export function ExplorationRunDetailsPage({
   const obligationsQuery = useQuery({
     queryKey: explorationObligationsQueryKey(explorationId),
     queryFn: () => listExplorationObligations(explorationId),
-    enabled: Boolean(selectedCompanyLinkId) && activeSection === "evidence",
+    enabled:
+      Boolean(selectedCompanyLinkId) &&
+      (activeSection === "evidence" ||
+        ((activeSection === "facts" || activeSection === "hypotheses") &&
+          expandedFactIds.size > 0)),
   });
   const runSummary = runsQuery.data?.find((run) => run.id === runId);
   const status = statusQuery.data?.status;
@@ -179,6 +199,19 @@ export function ExplorationRunDetailsPage({
   async function refreshStatus(): Promise<void> {
     const refreshed = await statusQuery.refetch();
     if (refreshed.isSuccess && refreshed.data) setExecutionNeedsRefresh(false);
+  }
+
+  function setExpanded(
+    setter: Dispatch<SetStateAction<Set<string>>>,
+    id: string,
+    expanded: boolean,
+  ): void {
+    setter((current) => {
+      const next = new Set(current);
+      if (expanded) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   }
 
   if (statusQuery.isPending) {
@@ -380,7 +413,11 @@ export function ExplorationRunDetailsPage({
               <select
                 className="border-input bg-background mt-2 h-9 w-full rounded-md border px-3 text-sm"
                 id="selected-company"
-                onChange={(event) => setCompanyLinkId(event.target.value)}
+                onChange={(event) => {
+                  setCompanyLinkId(event.target.value);
+                  setExpandedHypothesisIds(new Set());
+                  setExpandedFactIds(new Set());
+                }}
                 value={selectedCompanyLinkId}
               >
                 {companiesQuery.data.map((company) => (
@@ -446,15 +483,31 @@ export function ExplorationRunDetailsPage({
                     />
                   ) : activeSection === "facts" ? (
                     <StatementResults
+                      key={selectedCompanyLinkId}
                       title="Facts"
                       query={factsQuery}
                       kind="facts"
+                      onFactToggle={(id, expanded) =>
+                        setExpanded(setExpandedFactIds, id, expanded)
+                      }
+                      expandedFactIds={expandedFactIds}
+                      evidenceQuery={evidenceQuery}
                     />
                   ) : (
                     <StatementResults
+                      key={selectedCompanyLinkId}
                       title="Hypotheses"
                       query={hypothesesQuery}
                       kind="hypotheses"
+                      onHypothesisToggle={(id, expanded) =>
+                        setExpanded(setExpandedHypothesisIds, id, expanded)
+                      }
+                      factsQuery={factsQuery}
+                      expandedFactIds={expandedFactIds}
+                      onFactToggle={(id, expanded) =>
+                        setExpanded(setExpandedFactIds, id, expanded)
+                      }
+                      evidenceQuery={evidenceQuery}
                     />
                   )}
                 </div>
@@ -538,10 +591,22 @@ function StatementResults({
   title,
   query,
   kind,
+  onHypothesisToggle,
+  factsQuery,
+  expandedFactIds = new Set(),
+  onFactToggle,
+  evidenceQuery,
 }: {
   title: string;
-  query: StatementQuery;
+  query:
+    | UseQueryResult<ExplorationFact[], Error>
+    | UseQueryResult<ExplorationHypothesis[], Error>;
   kind: "facts" | "hypotheses";
+  onHypothesisToggle?: (id: string, expanded: boolean) => void;
+  factsQuery?: UseQueryResult<ExplorationFact[], Error>;
+  expandedFactIds?: Set<string>;
+  onFactToggle?: (id: string, expanded: boolean) => void;
+  evidenceQuery: UseQueryResult<ExplorationEvidence[], Error>;
 }) {
   if (query.isPending) return <LoadingResults label={title} />;
   if (query.isError)
@@ -556,28 +621,161 @@ function StatementResults({
         <span className="text-muted-foreground">({query.data.length})</span>
       </h3>
       <ul className="mt-3 space-y-2">
-        {query.data.map((item) => (
-          <li className="rounded-md border p-3" key={item.id}>
-            <p className="text-sm leading-6">{item.statement}</p>
-            <time
-              className="text-muted-foreground mt-2 block text-xs"
-              dateTime={item.created_at}
-            >
-              Added {formatDate(item.created_at)}
-            </time>
-          </li>
-        ))}
+        {kind === "facts"
+          ? (query.data as ExplorationFact[]).map((fact) => (
+              <li className="rounded-md border p-3" key={fact.id}>
+                <p className="text-sm leading-6">{fact.statement}</p>
+                <AddedAt date={fact.created_at} />
+                {onFactToggle ? (
+                  <FactEvidenceDisclosure
+                    fact={fact}
+                    expanded={expandedFactIds.has(fact.id)}
+                    onToggle={onFactToggle}
+                    evidenceQuery={evidenceQuery}
+                  />
+                ) : null}
+              </li>
+            ))
+          : (query.data as ExplorationHypothesis[]).map((hypothesis) => (
+              <li className="rounded-md border p-3" key={hypothesis.id}>
+                <p className="text-sm leading-6">{hypothesis.statement}</p>
+                <AddedAt date={hypothesis.created_at} />
+                <details
+                  className="border-border mt-3 rounded-md border px-3 py-2"
+                  onToggle={(event) =>
+                    onHypothesisToggle?.(
+                      hypothesis.id,
+                      event.currentTarget.open &&
+                        hypothesis.fact_ids.length > 0,
+                    )
+                  }
+                >
+                  <summary className="cursor-pointer text-sm font-medium">
+                    Supporting Facts ({hypothesis.fact_ids.length})
+                  </summary>
+                  {hypothesis.fact_ids.length === 0 ? (
+                    <p className="text-muted-foreground mt-2 text-sm">
+                      No supporting Facts are recorded.
+                    </p>
+                  ) : !factsQuery || factsQuery.isPending ? (
+                    <LoadingResults label="Supporting Facts" />
+                  ) : factsQuery.isError ? (
+                    <ErrorResults
+                      label="Supporting Facts"
+                      onRetry={() => void factsQuery.refetch()}
+                    />
+                  ) : (
+                    <ul className="mt-3 space-y-2">
+                      {hypothesis.fact_ids.map((factId) => {
+                        const fact = factsQuery.data.find(
+                          (candidate) => candidate.id === factId,
+                        );
+                        return fact ? (
+                          <li className="rounded-md border p-3" key={factId}>
+                            <p className="text-sm leading-6">
+                              {fact.statement}
+                            </p>
+                            <FactEvidenceDisclosure
+                              fact={fact}
+                              expanded={expandedFactIds.has(fact.id)}
+                              onToggle={onFactToggle ?? (() => undefined)}
+                              evidenceQuery={evidenceQuery}
+                            />
+                          </li>
+                        ) : (
+                          <li
+                            className="text-muted-foreground text-sm"
+                            key={factId}
+                          >
+                            Supporting Fact unavailable for this company.
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </details>
+              </li>
+            ))}
       </ul>
     </>
   );
 }
 
-type StatementQuery = {
-  data: ExplorationFact[] | ExplorationHypothesis[] | undefined;
-  isPending: boolean;
-  isError: boolean;
-  refetch: () => Promise<unknown>;
-};
+function AddedAt({ date }: { date: string }) {
+  return (
+    <time className="text-muted-foreground mt-2 block text-xs" dateTime={date}>
+      Added {formatDate(date)}
+    </time>
+  );
+}
+
+function FactEvidenceDisclosure({
+  fact,
+  expanded,
+  onToggle,
+  evidenceQuery,
+}: {
+  fact: ExplorationFact;
+  expanded: boolean;
+  onToggle: (id: string, expanded: boolean) => void;
+  evidenceQuery: UseQueryResult<ExplorationEvidence[], Error>;
+}) {
+  return (
+    <details
+      className="border-border mt-3 rounded-md border px-3 py-2"
+      onToggle={(event) =>
+        onToggle(
+          fact.id,
+          event.currentTarget.open && fact.evidence_ids.length > 0,
+        )
+      }
+    >
+      <summary className="cursor-pointer text-sm font-medium">
+        Supporting Evidence ({fact.evidence_ids.length})
+      </summary>
+      {fact.evidence_ids.length === 0 ? (
+        <p className="text-muted-foreground mt-2 text-sm">
+          No supporting Evidence is recorded.
+        </p>
+      ) : !expanded || evidenceQuery.isPending ? (
+        <LoadingResults label="Supporting Evidence" />
+      ) : evidenceQuery.isError ? (
+        <ErrorResults
+          label="Supporting Evidence"
+          onRetry={() => void evidenceQuery.refetch()}
+        />
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {fact.evidence_ids.map((evidenceId) => {
+            const evidence = evidenceQuery.data.find(
+              (candidate) => candidate.id === evidenceId,
+            );
+            return evidence ? (
+              <li className="rounded-md border p-3" key={evidenceId}>
+                <p className="font-medium">{evidence.claim}</p>
+                <p className="mt-2 text-sm leading-6 whitespace-pre-wrap">
+                  {evidence.supporting_excerpt}
+                </p>
+                <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  {evidence.source_title ? (
+                    <span>{evidence.source_title}</span>
+                  ) : null}
+                  <ExternalUrl href={evidence.source_url}>
+                    Open source
+                  </ExternalUrl>
+                </div>
+              </li>
+            ) : (
+              <li className="text-muted-foreground text-sm" key={evidenceId}>
+                Supporting Evidence unavailable for this company.
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </details>
+  );
+}
 
 function LoadingResults({ label }: { label: string }) {
   return (

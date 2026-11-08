@@ -64,6 +64,7 @@ class ExplorationFactRepository:
     ) -> list[ExplorationFact]:
         statement = (
             select(ExplorationFact)
+            .options(selectinload(ExplorationFact.evidence))
             .where(
                 ExplorationFact.exploration_company_id == exploration_company_id
             )

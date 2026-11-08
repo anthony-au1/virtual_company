@@ -141,6 +141,7 @@ beforeEach(() => {
       exploration_company_id: "exploration-company-link-1",
       statement: "A persisted fact.",
       created_at: "2026-11-08T10:06:00Z",
+      evidence_ids: ["evidence-1"],
     },
   ]);
   mockHypotheses.mockResolvedValue([
@@ -149,6 +150,7 @@ beforeEach(() => {
       exploration_company_id: "exploration-company-link-1",
       statement: "A persisted hypothesis.",
       created_at: "2026-11-08T10:07:00Z",
+      fact_ids: ["fact-1"],
     },
   ]);
   mockObligations.mockResolvedValue([
@@ -328,6 +330,121 @@ describe("ExplorationRunDetailsPage", () => {
     mockFacts.mockResolvedValue([]);
     fireEvent.click(screen.getByRole("button", { name: "Facts" }));
     expect(await screen.findByText("No facts yet")).toBeInTheDocument();
+  });
+
+  it("navigates Hypothesis to supporting Facts and Evidence", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Hypotheses" }));
+
+    fireEvent.click(await screen.findByText("Supporting Facts (1)"));
+    expect(await screen.findByText("A persisted fact.")).toBeInTheDocument();
+    expect(mockFacts).toHaveBeenCalledWith(
+      explorationId,
+      "exploration-company-link-1",
+    );
+
+    fireEvent.click(screen.getByText("Supporting Evidence (1)"));
+    expect(
+      await screen.findByText("Supports the company claim"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("A quoted supporting excerpt."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open source" })).toHaveAttribute(
+      "href",
+      "https://one.example.test/source",
+    );
+  });
+
+  it("shows nested provenance from the Facts view", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Facts" }));
+
+    fireEvent.click(await screen.findByText("Supporting Evidence (1)"));
+    expect(
+      await screen.findByText("Supports the company claim"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows neutral unavailable states for unresolved supporting records", async () => {
+    mockHypotheses.mockResolvedValue([
+      {
+        id: "hypothesis-missing-fact",
+        exploration_company_id: "exploration-company-link-1",
+        statement: "A hypothesis with an unresolved reference.",
+        created_at: "2026-11-08T10:07:00Z",
+        fact_ids: ["missing-fact"],
+      },
+    ]);
+    mockFacts.mockResolvedValue([]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Hypotheses" }));
+    fireEvent.click(await screen.findByText("Supporting Facts (1)"));
+
+    expect(
+      await screen.findByText("Supporting Fact unavailable for this company."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows unavailable when a supporting Evidence ID is not in the company collection", async () => {
+    mockFacts.mockResolvedValue([
+      {
+        id: "fact-missing-evidence",
+        exploration_company_id: "exploration-company-link-1",
+        statement: "A fact with an unresolved reference.",
+        created_at: "2026-11-08T10:06:00Z",
+        evidence_ids: ["missing-evidence"],
+      },
+    ]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Facts" }));
+    fireEvent.click(await screen.findByText("Supporting Evidence (1)"));
+
+    expect(
+      await screen.findByText(
+        "Supporting Evidence unavailable for this company.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an error and retry action while resolving supporting records", async () => {
+    mockFacts.mockRejectedValue(new ApiError("temporary", 503, {}));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Hypotheses" }));
+    fireEvent.click(await screen.findByText("Supporting Facts (1)"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Supporting Facts could not be loaded.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Try again" }),
+    ).toBeInTheDocument();
+  });
+
+  it("clears expanded provenance when switching companies", async () => {
+    mockHypotheses.mockImplementation(async (_explorationId, companyLinkId) =>
+      companyLinkId === "exploration-company-link-1"
+        ? [
+            {
+              id: "hypothesis-1",
+              exploration_company_id: "exploration-company-link-1",
+              statement: "Company One hypothesis.",
+              created_at: "2026-11-08T10:07:00Z",
+              fact_ids: ["fact-1"],
+            },
+          ]
+        : [],
+    );
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Hypotheses" }));
+    fireEvent.click(await screen.findByText("Supporting Facts (1)"));
+    expect(await screen.findByText("A persisted fact.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Company"), {
+      target: { value: "exploration-company-link-2" },
+    });
+    expect(await screen.findByText("No hypotheses yet")).toBeInTheDocument();
+    expect(screen.queryByText("A persisted fact.")).not.toBeInTheDocument();
   });
 
   it("renders result query errors with a retry action", async () => {

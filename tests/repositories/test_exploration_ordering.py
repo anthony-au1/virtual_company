@@ -15,6 +15,9 @@ from virtual_company.repositories.exploration_evidence import (
     ExplorationEvidenceRepository,
 )
 from virtual_company.repositories.exploration_fact import ExplorationFactRepository
+from virtual_company.repositories.exploration_hypothesis import (
+    ExplorationHypothesisRepository,
+)
 from virtual_company.repositories.exploration_obligation import (
     ExplorationObligationRepository,
 )
@@ -83,3 +86,28 @@ async def test_facts_are_company_scoped_and_ordered_by_creation_then_id():
     sql = str(session.scalars.await_args.args[0].compile(dialect=postgresql.dialect()))
     assert "exploration_fact.exploration_company_id =" in sql
     assert "ORDER BY exploration_fact.created_at ASC, exploration_fact.id ASC" in sql
+
+
+@pytest.mark.asyncio
+async def test_fact_result_query_eager_loads_evidence_relationships():
+    session = _session_with_rows([])
+
+    await ExplorationFactRepository(session).list_by_exploration_company_id(uuid4())
+
+    statement = session.scalars.await_args.args[0]
+    assert any("ExplorationFact.evidence" in str(option.path) for option in statement._with_options)
+
+
+@pytest.mark.asyncio
+async def test_hypothesis_result_query_eager_loads_fact_relationships():
+    session = _session_with_rows([])
+
+    await ExplorationHypothesisRepository(session).list_by_exploration_company_id(
+        uuid4()
+    )
+
+    statement = session.scalars.await_args.args[0]
+    assert any(
+        "ExplorationHypothesis.facts" in str(option.path)
+        for option in statement._with_options
+    )

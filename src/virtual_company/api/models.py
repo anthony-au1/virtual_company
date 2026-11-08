@@ -205,6 +205,7 @@ class ExplorationFactResponse(BaseModel):
     exploration_company_id: UUID
     statement: str
     created_at: datetime
+    evidence_ids: list[UUID]
 
 
 class ExplorationHypothesisResponse(BaseModel):
@@ -214,6 +215,7 @@ class ExplorationHypothesisResponse(BaseModel):
     exploration_company_id: UUID
     statement: str
     created_at: datetime
+    fact_ids: list[UUID]
 
 
 class CampaignResponse(BaseModel):

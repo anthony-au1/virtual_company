@@ -43,6 +43,7 @@ describe("Exploration API", () => {
           exploration_company_id: "link/1",
           statement: "Example fact",
           created_at: "2026-11-08T10:00:00Z",
+          evidence_ids: ["evidence-1", "evidence-2"],
         },
       ],
       [
@@ -51,6 +52,7 @@ describe("Exploration API", () => {
           exploration_company_id: "link/1",
           statement: "Example hypothesis",
           created_at: "2026-11-08T10:00:00Z",
+          fact_ids: ["fact-1", "fact-2"],
         },
       ],
     ];
@@ -69,11 +71,16 @@ describe("Exploration API", () => {
       "exploration/1",
       "link/1",
     );
-    await explorationApi.listExplorationCompanyFacts("exploration/1", "link/1");
-    await explorationApi.listExplorationCompanyHypotheses(
+    const facts = await explorationApi.listExplorationCompanyFacts(
       "exploration/1",
       "link/1",
     );
+    const hypotheses = await explorationApi.listExplorationCompanyHypotheses(
+      "exploration/1",
+      "link/1",
+    );
+    expect(facts[0]?.evidence_ids).toEqual(["evidence-1", "evidence-2"]);
+    expect(hypotheses[0]?.fact_ids).toEqual(["fact-1", "fact-2"]);
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/api/backend/api/v1/explorations/exploration%2F1/runs/run%2F1/execute",

@@ -28,6 +28,7 @@ from virtual_company.api.models import (
     ExplorationRunSummaryResponse,
     ExplorationUpdateRequest,
 )
+from virtual_company.db.models import ExplorationFact, ExplorationHypothesis
 from virtual_company.repositories.dtos import (
     ExplorationUpdate,
 )
@@ -170,7 +171,7 @@ async def list_exploration_company_facts(
     records = await service.list_company_facts(exploration_id, company_link_id)
     if records is None:
         raise HTTPException(status_code=404, detail="Exploration company not found")
-    return [ExplorationFactResponse.model_validate(item) for item in records]
+    return [_fact_response(item) for item in records]
 
 
 @router.get(
@@ -185,7 +186,43 @@ async def list_exploration_company_hypotheses(
     records = await service.list_company_hypotheses(exploration_id, company_link_id)
     if records is None:
         raise HTTPException(status_code=404, detail="Exploration company not found")
-    return [ExplorationHypothesisResponse.model_validate(item) for item in records]
+    return [_hypothesis_response(item) for item in records]
+
+
+def _fact_response(item: ExplorationFact) -> ExplorationFactResponse:
+    return ExplorationFactResponse(
+        id=item.id,
+        exploration_company_id=item.exploration_company_id,
+        statement=item.statement,
+        created_at=item.created_at,
+        evidence_ids=sorted(
+            (
+                evidence.id
+                for evidence in item.evidence
+                if evidence.exploration_company_id == item.exploration_company_id
+            ),
+            key=str,
+        ),
+    )
+
+
+def _hypothesis_response(
+    item: ExplorationHypothesis,
+) -> ExplorationHypothesisResponse:
+    return ExplorationHypothesisResponse(
+        id=item.id,
+        exploration_company_id=item.exploration_company_id,
+        statement=item.statement,
+        created_at=item.created_at,
+        fact_ids=sorted(
+            (
+                fact.id
+                for fact in item.facts
+                if fact.exploration_company_id == item.exploration_company_id
+            ),
+            key=str,
+        ),
+    )
 
 
 @router.post(

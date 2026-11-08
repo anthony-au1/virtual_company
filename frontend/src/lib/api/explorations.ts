@@ -88,6 +88,7 @@ export type ExplorationFact = {
   exploration_company_id: string;
   statement: string;
   created_at: string;
+  evidence_ids: string[];
 };
 
 export type ExplorationHypothesis = {
@@ -95,6 +96,7 @@ export type ExplorationHypothesis = {
   exploration_company_id: string;
   statement: string;
   created_at: string;
+  fact_ids: string[];
 };
 
 export type CreateExplorationPayload = {
