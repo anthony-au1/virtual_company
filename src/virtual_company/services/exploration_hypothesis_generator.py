@@ -16,6 +16,7 @@ from virtual_company.config import Settings, get_settings
 from virtual_company.domain.exploration.hypotheses import ExplorationHypothesis
 from virtual_company.llm import (
     InstrumentedLLMProvider,
+    LLMAuthenticationError,
     LLMConfigurationError,
     LLMError,
     LLMProvider,
@@ -328,6 +329,8 @@ class ExplorationHypothesisGenerator:
     ) -> ExplorationHypothesisGenerationFailureCategory:
         if isinstance(error, LLMConfigurationError):
             return ExplorationHypothesisGenerationFailureCategory.CONFIGURATION
+        if isinstance(error, LLMAuthenticationError):
+            return ExplorationHypothesisGenerationFailureCategory.AUTHENTICATION
         if isinstance(error, (TimeoutError, asyncio.TimeoutError)) or type(
             error
         ).__name__ in {"APITimeoutError", "ConnectTimeout", "ReadTimeout"}:

@@ -107,6 +107,7 @@ class ExplorationFactExtractionOutcome(StrEnum):
 
 class ExplorationFactExtractionFailureCategory(StrEnum):
     CONFIGURATION = "configuration"
+    AUTHENTICATION = "authentication"
     TIMEOUT = "timeout"
     PROVIDER_ERROR = "provider_error"
     MALFORMED_OUTPUT = "malformed_output"
@@ -198,6 +199,7 @@ class ExplorationHypothesisGenerationOutcome(StrEnum):
 
 class ExplorationHypothesisGenerationFailureCategory(StrEnum):
     CONFIGURATION = "configuration"
+    AUTHENTICATION = "authentication"
     INPUT_LIMIT = "input_limit"
     PROVIDER_ERROR = "provider_error"
     TIMEOUT = "timeout"

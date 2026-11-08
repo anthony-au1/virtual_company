@@ -13,6 +13,7 @@ from virtual_company.config import Settings, get_settings
 from virtual_company.domain.exploration.evidence import ExplorationEvidence
 from virtual_company.llm import (
     InstrumentedLLMProvider,
+    LLMAuthenticationError,
     LLMConfigurationError,
     LLMProvider,
     LLMRegistry,
@@ -52,6 +53,7 @@ class ExplorationEvidenceExtractionOutcome(StrEnum):
 
 class ExplorationEvidenceExtractionFailureCategory(StrEnum):
     CONFIGURATION = "configuration"
+    AUTHENTICATION = "authentication"
     TIMEOUT = "timeout"
     PROVIDER_ERROR = "provider_error"
     MALFORMED_OUTPUT = "malformed_output"
@@ -277,7 +279,6 @@ class ExplorationEvidenceExtractor:
             "exploration_company_id": str(company.exploration_company_id),
             "company_id": str(company.company_id),
             "exploration_obligation_id": str(obligation.exploration_obligation_id),
-            "query": association.query,
             "source_url": safe_url,
             "originating_query_count": originating_query_count,
         }
@@ -404,6 +405,8 @@ class ExplorationEvidenceExtractor:
     ) -> ExplorationEvidenceExtractionFailureCategory:
         if isinstance(error, LLMConfigurationError):
             return ExplorationEvidenceExtractionFailureCategory.CONFIGURATION
+        if isinstance(error, LLMAuthenticationError):
+            return ExplorationEvidenceExtractionFailureCategory.AUTHENTICATION
         if isinstance(error, (TimeoutError, asyncio.TimeoutError)) or type(
             error
         ).__name__ in {

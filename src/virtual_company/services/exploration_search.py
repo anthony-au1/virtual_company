@@ -121,7 +121,9 @@ class ExplorationSearchService:
                 except asyncio.QueueEmpty:
                     return
                 try:
-                    outcomes[index] = await self._search_one(query.query, provider)
+                    outcomes[index] = await self._search_one(
+                        query.query, provider, index
+                    )
                 finally:
                     queue.task_done()
 
@@ -162,25 +164,42 @@ class ExplorationSearchService:
         )
 
     async def _search_one(
-        self, query: str, provider: str
+        self, query: str, provider: str, query_index: int
     ) -> ExplorationQuerySearchResult:
-        metadata = {"provider": provider, "query": query, "limit": self._max_results}
+        metadata = {
+            "provider": provider,
+            "query_index": query_index,
+            "limit": self._max_results,
+        }
         self._observability.event("exploration_query_search_started", **metadata)
         started = perf_counter()
+        search_error: Exception | None = None
+        results: list[ExplorationSearchResultItem] = []
         try:
             with self._observability.span("exploration.query_search", **metadata):
-                response = await self._web_search.search(
-                    query, limit=self._max_results
-                )
-                if not isinstance(response, SearchResponse):
-                    response = SearchResponse(results=response)
-                results = self._normalize_results(response, self._max_results)
-        except Exception as error:  # noqa: BLE001 - isolate failures to this query
-            category = self._failure_category(error)
+                try:
+                    response = await self._web_search.search(
+                        query, limit=self._max_results
+                    )
+                    if not isinstance(response, SearchResponse):
+                        response = SearchResponse(results=response)
+                    results = self._normalize_results(response, self._max_results)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:  # noqa: BLE001 - isolate each query
+                    search_error = error
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - normalize instrumentation errors
+            search_error = error
+
+        if search_error is not None:
+            category = self._failure_category(search_error)
             self._observability.event(
                 "exploration_query_search_failed",
                 duration_ms=int((perf_counter() - started) * 1000),
                 error_category=category.value,
+                error_type=type(search_error).__name__,
                 **metadata,
             )
             return ExplorationQuerySearchResult(

@@ -16,6 +16,7 @@ from virtual_company.config import Settings, get_settings
 from virtual_company.domain.exploration.facts import ExplorationFact
 from virtual_company.llm import (
     InstrumentedLLMProvider,
+    LLMAuthenticationError,
     LLMConfigurationError,
     LLMError,
     LLMProvider,
@@ -388,6 +389,8 @@ class ExplorationFactExtractor:
     ) -> ExplorationFactExtractionFailureCategory:
         if isinstance(error, LLMConfigurationError):
             return ExplorationFactExtractionFailureCategory.CONFIGURATION
+        if isinstance(error, LLMAuthenticationError):
+            return ExplorationFactExtractionFailureCategory.AUTHENTICATION
         if isinstance(error, (TimeoutError, asyncio.TimeoutError)) or type(
             error
         ).__name__ in {"APITimeoutError", "ConnectTimeout", "ReadTimeout"}:

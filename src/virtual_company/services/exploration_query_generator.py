@@ -115,28 +115,44 @@ class ExplorationQueryGenerator:
         metadata = self._metadata(max_queries)
         self._observability.event("exploration_query_generation_started", **metadata)
         started = perf_counter()
+        generation_error: Exception | None = None
+        result: ExplorationQueryGenerationResult | None = None
+        removed_count = 0
         try:
             with self._observability.span(
                 "exploration.query_generation", **metadata
             ):
-                async with asyncio.timeout(self._timeout_seconds):
-                    response = await self._provider.generate_structured(
-                        system_prompt=generate_exploration_queries_system_prompt(),
-                        user_prompt=generate_exploration_queries_user_prompt(
-                            business_context, company, obligation, max_queries
-                        ),
-                        response_model=ExplorationQueryGenerationResult,
+                try:
+                    async with asyncio.timeout(self._timeout_seconds):
+                        response = await self._provider.generate_structured(
+                            system_prompt=generate_exploration_queries_system_prompt(),
+                            user_prompt=generate_exploration_queries_user_prompt(
+                                business_context, company, obligation, max_queries
+                            ),
+                            response_model=ExplorationQueryGenerationResult,
+                        )
+                    result, removed_count = self._validate_response(
+                        response, max_queries
                     )
-                result, removed_count = self._validate_response(response, max_queries)
-        except Exception as error:
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:  # noqa: BLE001 - keep provider text out of spans
+                    generation_error = error
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - isolate instrumentation errors
+            generation_error = error
+
+        if generation_error is not None:
             self._observability.event(
                 "exploration_query_generation_failed",
                 duration_ms=int((perf_counter() - started) * 1000),
-                error_type=type(error).__name__,
+                error_type=type(generation_error).__name__,
                 **metadata,
             )
-            raise
+            raise generation_error
 
+        assert result is not None
         self._observability.event(
             "exploration_query_generation_completed",
             duration_ms=int((perf_counter() - started) * 1000),
@@ -202,4 +218,10 @@ def create_configured_exploration_query_generator(
 ) -> ExplorationQueryGenerator:
     """Build the standalone generator with its dedicated LLM capability."""
     provider = LLMRegistry(settings).for_role(LLMRole.EXPLORATION_QUERY_GENERATION)
-    return ExplorationQueryGenerator(InstrumentedLLMProvider(provider))
+    return ExplorationQueryGenerator(
+        InstrumentedLLMProvider(
+            provider,
+            capture_io=False,
+            sanitize_errors=True,
+        )
+    )

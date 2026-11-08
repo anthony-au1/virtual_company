@@ -289,7 +289,7 @@ async def test_duplicate_urls_are_removed_within_query_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_observability_records_query_and_batch_outcomes() -> None:
+async def test_observability_records_safe_query_and_batch_outcomes() -> None:
     observability = ObservabilityStub()
     tool = SearchToolStub(
         {
@@ -317,7 +317,7 @@ async def test_observability_records_query_and_batch_outcomes() -> None:
         context
         for name, context in observability.events
         if name == "exploration_query_search_completed"
-        and context["query"] == "empty"
+        and context["query_index"] == 1
     )
     assert empty["outcome"] == "zero_results"
     failure = next(
@@ -327,6 +327,7 @@ async def test_observability_records_query_and_batch_outcomes() -> None:
     )
     assert failure["error_category"] == "rate_limited"
     assert all("token=secret" not in str(context) for _, context in observability.events)
+    assert all("query" not in context for _, context in observability.events)
     assert "provider response detail" not in str(observability.events)
     assert [name for name, _ in observability.spans] == [
         "exploration.search_batch",
