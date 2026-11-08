@@ -53,7 +53,7 @@ class ExplorationFactRepository:
         )
         self._session.add(fact)
         await self._session.flush()
-        await self._session.refresh(fact)
+        await self._session.refresh(fact, attribute_names=["created_at"])
         return fact
 
     async def get_by_id(self, fact_id: UUID) -> ExplorationFact | None:

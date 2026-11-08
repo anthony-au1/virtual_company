@@ -50,7 +50,7 @@ class ExplorationHypothesisRepository:
         )
         self._session.add(hypothesis)
         await self._session.flush()
-        await self._session.refresh(hypothesis)
+        await self._session.refresh(hypothesis, attribute_names=["created_at"])
         return hypothesis
 
     async def get_by_id(self, hypothesis_id: UUID) -> ExplorationHypothesis | None:

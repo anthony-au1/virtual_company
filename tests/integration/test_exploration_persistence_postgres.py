@@ -155,6 +155,7 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                     status="DRAFT",
                 )
             )
+            exploration_id = exploration.id
             assert exploration.max_obligations == 20
             assert (
                 await exploration_repo.get_by_id(exploration.id)
@@ -169,6 +170,7 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                     description="Identify target market",
                 )
             )
+            obligation_one_id = obligation_one.id
             obligation_two = await obligation_repo.create(
                 ExplorationObligationCreate(
                     exploration_id=exploration.id,
@@ -182,6 +184,7 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                     status="READY",
                 )
             )
+            run_id = run.id
             second_run = await run_repo.create(
                 ExplorationRunCreate(
                     exploration_id=exploration.id,
@@ -195,22 +198,23 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             company = ResearchCompany(name="Tyro Payments")
             session.add(company)
             await session.flush()
+            company_id = company.id
             link = await company_repo.create(
                 ExplorationCompanyCreate(
-                    exploration_run_id=run.id,
+                    exploration_run_id=run_id,
                     company_id=company.id,
                 )
             )
             assert link.company_id == company.id
             assert (
-                await company_repo.get_by_run_and_company(run.id, company.id)
+                await company_repo.get_by_run_and_company(run_id, company.id)
             ).company.name == "Tyro Payments"
             other_company = ResearchCompany(name="Different company")
             session.add(other_company)
             await session.flush()
             other_link = await company_repo.create(
                 ExplorationCompanyCreate(
-                    exploration_run_id=run.id,
+                    exploration_run_id=run_id,
                     company_id=other_company.id,
                 )
             )
@@ -237,7 +241,7 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             )
             assert evidence_two.requested_url is None
             extraction_evidence = DomainExplorationEvidence(
-                exploration_run_id=run.id,
+                exploration_run_id=run_id,
                 exploration_company_id=link.id,
                 company_id=company.id,
                 exploration_obligation_id=obligation_one.id,
@@ -336,6 +340,10 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                 fact_batch
             )
             fact_one = persisted_facts.facts[0]
+            assert {item.id for item in fact_one.evidence} == {
+                evidence_one.id,
+                evidence_two.id,
+            }
             fact_two = await fact_repo.create(
                 ExplorationFactCreate(
                     exploration_company_id=link.id,
@@ -363,7 +371,7 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                         evidence_ids=[evidence_one.id, evidence_other_company.id],
                     )
                 )
-            with pytest.raises(ValueError, match="does not exist"):
+            with pytest.raises(ValueError, match="do not exist"):
                 await fact_repo.create(
                     ExplorationFactCreate(
                         exploration_company_id=link.id,
@@ -410,7 +418,7 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
                         ),
                     )
                 )
-            with pytest.raises(ValueError, match="does not exist"):
+            with pytest.raises(ValueError, match="do not exist"):
                 await ExplorationHypothesisPersistenceService(session).persist(
                     ExplorationHypothesisGenerationResult(
                         outcome=ExplorationHypothesisGenerationOutcome.SUCCEEDED,
@@ -545,7 +553,7 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             with pytest.raises(IntegrityError):
                 await run_repo.create(
                     ExplorationRunCreate(
-                        exploration_id=exploration.id,
+                        exploration_id=exploration_id,
                         research_run_id=uuid4(),
                         status="RUNNING",
                     )
@@ -556,18 +564,20 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             # persistence independently of the public API.
             service = ExplorationService(session, StaticObligationGenerator())
             app_exploration = await service.create("Application service context", 4)
+            app_exploration_id = app_exploration.id
             assert app_exploration.status == "DRAFT"
-            assert (await service.get_by_id(app_exploration.id)).business_context == (
+            assert (await service.get_by_id(app_exploration_id)).business_context == (
                 "Application service context"
             )
             assert app_exploration.max_obligations == 4
             assert [item.id for item in await service.list()]  # persisted list result
             assert [
                 item.description
-                for item in await service.list_obligations(app_exploration.id)
+                for item in await service.list_obligations(app_exploration_id)
             ] == ["Generated for Application service context"]
+            await session.commit()
             changed = await service.update(
-                app_exploration.id,
+                app_exploration_id,
                 ExplorationUpdate(
                     business_context="Updated application context",
                     max_obligations=8,
@@ -575,7 +585,7 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             )
             assert changed.business_context == "Updated application context"
             assert changed.max_obligations == 8
-            app_obligation = (await service.list_obligations(app_exploration.id))[0]
+            app_obligation = (await service.list_obligations(app_exploration_id))[0]
             changed_obligation = await obligation_repo.update(
                 app_obligation.id,
                 ExplorationObligationUpdate(description="Updated requirement"),
@@ -583,26 +593,28 @@ async def test_exploration_entities_and_provenance_relationships() -> None:
             assert changed_obligation.description == "Updated requirement"
             await obligation_repo.delete(changed_obligation)
             assert await service.list_obligations(app_exploration.id) == []
-            assert len(await run_repo.list_companies(run.id)) == 1
+            assert len(await run_repo.list_companies(run_id)) == 2
             assert len(await evidence_repo.list_by_exploration_company_id(link.id)) == 3
             assert (
-                len(await evidence_repo.list_by_obligation_id(obligation_one.id)) == 2
+                len(await evidence_repo.list_by_obligation_id(obligation_one_id)) == 3
             )
 
+            await session.commit()
             with pytest.raises(ExplorationGenerationConflictError):
-                await service.delete(exploration.id)
-            assert await exploration_repo.get_by_id(exploration.id) is not None
-            assert len(await service.list_obligations(exploration.id)) == 2
+                await service.delete(exploration_id)
+            assert await exploration_repo.get_by_id(exploration_id) is not None
+            assert len(await service.list_obligations(exploration_id)) == 2
 
-            assert await service.delete(app_exploration.id) is True
-            assert await exploration_repo.get_by_id(app_exploration.id) is None
-            assert await service.list_obligations(app_exploration.id) is None
+            await session.commit()
+            assert await service.delete(app_exploration_id) is True
+            assert await exploration_repo.get_by_id(app_exploration_id) is None
+            assert await service.list_obligations(app_exploration_id) is None
 
             with pytest.raises(IntegrityError):
                 await company_repo.create(
                     ExplorationCompanyCreate(
-                        exploration_run_id=run.id,
-                        company_id=company.id,
+                        exploration_run_id=run_id,
+                        company_id=company_id,
                     )
                 )
             await session.rollback()
@@ -653,9 +665,10 @@ async def test_exploration_run_claims_are_atomic_and_transactional() -> None:
                     status="DRAFT",
                 )
             )
+            lifecycle_exploration_id = exploration.id
             run = await ExplorationRunRepository(session).create(
                 ExplorationRunCreate(
-                    exploration_id=exploration.id,
+                    exploration_id=lifecycle_exploration_id,
                     research_run_id=research_run.id,
                     status="READY",
                 )
@@ -705,6 +718,84 @@ async def test_exploration_run_claims_are_atomic_and_transactional() -> None:
             await session.commit()
             with pytest.raises(InvalidExplorationRunTransitionError):
                 await repository.transition(run_id, ExplorationRunStatus.RUNNING)
+
+        for terminal_status in (
+            ExplorationRunStatus.PARTIAL,
+            ExplorationRunStatus.FAILED,
+            ExplorationRunStatus.CANCELLED,
+        ):
+            async with sessions.begin() as session:
+                campaign = Campaign(
+                    name=f"Lifecycle {terminal_status.value}",
+                    keywords=[],
+                    target_count=1,
+                    max_companies_to_research=1,
+                    status="COMPLETED",
+                )
+                session.add(campaign)
+                await session.flush()
+                research_run = ResearchRun(
+                    campaign_id=campaign.id,
+                    status="COMPLETED",
+                    companies_found=0,
+                )
+                session.add(research_run)
+                await session.flush()
+                terminal_run = await ExplorationRunRepository(session).create(
+                    ExplorationRunCreate(
+                        exploration_id=lifecycle_exploration_id,
+                        research_run_id=research_run.id,
+                        status="READY",
+                    )
+                )
+                transition_repository = ExplorationRunRepository(session)
+                claim = await transition_repository.claim_for_execution(
+                    terminal_run.id
+                )
+                assert claim.outcome is ExplorationRunClaimOutcome.CLAIMED
+                await transition_repository.transition(
+                    terminal_run.id, ExplorationRunStatus.RUNNING
+                )
+                terminal = await transition_repository.transition(
+                    terminal_run.id, terminal_status
+                )
+                assert terminal.completed_at is not None
+
+        async with sessions.begin() as session:
+            campaign = Campaign(
+                name="Lifecycle startup failure",
+                keywords=[],
+                target_count=1,
+                max_companies_to_research=1,
+                status="COMPLETED",
+            )
+            session.add(campaign)
+            await session.flush()
+            research_run = ResearchRun(
+                campaign_id=campaign.id,
+                status="COMPLETED",
+                companies_found=0,
+            )
+            session.add(research_run)
+            await session.flush()
+            startup_run = await ExplorationRunRepository(session).create(
+                ExplorationRunCreate(
+                    exploration_id=lifecycle_exploration_id,
+                    research_run_id=research_run.id,
+                    status="READY",
+                )
+            )
+            startup_repository = ExplorationRunRepository(session)
+            claim = await startup_repository.claim_for_execution(startup_run.id)
+            assert claim.outcome is ExplorationRunClaimOutcome.CLAIMED
+            failed = await startup_repository.transition(
+                startup_run.id, ExplorationRunStatus.FAILED
+            )
+            assert failed.status == ExplorationRunStatus.FAILED.value
+            # The current schema uses started_at as the run-created timestamp
+            # until the workflow enters RUNNING and overwrites it.
+            assert failed.started_at is not None
+            assert failed.completed_at is not None
     finally:
         async with engine.begin() as connection:
             await connection.execute(DropSchema(schema, cascade=True, if_exists=True))
