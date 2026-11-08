@@ -163,6 +163,59 @@ class ExplorationRunSummaryResponse(BaseModel):
     selected_company_count: int
 
 
+class ExplorationRunExecutionResponse(BaseModel):
+    exploration_run_id: UUID
+    status: str
+
+
+class ExplorationRunStatusResponse(BaseModel):
+    id: UUID
+    exploration_id: UUID
+    status: str
+    started_at: datetime
+    completed_at: datetime | None
+
+
+class ExplorationCompanyResultResponse(BaseModel):
+    id: UUID
+    company_id: UUID
+    name: str
+    website: str | None
+    domain: str | None
+
+
+class ExplorationEvidenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    exploration_company_id: UUID
+    exploration_obligation_id: UUID
+    claim: str
+    supporting_excerpt: str
+    source_url: str
+    requested_url: str | None
+    source_title: str | None
+    created_at: datetime
+
+
+class ExplorationFactResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    exploration_company_id: UUID
+    statement: str
+    created_at: datetime
+
+
+class ExplorationHypothesisResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    exploration_company_id: UUID
+    statement: str
+    created_at: datetime
+
+
 class CampaignResponse(BaseModel):
     """Campaign data returned by the API."""
 

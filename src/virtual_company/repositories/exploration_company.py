@@ -43,6 +43,20 @@ class ExplorationCompanyRepository:
     async def get_by_id(self, link_id: UUID) -> ExplorationCompany | None:
         return await self._session.get(ExplorationCompany, link_id)
 
+    async def get_for_exploration(
+        self, link_id: UUID, exploration_id: UUID
+    ) -> ExplorationCompany | None:
+        statement = (
+            select(ExplorationCompany)
+            .join(ExplorationCompany.run)
+            .options(selectinload(ExplorationCompany.company))
+            .where(
+                ExplorationCompany.id == link_id,
+                ExplorationCompany.run.has(exploration_id=exploration_id),
+            )
+        )
+        return await self._session.scalar(statement)
+
     async def get_by_run_and_company(
         self, exploration_run_id: UUID, company_id: UUID
     ) -> ExplorationCompany | None:

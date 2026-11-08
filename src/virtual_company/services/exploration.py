@@ -8,7 +8,15 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from virtual_company.db.models import Exploration, ExplorationObligation, ExplorationRun
+from virtual_company.db.models import (
+    Exploration,
+    ExplorationCompany,
+    ExplorationEvidence,
+    ExplorationFact,
+    ExplorationHypothesis,
+    ExplorationObligation,
+    ExplorationRun,
+)
 from virtual_company.domain.exploration.run import ExplorationRunStatus
 from virtual_company.repositories.dtos import (
     ExplorationCreate,
@@ -19,10 +27,20 @@ from virtual_company.repositories.exploration import ExplorationRepository
 from virtual_company.repositories.exploration_company import (
     ExplorationCompanyRepository,
 )
+from virtual_company.repositories.exploration_evidence import (
+    ExplorationEvidenceRepository,
+)
+from virtual_company.repositories.exploration_fact import ExplorationFactRepository
+from virtual_company.repositories.exploration_hypothesis import (
+    ExplorationHypothesisRepository,
+)
 from virtual_company.repositories.exploration_obligation import (
     ExplorationObligationRepository,
 )
-from virtual_company.repositories.exploration_run import ExplorationRunRepository
+from virtual_company.repositories.exploration_run import (
+    ExplorationRunClaimResult,
+    ExplorationRunRepository,
+)
 from virtual_company.repositories.research_company_qualification import (
     ResearchCompanyQualificationRepository,
 )
@@ -89,6 +107,9 @@ class ExplorationService:
         self._obligations = ExplorationObligationRepository(session)
         self._runs = ExplorationRunRepository(session)
         self._run_companies = ExplorationCompanyRepository(session)
+        self._evidence = ExplorationEvidenceRepository(session)
+        self._facts = ExplorationFactRepository(session)
+        self._hypotheses = ExplorationHypothesisRepository(session)
         self._research_runs = ResearchRunRepository(session)
         self._qualifications = ResearchCompanyQualificationRepository(session)
         self._generator = generator or create_configured_obligation_generator()
@@ -229,9 +250,68 @@ class ExplorationService:
                 campaign_name=campaign_name,
                 selected_company_count=selected_company_count,
             )
-            for run, campaign_name, selected_company_count in
-            await self._runs.list_with_summary(exploration_id)
+            for run, campaign_name, selected_company_count in await self._runs.list_with_summary(
+                exploration_id
+            )
         ]
+
+    async def claim_run_for_execution(
+        self, exploration_id: UUID, run_id: UUID
+    ) -> ExplorationRunClaimResult | None:
+        """Claim an owned READY run in a transaction committed before return."""
+        async with self._session.begin():
+            if await self._explorations.get_by_id(exploration_id) is None:
+                return None
+            run = await self._runs.get_by_id(run_id)
+            if run is None or run.exploration_id != exploration_id:
+                return None
+            result = await self._runs.claim_for_execution(run_id)
+        return result
+
+    async def get_run(
+        self, exploration_id: UUID, run_id: UUID
+    ) -> ExplorationRun | None:
+        run = await self._runs.get_by_id(run_id)
+        if run is None or run.exploration_id != exploration_id:
+            return None
+        return run
+
+    async def list_run_companies(
+        self, exploration_id: UUID, run_id: UUID
+    ) -> list[ExplorationCompany] | None:
+        if await self.get_run(exploration_id, run_id) is None:
+            return None
+        return await self._run_companies.list_by_run_id(run_id)
+
+    async def list_company_evidence(
+        self, exploration_id: UUID, company_link_id: UUID
+    ) -> list[ExplorationEvidence] | None:
+        company = await self._run_companies.get_for_exploration(
+            company_link_id, exploration_id
+        )
+        if company is None:
+            return None
+        return await self._evidence.list_by_exploration_company_id(company_link_id)
+
+    async def list_company_facts(
+        self, exploration_id: UUID, company_link_id: UUID
+    ) -> list[ExplorationFact] | None:
+        company = await self._run_companies.get_for_exploration(
+            company_link_id, exploration_id
+        )
+        if company is None:
+            return None
+        return await self._facts.list_by_exploration_company_id(company_link_id)
+
+    async def list_company_hypotheses(
+        self, exploration_id: UUID, company_link_id: UUID
+    ) -> list[ExplorationHypothesis] | None:
+        company = await self._run_companies.get_for_exploration(
+            company_link_id, exploration_id
+        )
+        if company is None:
+            return None
+        return await self._hypotheses.list_by_exploration_company_id(company_link_id)
 
     async def list_obligations(
         self, exploration_id: UUID

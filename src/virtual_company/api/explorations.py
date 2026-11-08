@@ -2,24 +2,36 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from virtual_company.api.dependencies import get_exploration_service
+from virtual_company.api.exploration_execution import (
+    execute_exploration_run,
+    fail_if_still_queued,
+)
 from virtual_company.api.models import (
+    ExplorationCompanyResultResponse,
     ExplorationCreateRequest,
+    ExplorationEvidenceResponse,
+    ExplorationFactResponse,
+    ExplorationHypothesisResponse,
     ExplorationObligationResponse,
     ExplorationResponse,
+    ExplorationRunExecutionResponse,
     ExplorationRunResponse,
     ExplorationRunStartRequest,
+    ExplorationRunStatusResponse,
     ExplorationRunSummaryResponse,
     ExplorationUpdateRequest,
 )
 from virtual_company.repositories.dtos import (
     ExplorationUpdate,
 )
+from virtual_company.repositories.exploration_run import ExplorationRunClaimOutcome
 from virtual_company.services import ExplorationService
 from virtual_company.services.exploration import (
     ExplorationCompanySelectionError,
@@ -29,10 +41,151 @@ from virtual_company.services.exploration import (
     ExplorationStartNotFoundError,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/explorations", tags=["explorations"])
 ExplorationServiceDependency = Annotated[
     ExplorationService, Depends(get_exploration_service)
 ]
+
+
+@router.post(
+    "/{exploration_id}/runs/{run_id}/execute",
+    response_model=ExplorationRunExecutionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def execute_run(
+    exploration_id: UUID,
+    run_id: UUID,
+    background_tasks: BackgroundTasks,
+    service: ExplorationServiceDependency,
+) -> ExplorationRunExecutionResponse:
+    try:
+        claim = await service.claim_run_for_execution(exploration_id, run_id)
+    except Exception as error:
+        logger.error(
+            "exploration_run_claim_failed",
+            extra={
+                "context": {
+                    "exploration_run_id": str(run_id),
+                    "error_type": type(error).__name__,
+                }
+            },
+        )
+        raise HTTPException(
+            status_code=500, detail="Execution could not be scheduled"
+        ) from error
+    if claim is None or claim.outcome is ExplorationRunClaimOutcome.NOT_FOUND:
+        raise HTTPException(status_code=404, detail="Exploration run not found")
+    if claim.outcome is ExplorationRunClaimOutcome.NOT_READY:
+        raise HTTPException(status_code=409, detail="Exploration run is not READY")
+    try:
+        background_tasks.add_task(execute_exploration_run, run_id)
+    except Exception as error:
+        await fail_if_still_queued(run_id)
+        logger.error(
+            "exploration_run_scheduling_failed",
+            extra={
+                "context": {
+                    "exploration_run_id": str(run_id),
+                    "error_type": type(error).__name__,
+                }
+            },
+        )
+        raise HTTPException(
+            status_code=500, detail="Execution could not be scheduled"
+        ) from error
+    return ExplorationRunExecutionResponse(exploration_run_id=run_id, status="QUEUED")
+
+
+@router.get(
+    "/{exploration_id}/runs/{run_id}",
+    response_model=ExplorationRunStatusResponse,
+)
+async def get_exploration_run(
+    exploration_id: UUID,
+    run_id: UUID,
+    service: ExplorationServiceDependency,
+) -> ExplorationRunStatusResponse:
+    run = await service.get_run(exploration_id, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Exploration run not found")
+    return ExplorationRunStatusResponse(
+        id=run.id,
+        exploration_id=run.exploration_id,
+        status=run.status,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+    )
+
+
+@router.get(
+    "/{exploration_id}/runs/{run_id}/companies",
+    response_model=list[ExplorationCompanyResultResponse],
+)
+async def list_exploration_run_companies(
+    exploration_id: UUID,
+    run_id: UUID,
+    service: ExplorationServiceDependency,
+) -> list[ExplorationCompanyResultResponse]:
+    companies = await service.list_run_companies(exploration_id, run_id)
+    if companies is None:
+        raise HTTPException(status_code=404, detail="Exploration run not found")
+    return [
+        ExplorationCompanyResultResponse(
+            id=item.id,
+            company_id=item.company_id,
+            name=item.company.name,
+            website=item.company.website,
+            domain=item.company.domain,
+        )
+        for item in companies
+    ]
+
+
+@router.get(
+    "/{exploration_id}/companies/{company_link_id}/evidence",
+    response_model=list[ExplorationEvidenceResponse],
+)
+async def list_exploration_company_evidence(
+    exploration_id: UUID,
+    company_link_id: UUID,
+    service: ExplorationServiceDependency,
+) -> list[ExplorationEvidenceResponse]:
+    records = await service.list_company_evidence(exploration_id, company_link_id)
+    if records is None:
+        raise HTTPException(status_code=404, detail="Exploration company not found")
+    return [ExplorationEvidenceResponse.model_validate(item) for item in records]
+
+
+@router.get(
+    "/{exploration_id}/companies/{company_link_id}/facts",
+    response_model=list[ExplorationFactResponse],
+)
+async def list_exploration_company_facts(
+    exploration_id: UUID,
+    company_link_id: UUID,
+    service: ExplorationServiceDependency,
+) -> list[ExplorationFactResponse]:
+    records = await service.list_company_facts(exploration_id, company_link_id)
+    if records is None:
+        raise HTTPException(status_code=404, detail="Exploration company not found")
+    return [ExplorationFactResponse.model_validate(item) for item in records]
+
+
+@router.get(
+    "/{exploration_id}/companies/{company_link_id}/hypotheses",
+    response_model=list[ExplorationHypothesisResponse],
+)
+async def list_exploration_company_hypotheses(
+    exploration_id: UUID,
+    company_link_id: UUID,
+    service: ExplorationServiceDependency,
+) -> list[ExplorationHypothesisResponse]:
+    records = await service.list_company_hypotheses(exploration_id, company_link_id)
+    if records is None:
+        raise HTTPException(status_code=404, detail="Exploration company not found")
+    return [ExplorationHypothesisResponse.model_validate(item) for item in records]
 
 
 @router.post(
