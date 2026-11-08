@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
     database_url: str = DEFAULT_DATABASE_URL
+    taskiq_redis_url: str = "redis://localhost:6379/0"
+    taskiq_stream_name: str = "virtual-company-tasks"
+    taskiq_consumer_group: str = "virtual-company-workers"
+    taskiq_idle_timeout_ms: int = Field(default=86_400_000, ge=1)
+    taskiq_reclaim_lock_timeout_seconds: float = Field(default=30, gt=0)
+    taskiq_worker_concurrency: int = Field(default=1, ge=1, le=100)
+    taskiq_worker_shutdown_grace_seconds: int = Field(default=3600, ge=1)
     environment: str = "local"
     log_level: str = "INFO"
     log_format: str = "json"

@@ -49,6 +49,46 @@ def test_exploration_fact_extraction_limits_have_independent_defaults() -> None:
     assert settings.exploration_fact_extraction_max_chars_per_chunk == 30_000
 
 
+def test_taskiq_settings_have_safe_defaults_and_environment_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TASKIQ_REDIS_URL", raising=False)
+    monkeypatch.delenv("TASKIQ_IDLE_TIMEOUT_MS", raising=False)
+    monkeypatch.delenv("TASKIQ_WORKER_CONCURRENCY", raising=False)
+
+    defaults = Settings()
+    assert defaults.taskiq_redis_url == "redis://localhost:6379/0"
+    assert defaults.taskiq_stream_name == "virtual-company-tasks"
+    assert defaults.taskiq_consumer_group == "virtual-company-workers"
+    assert defaults.taskiq_idle_timeout_ms == 86_400_000
+    assert defaults.taskiq_reclaim_lock_timeout_seconds == 30
+    assert defaults.taskiq_worker_concurrency == 1
+    assert defaults.taskiq_worker_shutdown_grace_seconds == 3600
+
+    monkeypatch.setenv("TASKIQ_REDIS_URL", "redis://example:6379/2")
+    monkeypatch.setenv("TASKIQ_IDLE_TIMEOUT_MS", "120000")
+    monkeypatch.setenv("TASKIQ_WORKER_CONCURRENCY", "3")
+    configured = Settings()
+    assert configured.taskiq_redis_url == "redis://example:6379/2"
+    assert configured.taskiq_idle_timeout_ms == 120_000
+    assert configured.taskiq_worker_concurrency == 3
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("taskiq_idle_timeout_ms", 0),
+        ("taskiq_reclaim_lock_timeout_seconds", 0),
+        ("taskiq_worker_concurrency", 0),
+        ("taskiq_worker_concurrency", 101),
+        ("taskiq_worker_shutdown_grace_seconds", 0),
+    ],
+)
+def test_invalid_taskiq_settings_are_rejected(field: str, value: int) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value})
+
+
 def test_exploration_hypothesis_maximum_default_and_environment_setting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

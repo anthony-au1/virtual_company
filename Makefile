@@ -6,17 +6,17 @@ WAIT_ATTEMPTS ?= 30
 	test lint backend-test backend-lint frontend-install frontend-dev \
 	frontend-build frontend-test frontend-lint frontend-format \
 	frontend-format-check frontend-e2e-install frontend-e2e \
-	research-observability research-cost research-log
+	research-observability research-cost research-log taskiq-probe
 
 RESEARCH_REPORT_ARGS = $(if $(RUN_ID),--run-id $(RUN_ID),) $(if $(CAMPAIGN_ID),--campaign-id $(CAMPAIGN_ID),)
 
 start: up
 
 up: migrate
-	$(COMPOSE) up -d --build app frontend
+	$(COMPOSE) up -d --build app frontend worker redis
 
 backend-up: migrate
-	$(COMPOSE) up -d app
+	$(COMPOSE) up -d app worker redis
 
 migrate:
 	$(COMPOSE) up -d postgres
@@ -54,7 +54,10 @@ research-log:
 	uv run python -m virtual_company.observability.research_report log $(RESEARCH_REPORT_ARGS)
 
 build:
-	$(COMPOSE) build app frontend
+	$(COMPOSE) build app frontend worker
+
+taskiq-probe:
+	$(COMPOSE) exec worker uv run --no-dev python -m virtual_company.task_queue.enqueue_probe
 
 backend-test:
 	uv run pytest

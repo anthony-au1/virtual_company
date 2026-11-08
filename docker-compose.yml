@@ -27,6 +27,58 @@ services:
       postgres:
         condition: service_healthy
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: virtual_company_worker
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://virtual_company:virtual_company@postgres:5432/virtual_company
+      TASKIQ_REDIS_URL: redis://redis:6379/0
+    command:
+      - uv
+      - run
+      - --no-dev
+      - taskiq
+      - worker
+      - virtual_company.task_queue.broker:broker
+      - virtual_company.task_queue.tasks
+      - --workers
+      - "1"
+      - --max-async-tasks
+      - "${TASKIQ_WORKER_CONCURRENCY:-1}"
+      - --max-prefetch
+      - "0"
+      - --ack-type
+      - when_executed
+      - --shutdown-timeout
+      - "${TASKIQ_WORKER_SHUTDOWN_GRACE_SECONDS:-3600}"
+      - --wait-tasks-timeout
+      - "${TASKIQ_WORKER_SHUTDOWN_GRACE_SECONDS:-3600}"
+      - --no-configure-logging
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: "${TASKIQ_WORKER_SHUTDOWN_GRACE_SECONDS:-3600}s"
+
+  redis:
+    image: redis:8.10.2-alpine3.23
+    container_name: virtual_company_redis
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   postgres:
     image: postgres:16
     container_name: virtual_company_postgres
@@ -46,3 +98,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:

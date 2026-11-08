@@ -22,9 +22,55 @@ make start
 
 The frontend is available at `http://localhost:3000`, and the FastAPI service remains
 available directly at `http://localhost:8000`. `make start` migrates the database and
-builds and starts the complete Compose stack. Use `make backend-up` when only FastAPI
-and PostgreSQL are needed, `make logs` to follow both application services, and
-`make down` to stop the stack and remove its local database volume.
+builds and starts the complete Compose stack, including the Taskiq worker and Redis.
+Use `make backend-up` for the backend services, `make logs` to follow the app and
+frontend, and `make down` to stop the stack. `make down` preserves PostgreSQL and Redis
+volumes; `make down-reset` removes both local data volumes and should only be used
+when intentionally resetting development data.
+
+## Taskiq infrastructure probe
+
+Redis Streams is available internally as `redis:6379`; Redis is not published on a
+host port. The dedicated worker starts with one process and one concurrent task by
+default. Change `TASKIQ_WORKER_CONCURRENCY` in `.env` to adjust async task concurrency.
+The worker uses `TASKIQ_IDLE_TIMEOUT_MS` for pending-message reclaim (default 24 hours)
+and `TASKIQ_RECLAIM_LOCK_TIMEOUT_SECONDS` for the reclaim lock. Keep the idle timeout
+above expected task duration to avoid routine redelivery of a still-running task.
+In the pinned Taskiq Redis broker, pending-message reclaim is checked after a stream
+read returns messages. A restarted worker may therefore leave an old pending entry
+untouched until another message arrives.
+
+Start the backend and worker with `make backend-up`, then enqueue a harmless probe:
+
+```bash
+make taskiq-probe
+```
+
+For a bounded long-running probe, run:
+
+```bash
+docker compose exec worker uv run --no-dev python -m virtual_company.task_queue.enqueue_probe --sleep-seconds 20
+```
+
+The command prints the probe and Taskiq task IDs. Follow execution logs with
+`docker compose logs -f worker`; verify broker readiness with
+`docker compose exec redis redis-cli ping`. If the worker cannot connect, check
+`docker compose ps`, `docker compose logs redis worker`, and confirm that the worker
+uses `TASKIQ_REDIS_URL=redis://redis:6379/0`. The probe only emits safe lifecycle
+events and does not access PostgreSQL or external providers.
+
+To stop and restart only the worker without removing data:
+
+```bash
+docker compose stop worker
+docker compose start worker
+```
+
+`docker compose stop worker` allows the configured graceful wait (default one hour).
+Redis Streams may reclaim pending messages after the idle timeout, so delivery is not
+exactly once. The shortened-timeout/redelivery scenarios are for isolated
+infrastructure verification only; business workflow duplicate protection is a later
+phase.
 
 ## Frontend development
 
