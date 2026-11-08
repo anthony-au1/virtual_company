@@ -1,5 +1,6 @@
 """Opt-in verification that the initial migration creates the current schema."""
 
+import logging
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -21,7 +22,9 @@ from virtual_company.config import DEFAULT_DATABASE_URL
     os.getenv("RUN_MIGRATION_DB_TESTS") != "true",
     reason="Opt-in local PostgreSQL migration test",
 )
-async def test_initial_migration_creates_current_schema() -> None:
+async def test_initial_migration_creates_current_schema(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     schema = f"test_initial_{uuid4().hex}"
     engine = create_async_engine(
         os.getenv("MIGRATION_TEST_DATABASE_URL", DEFAULT_DATABASE_URL)
@@ -32,12 +35,31 @@ async def test_initial_migration_creates_current_schema() -> None:
         async with engine.connect() as connection:
             await connection.execute(text(f'SET search_path TO "{schema}"'))
             config = Config("alembic.ini")
+            config.attributes["configure_logger"] = False
+
+            test_logger = logging.getLogger("virtual_company.migration_logging_test")
+            application_logger = logging.getLogger("virtual_company.observability.runtime")
+            root_logger = logging.getLogger()
+            root_handlers_before = tuple(root_logger.handlers)
+            assert not application_logger.disabled
 
             def migrate(sync_connection: Connection) -> None:
                 config.attributes["connection"] = sync_connection
                 command.upgrade(config, "head")
 
-            await connection.run_sync(migrate)
+            with caplog.at_level(logging.INFO, logger=test_logger.name):
+                test_logger.info("before_programmatic_migration")
+                await connection.run_sync(migrate)
+                test_logger.info("after_programmatic_migration")
+
+            captured_messages = [record.getMessage() for record in caplog.records]
+            assert "before_programmatic_migration" in captured_messages
+            assert "after_programmatic_migration" in captured_messages
+            assert not application_logger.disabled
+            assert all(
+                any(handler is current for current in root_logger.handlers)
+                for handler in root_handlers_before
+            )
 
             def verify(sync_connection: Connection) -> None:
                 inspector = inspect(sync_connection)
