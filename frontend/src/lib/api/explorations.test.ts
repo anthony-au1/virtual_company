@@ -5,6 +5,89 @@ import * as explorationApi from "@/lib/api/explorations";
 afterEach(() => vi.restoreAllMocks());
 
 describe("Exploration API", () => {
+  it("calls execution, status, company, and result endpoints with encoded IDs", async () => {
+    const payloads = [
+      { exploration_run_id: "run/1", status: "QUEUED" },
+      {
+        id: "run/1",
+        exploration_id: "exploration/1",
+        status: "RUNNING",
+        started_at: "2026-11-08T10:00:00Z",
+        completed_at: null,
+      },
+      [
+        {
+          id: "link/1",
+          company_id: "company/1",
+          name: "Example",
+          website: "https://example.test",
+          domain: "example.test",
+        },
+      ],
+      [
+        {
+          id: "evidence-1",
+          exploration_company_id: "link/1",
+          exploration_obligation_id: "obligation-1",
+          claim: "Example claim",
+          supporting_excerpt: "Exact excerpt",
+          source_url: "https://example.test/source",
+          requested_url: null,
+          source_title: null,
+          created_at: "2026-11-08T10:00:00Z",
+        },
+      ],
+      [
+        {
+          id: "fact-1",
+          exploration_company_id: "link/1",
+          statement: "Example fact",
+          created_at: "2026-11-08T10:00:00Z",
+        },
+      ],
+      [
+        {
+          id: "hypothesis-1",
+          exploration_company_id: "link/1",
+          statement: "Example hypothesis",
+          created_at: "2026-11-08T10:00:00Z",
+        },
+      ],
+    ];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () =>
+        new Response(JSON.stringify(payloads.shift()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    await explorationApi.executeExplorationRun("exploration/1", "run/1");
+    await explorationApi.getExplorationRun("exploration/1", "run/1");
+    await explorationApi.listExplorationRunCompanies("exploration/1", "run/1");
+    await explorationApi.listExplorationCompanyEvidence(
+      "exploration/1",
+      "link/1",
+    );
+    await explorationApi.listExplorationCompanyFacts("exploration/1", "link/1");
+    await explorationApi.listExplorationCompanyHypotheses(
+      "exploration/1",
+      "link/1",
+    );
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/backend/api/v1/explorations/exploration%2F1/runs/run%2F1/execute",
+      "/api/backend/api/v1/explorations/exploration%2F1/runs/run%2F1",
+      "/api/backend/api/v1/explorations/exploration%2F1/runs/run%2F1/companies",
+      "/api/backend/api/v1/explorations/exploration%2F1/companies/link%2F1/evidence",
+      "/api/backend/api/v1/explorations/exploration%2F1/companies/link%2F1/facts",
+      "/api/backend/api/v1/explorations/exploration%2F1/companies/link%2F1/hypotheses",
+    ]);
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ method: "POST", body: undefined }),
+    );
+  });
+
   it("lists Exploration runs and starts a run with only its ResearchRun and companies", async () => {
     const responsePayload = {
       id: "exploration-run-1",

@@ -80,7 +80,12 @@ function exploration(
 }
 
 function obligation(description: string): ExplorationObligation {
-  return { description, created_at: "2026-10-06T00:00:00Z" };
+  return {
+    id: `obligation-${description}`,
+    exploration_id: "exploration-1",
+    description,
+    created_at: "2026-10-06T00:00:00Z",
+  };
 }
 
 beforeEach(() => {

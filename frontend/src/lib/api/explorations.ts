@@ -10,14 +10,25 @@ export type Exploration = {
 };
 
 export type ExplorationObligation = {
+  id: string;
+  exploration_id: string;
   description: string;
   created_at: string;
 };
 
+export type ExplorationRunStatus =
+  | "READY"
+  | "QUEUED"
+  | "RUNNING"
+  | "COMPLETED"
+  | "PARTIAL"
+  | "FAILED"
+  | "CANCELLED";
+
 export type ExplorationRunSummary = {
   id: string;
   research_run_id: string;
-  status: string;
+  status: ExplorationRunStatus;
   started_at: string;
   completed_at: string | null;
   campaign_name: string;
@@ -33,10 +44,57 @@ export type StartedExplorationRun = {
   id: string;
   exploration_id: string;
   research_run_id: string;
-  status: string;
+  status: ExplorationRunStatus;
   started_at: string;
   completed_at: string | null;
   company_ids: string[];
+};
+
+export type ExecuteExplorationRunResponse = {
+  exploration_run_id: string;
+  status: ExplorationRunStatus;
+};
+
+export type ExplorationRunDetails = {
+  id: string;
+  exploration_id: string;
+  status: ExplorationRunStatus;
+  started_at: string;
+  completed_at: string | null;
+};
+
+export type ExplorationRunCompany = {
+  id: string;
+  company_id: string;
+  name: string;
+  website: string | null;
+  domain: string | null;
+};
+
+export type ExplorationEvidence = {
+  id: string;
+  exploration_company_id: string;
+  exploration_obligation_id: string;
+  claim: string;
+  supporting_excerpt: string;
+  source_url: string;
+  requested_url: string | null;
+  source_title: string | null;
+  created_at: string;
+};
+
+export type ExplorationFact = {
+  id: string;
+  exploration_company_id: string;
+  statement: string;
+  created_at: string;
+};
+
+export type ExplorationHypothesis = {
+  id: string;
+  exploration_company_id: string;
+  statement: string;
+  created_at: string;
 };
 
 export type CreateExplorationPayload = {
@@ -105,5 +163,60 @@ export function startExplorationRun(
   return apiFetch<StartedExplorationRun>(
     `/api/v1/explorations/${encodeURIComponent(explorationId)}/runs`,
     { method: "POST", body: payload },
+  );
+}
+
+export function executeExplorationRun(
+  explorationId: string,
+  runId: string,
+): Promise<ExecuteExplorationRunResponse> {
+  return apiFetch<ExecuteExplorationRunResponse>(
+    `/api/v1/explorations/${encodeURIComponent(explorationId)}/runs/${encodeURIComponent(runId)}/execute`,
+    { method: "POST" },
+  );
+}
+
+export function getExplorationRun(
+  explorationId: string,
+  runId: string,
+): Promise<ExplorationRunDetails> {
+  return apiFetch<ExplorationRunDetails>(
+    `/api/v1/explorations/${encodeURIComponent(explorationId)}/runs/${encodeURIComponent(runId)}`,
+  );
+}
+
+export function listExplorationRunCompanies(
+  explorationId: string,
+  runId: string,
+): Promise<ExplorationRunCompany[]> {
+  return apiFetch<ExplorationRunCompany[]>(
+    `/api/v1/explorations/${encodeURIComponent(explorationId)}/runs/${encodeURIComponent(runId)}/companies`,
+  );
+}
+
+export function listExplorationCompanyEvidence(
+  explorationId: string,
+  companyLinkId: string,
+): Promise<ExplorationEvidence[]> {
+  return apiFetch<ExplorationEvidence[]>(
+    `/api/v1/explorations/${encodeURIComponent(explorationId)}/companies/${encodeURIComponent(companyLinkId)}/evidence`,
+  );
+}
+
+export function listExplorationCompanyFacts(
+  explorationId: string,
+  companyLinkId: string,
+): Promise<ExplorationFact[]> {
+  return apiFetch<ExplorationFact[]>(
+    `/api/v1/explorations/${encodeURIComponent(explorationId)}/companies/${encodeURIComponent(companyLinkId)}/facts`,
+  );
+}
+
+export function listExplorationCompanyHypotheses(
+  explorationId: string,
+  companyLinkId: string,
+): Promise<ExplorationHypothesis[]> {
+  return apiFetch<ExplorationHypothesis[]>(
+    `/api/v1/explorations/${encodeURIComponent(explorationId)}/companies/${encodeURIComponent(companyLinkId)}/hypotheses`,
   );
 }

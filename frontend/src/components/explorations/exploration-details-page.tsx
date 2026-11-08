@@ -181,7 +181,12 @@ export function ExplorationDetailsPage({
                 key={run.id}
               >
                 <div className="min-w-0">
-                  <p className="font-medium">Run {index + 1}</p>
+                  <Link
+                    className="font-medium hover:underline"
+                    href={`/explorations/${explorationId}/runs/${run.id}`}
+                  >
+                    Run {index + 1}
+                  </Link>
                   <p className="text-muted-foreground mt-0.5 text-sm">
                     Research Run from {run.campaign_name}
                   </p>
@@ -196,7 +201,10 @@ export function ExplorationDetailsPage({
                     {run.selected_company_count === 1 ? "company" : "companies"}
                   </span>
                   <span className="text-muted-foreground text-xs">
-                    Started {formatDate(run.started_at)}
+                    {run.status === "READY" || run.status === "QUEUED"
+                      ? "Created"
+                      : "Started"}{" "}
+                    {formatDate(run.started_at)}
                   </span>
                 </div>
               </li>
