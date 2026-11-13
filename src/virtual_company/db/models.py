@@ -399,6 +399,36 @@ class ExplorationRun(Base):
     companies: Mapped[list[ExplorationCompany]] = relationship(back_populates="run")
 
 
+class WorkflowExecution(Base):
+    """Infrastructure ownership record for one business workflow run."""
+
+    __tablename__ = "workflow_execution"
+    __table_args__ = (
+        UniqueConstraint("workflow_type", "run_id", name="uq_workflow_execution_type_run"),
+        Index("ix_workflow_execution_status_queued_at", "status", "queued_at"),
+        Index("ix_workflow_execution_status_heartbeat_at", "status", "heartbeat_at"),
+        CheckConstraint(
+            "workflow_type IN ('research', 'exploration')",
+            name="ck_workflow_execution_workflow_type",
+        ),
+        CheckConstraint(
+            "status IN ('QUEUED', 'RUNNING', 'COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED')",
+            name="ck_workflow_execution_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    workflow_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ExplorationCompany(Base):
     """A research company in the context of an Exploration run."""
 

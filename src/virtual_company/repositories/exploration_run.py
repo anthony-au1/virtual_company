@@ -92,9 +92,7 @@ class ExplorationRunRepository:
         await self._session.refresh(run)
         return run
 
-    async def claim_for_execution(
-        self, run_id: UUID
-    ) -> ExplorationRunClaimResult:
+    async def claim_for_execution(self, run_id: UUID) -> ExplorationRunClaimResult:
         """Atomically move one READY run to QUEUED."""
         statement = (
             update(ExplorationRun)

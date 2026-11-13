@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://virtual_company:virtual_company@localhost:5432/virtual_company"
@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     taskiq_reclaim_lock_timeout_seconds: float = Field(default=30, gt=0)
     taskiq_worker_concurrency: int = Field(default=1, ge=1, le=100)
     taskiq_worker_shutdown_grace_seconds: int = Field(default=3600, ge=1)
+    taskiq_heartbeat_interval_seconds: int = Field(default=30, ge=1)
+    taskiq_running_stale_after_seconds: int = Field(default=600, ge=1)
+    taskiq_queued_stale_after_seconds: int = Field(default=3600, ge=1)
+    taskiq_reconciliation_interval_seconds: int = Field(default=30, ge=1)
+    taskiq_reconciliation_enabled: bool = True
     environment: str = "local"
     log_level: str = "INFO"
     log_format: str = "json"
@@ -111,6 +116,24 @@ class Settings(BaseSettings):
                 "exploration_hypothesis_max_hypotheses must be an integer"
             )
         return value
+
+    @model_validator(mode="after")
+    def validate_taskiq_lifecycle_intervals(self) -> Settings:
+        if self.taskiq_running_stale_after_seconds < (
+            self.taskiq_heartbeat_interval_seconds * 3
+        ):
+            raise ValueError(
+                "taskiq_running_stale_after_seconds must be at least three "
+                "heartbeat intervals"
+            )
+        if self.taskiq_queued_stale_after_seconds <= (
+            self.taskiq_reconciliation_interval_seconds
+        ):
+            raise ValueError(
+                "taskiq_queued_stale_after_seconds must exceed the "
+                "reconciliation interval"
+            )
+        return self
 
 
 @lru_cache

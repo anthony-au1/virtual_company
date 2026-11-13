@@ -26,6 +26,8 @@ async def test_initial_migration_creates_current_schema(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     schema = f"test_initial_{uuid4().hex}"
+    scripts = ScriptDirectory.from_config(Config("alembic.ini"))
+    assert len(list(scripts.walk_revisions())) == 1
     engine = create_async_engine(
         os.getenv("MIGRATION_TEST_DATABASE_URL", DEFAULT_DATABASE_URL)
     )
@@ -81,6 +83,7 @@ async def test_initial_migration_creates_current_schema(
                     "exploration_fact_evidence",
                     "exploration_hypothesis",
                     "exploration_hypothesis_fact",
+                    "workflow_execution",
                 }
                 assert {
                     "company",
@@ -168,6 +171,30 @@ async def test_initial_migration_creates_current_schema(
                     index["name"] == "ix_research_evidence_research_run_id"
                     and index["column_names"] == ["research_run_id"]
                     for index in indexes
+                )
+                execution_columns = {
+                    column["name"]
+                    for column in inspector.get_columns("workflow_execution", schema=schema)
+                }
+                assert execution_columns == {
+                    "id", "workflow_type", "run_id", "status", "queued_at",
+                    "started_at", "heartbeat_at", "completed_at",
+                }
+                for run_table in ("research_run", "exploration_run"):
+                    business_columns = {
+                        column["name"]
+                        for column in inspector.get_columns(run_table, schema=schema)
+                    }
+                    assert not {
+                        "taskiq_managed", "taskiq_queued_at", "execution_id", "heartbeat_at"
+                    } & business_columns
+                execution_uniques = inspector.get_unique_constraints(
+                    "workflow_execution", schema=schema
+                )
+                assert any(
+                    unique["name"] == "uq_workflow_execution_type_run"
+                    and unique["column_names"] == ["workflow_type", "run_id"]
+                    for unique in execution_uniques
                 )
 
                 expected_exploration_foreign_keys = {

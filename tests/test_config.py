@@ -64,6 +64,11 @@ def test_taskiq_settings_have_safe_defaults_and_environment_overrides(
     assert defaults.taskiq_reclaim_lock_timeout_seconds == 30
     assert defaults.taskiq_worker_concurrency == 1
     assert defaults.taskiq_worker_shutdown_grace_seconds == 3600
+    assert defaults.taskiq_heartbeat_interval_seconds == 30
+    assert defaults.taskiq_running_stale_after_seconds == 600
+    assert defaults.taskiq_queued_stale_after_seconds == 3600
+    assert defaults.taskiq_reconciliation_interval_seconds == 30
+    assert defaults.taskiq_reconciliation_enabled is True
 
     monkeypatch.setenv("TASKIQ_REDIS_URL", "redis://example:6379/2")
     monkeypatch.setenv("TASKIQ_IDLE_TIMEOUT_MS", "120000")
@@ -72,6 +77,18 @@ def test_taskiq_settings_have_safe_defaults_and_environment_overrides(
     assert configured.taskiq_redis_url == "redis://example:6379/2"
     assert configured.taskiq_idle_timeout_ms == 120_000
     assert configured.taskiq_worker_concurrency == 3
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"taskiq_heartbeat_interval_seconds": 201},
+        {"taskiq_queued_stale_after_seconds": 20},
+    ],
+)
+def test_inconsistent_taskiq_lifecycle_settings_are_rejected(settings) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**settings)
 
 
 @pytest.mark.parametrize(

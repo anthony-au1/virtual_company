@@ -533,3 +533,30 @@ erDiagram
     exploration_hypothesis ||--o{ exploration_hypothesis_fact: supported_by
     exploration_fact ||--o{ exploration_hypothesis_fact: contributes_to
 ```
+
+## Shared workflow execution infrastructure
+
+Table: `workflow_execution`
+
+This table contains queue and worker infrastructure state separately from Research and Exploration business run
+entities. `id` is both the row primary key and the execution ownership token. A unique `(workflow_type, run_id)`
+constraint allows at most one execution record per business run in this MVP. The polymorphic `run_id` has no
+conventional foreign key because it may refer to either `research_run` or `exploration_run`; creation validates the
+referenced business run through the repository.
+
+| Column          | PostgreSQL type | Nullable | Description                                            |
+|-----------------|-----------------|---------:|--------------------------------------------------------|
+| `id`            | UUID            |       NO | Execution ownership token                              |
+| `workflow_type` | VARCHAR(50)     |       NO | `research` or `exploration`                            |
+| `run_id`        | UUID            |       NO | Corresponding business run ID                          |
+| `status`        | VARCHAR(30)     |       NO | QUEUED, RUNNING, COMPLETED, PARTIAL, FAILED, CANCELLED |
+| `queued_at`     | TIMESTAMPTZ     |      YES | Queue time used for stale queued reconciliation        |
+| `started_at`    | TIMESTAMPTZ     |      YES | Worker claim time                                      |
+| `heartbeat_at`  | TIMESTAMPTZ     |      YES | Last worker liveness update                            |
+| `completed_at`  | TIMESTAMPTZ     |      YES | Terminal transition time                               |
+
+Indexes are the unique `(workflow_type, run_id)` constraint plus `(status, queued_at)` and `(status, heartbeat_at)` for
+stale scans. Claim changes QUEUED to RUNNING atomically and uses the execution UUID for heartbeat and terminal fencing.
+There are no automatic retries, checkpoints, resumes, or multiple attempts. Stale reconciliation fails the execution
+and, in the same transaction, marks its corresponding business run FAILED only when that run is nonterminal. Business
+runs without an execution record are outside reconciliation.

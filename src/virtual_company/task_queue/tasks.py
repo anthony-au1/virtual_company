@@ -14,8 +14,15 @@ from virtual_company.observability import (
     shutdown_observability,
 )
 from virtual_company.task_queue.broker import broker
+from virtual_company.task_queue.dispatcher import dispatch_workflow
 
 logger = logging.getLogger(__name__)
+
+
+@broker.task(ack_type="when_executed")
+async def execute_workflow(workflow_type: str, run_id: str) -> None:
+    """Route one identifier-only message to its registered workflow adapter."""
+    await dispatch_workflow(workflow_type, run_id)
 
 
 @broker.on_event(TaskiqEvents.WORKER_STARTUP)

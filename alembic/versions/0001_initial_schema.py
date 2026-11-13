@@ -474,9 +474,49 @@ def upgrade() -> None:
         "exploration_hypothesis_fact",
         ["exploration_fact_id"],
     )
+    op.create_table(
+        "workflow_execution",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("workflow_type", sa.String(50), nullable=False),
+        sa.Column("run_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("status", sa.String(30), nullable=False),
+        sa.Column("queued_at", sa.DateTime(timezone=True)),
+        sa.Column("started_at", sa.DateTime(timezone=True)),
+        sa.Column("heartbeat_at", sa.DateTime(timezone=True)),
+        sa.Column("completed_at", sa.DateTime(timezone=True)),
+        sa.PrimaryKeyConstraint("id", name="workflow_execution_pkey"),
+        sa.UniqueConstraint(
+            "workflow_type", "run_id", name="uq_workflow_execution_type_run"
+        ),
+        sa.CheckConstraint(
+            "workflow_type IN ('research', 'exploration')",
+            name="ck_workflow_execution_workflow_type",
+        ),
+        sa.CheckConstraint(
+            "status IN ('QUEUED', 'RUNNING', 'COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED')",
+            name="ck_workflow_execution_status",
+        ),
+    )
+    op.create_index(
+        "ix_workflow_execution_status_queued_at",
+        "workflow_execution",
+        ["status", "queued_at"],
+    )
+    op.create_index(
+        "ix_workflow_execution_status_heartbeat_at",
+        "workflow_execution",
+        ["status", "heartbeat_at"],
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_workflow_execution_status_heartbeat_at", table_name="workflow_execution"
+    )
+    op.drop_index(
+        "ix_workflow_execution_status_queued_at", table_name="workflow_execution"
+    )
+    op.drop_table("workflow_execution")
     op.drop_index(
         "ix_exploration_hypothesis_exploration_company_id",
         table_name="exploration_hypothesis",

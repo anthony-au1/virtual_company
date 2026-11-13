@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -8,6 +9,9 @@ from virtual_company.api.campaigns import router as campaigns_router
 from virtual_company.api.explorations import router as explorations_router
 from virtual_company.api.research_companies import router as companies_router
 from virtual_company.api.research_runs import router as research_runs_router
+from virtual_company.config import get_settings
+from virtual_company.db.session import session_factory
+from virtual_company.task_queue.reconciliation import run_reconciliation_loop
 from virtual_company.tools import WebSearchConfigurationError
 
 
@@ -19,9 +23,22 @@ async def lifespan(_: FastAPI):
         shutdown_observability,
     )
 
-    configure_observability()
-    yield
-    shutdown_observability()
+    settings = get_settings()
+    configure_observability(settings)
+    reconciler: asyncio.Task[None] | None = None
+    if settings.taskiq_reconciliation_enabled:
+        reconciler = asyncio.create_task(
+            run_reconciliation_loop(session_factory, settings),
+            name="taskiq-run-reconciler",
+        )
+    try:
+        yield
+    finally:
+        if reconciler is not None:
+            reconciler.cancel()
+            with suppress(asyncio.CancelledError):
+                await reconciler
+        shutdown_observability()
 
 
 app = FastAPI(lifespan=lifespan)
