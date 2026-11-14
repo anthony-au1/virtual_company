@@ -201,8 +201,14 @@ async def test_shared_execution_claim_fencing_and_reconciliation() -> None:
 
         with pytest.raises(IntegrityError):
             async with sessions.begin() as session:
-                duplicate = WorkflowExecutionRepository(session)
-                await duplicate.create_queued("exploration", exploration_id)
+                session.add(
+                    WorkflowExecution(
+                        workflow_type="exploration",
+                        run_id=exploration_id,
+                        status="QUEUED",
+                    )
+                )
+                await session.flush()
 
         settings = Settings(
             taskiq_heartbeat_interval_seconds=1,

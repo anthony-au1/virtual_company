@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from taskiq import TaskiqEvents
+from taskiq import TaskiqEvents, TaskiqState
 from taskiq.result_backends.dummy import DummyResultBackend
 
 from virtual_company.task_queue import tasks
@@ -53,14 +53,22 @@ async def test_worker_observability_hooks_initialize_and_shutdown(monkeypatch, c
     monkeypatch.setattr(tasks, "configure_observability", configure)
     monkeypatch.setattr(tasks, "get_observability", lambda: observability)
     monkeypatch.setattr(tasks, "shutdown_observability", shutdown)
+    engine = Mock()
+    engine.dispose = AsyncMock()
+    session_factory = Mock(return_value="sessions")
+    monkeypatch.setattr(tasks, "create_async_engine", Mock(return_value=engine))
+    monkeypatch.setattr(tasks, "async_sessionmaker", session_factory)
+    state = TaskiqState()
 
     with caplog.at_level("INFO", logger="virtual_company.task_queue.tasks"):
-        await tasks.on_worker_startup(None)
-        await tasks.on_worker_shutdown(None)
+        await tasks.on_worker_startup(state)
+        await tasks.on_worker_shutdown(state)
 
     configure.assert_called_once()
     observability.clear_context.assert_called_once()
     shutdown.assert_called_once()
+    engine.dispose.assert_awaited_once()
+    session_factory.assert_called_once_with(engine, expire_on_commit=False)
     assert "taskiq_worker_started" in caplog.text
     assert "taskiq_worker_stopped" in caplog.text
 

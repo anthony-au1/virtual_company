@@ -12,13 +12,8 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from virtual_company.config import Settings, get_settings
-from virtual_company.db.session import session_factory
 from virtual_company.domain.exploration.run import ExplorationRunStatus
 from virtual_company.observability import Observability, get_observability
-from virtual_company.repositories.exploration_run import (
-    ExplorationRunRepository,
-    InvalidExplorationRunTransitionError,
-)
 from virtual_company.services.exploration_evidence_extractor import (
     ExplorationEvidenceExtractor,
     create_configured_exploration_evidence_extractor,
@@ -92,90 +87,50 @@ class ExplorationWorkflow:
         )
         self._graph = build_exploration_graph(self._nodes, self._observability)
 
-    async def run(self, exploration_run_id: UUID) -> ExplorationWorkflowResult:
-        """Run only QUEUED records; fatal errors and cancellation are propagated."""
+    async def run(
+        self,
+        exploration_run_id: UUID,
+        workflow_execution_id: UUID,
+        *,
+        task_id: str | None = None,
+    ) -> ExplorationWorkflowResult:
+        """Run the graph; the shared execution layer owns all DB lifecycle changes."""
         started = perf_counter()
-        run_started = False
         self._observability.clear_context()
         self._observability.bind(
             exploration_run_id=str(exploration_run_id),
             workflow="exploration",
+            workflow_type="exploration",
+            workflow_execution_id=str(workflow_execution_id),
+            task_id=task_id,
         )
         self._observability.event("exploration_workflow_started")
         try:
-            transition_task = asyncio.create_task(
-                self._transition(exploration_run_id, ExplorationRunStatus.RUNNING)
-            )
-            try:
-                await asyncio.shield(transition_task)
-            except asyncio.CancelledError:
-                try:
-                    await transition_task
-                except Exception as error:  # noqa: BLE001 - keep cancellation primary
-                    self._observability.event(
-                        "exploration_workflow_start_transition_failed",
-                        error_type=type(error).__name__,
-                    )
-                else:
-                    run_started = True
-                raise
-            run_started = True
-            graph_error: Exception | None = None
-            state: ExplorationWorkflowState = {}
             with self._observability.span("exploration_workflow"):
-                try:
-                    state = await self._graph.ainvoke(
-                        {"exploration_run_id": exploration_run_id},
-                        config={"recursion_limit": RECURSION_LIMIT},
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except Exception as error:  # noqa: BLE001 - avoid raw error telemetry
-                    graph_error = error
-            if graph_error is not None:
-                raise graph_error
-        except asyncio.CancelledError:
-            if run_started:
-                await self._cleanup_transition(
-                    exploration_run_id, ExplorationRunStatus.CANCELLED
+                state = await self._graph.ainvoke(
+                    {
+                        "exploration_run_id": exploration_run_id,
+                        "workflow_execution_id": workflow_execution_id,
+                    },
+                    config={"recursion_limit": RECURSION_LIMIT},
                 )
+        except asyncio.CancelledError:
             self._observability.event(
                 "exploration_workflow_cancelled",
-                final_status=(
-                    ExplorationRunStatus.CANCELLED.value
-                    if run_started
-                    else "not_started"
-                ),
                 duration_ms=int((perf_counter() - started) * 1000),
             )
             raise
         except NodeCancelledError as error:
-            if run_started:
-                await self._cleanup_transition(
-                    exploration_run_id, ExplorationRunStatus.CANCELLED
-                )
             self._observability.event(
                 "exploration_workflow_cancelled",
-                final_status=(
-                    ExplorationRunStatus.CANCELLED.value
-                    if run_started
-                    else "not_started"
-                ),
                 duration_ms=int((perf_counter() - started) * 1000),
             )
             raise asyncio.CancelledError from error
         except Exception as error:
-            if run_started:
-                await self._cleanup_transition(
-                    exploration_run_id, ExplorationRunStatus.FAILED
-                )
             self._observability.event(
                 "exploration_workflow_failed",
                 failure_category=self._failure_category(error),
                 error_type=type(error).__name__,
-                final_status=(
-                    ExplorationRunStatus.FAILED.value if run_started else None
-                ),
                 duration_ms=int((perf_counter() - started) * 1000),
             )
             raise
@@ -188,8 +143,11 @@ class ExplorationWorkflow:
             error = ExplorationWorkflowFatalError(
                 "internal_invariant", "Graph finished without a terminal run status"
             )
-            await self._cleanup_transition(
-                exploration_run_id, ExplorationRunStatus.FAILED
+            self._observability.event(
+                "exploration_workflow_failed",
+                failure_category=error.category,
+                error_type=type(error).__name__,
+                duration_ms=int((perf_counter() - started) * 1000),
             )
             raise error
         result = ExplorationWorkflowResult(
@@ -223,34 +181,12 @@ class ExplorationWorkflow:
         )
         return result
 
-    async def _transition(
-        self, run_id: UUID, target: ExplorationRunStatus
-    ) -> None:
-        async with self._session_factory() as session, session.begin():
-            run = await ExplorationRunRepository(session).transition(run_id, target)
-            if run is None:
-                raise ExplorationWorkflowInputError("ExplorationRun does not exist")
-
-    async def _cleanup_transition(
-        self, run_id: UUID, target: ExplorationRunStatus
-    ) -> None:
-        try:
-            await self._transition(run_id, target)
-        except Exception as error:  # noqa: BLE001 - cleanup must not mask original
-            self._observability.event(
-                "exploration_workflow_cleanup_transition_failed",
-                target_status=target.value,
-                error_type=type(error).__name__,
-            )
-
     @staticmethod
     def _failure_category(error: Exception) -> str:
         if isinstance(error, ExplorationWorkflowFatalError):
             return error.category
         if isinstance(error, ExplorationWorkflowInputError):
             return "invalid_run_input"
-        if isinstance(error, InvalidExplorationRunTransitionError):
-            return "invalid_lifecycle_transition"
         return "database_or_internal_error"
 
 
@@ -469,7 +405,7 @@ def _failure_category(error: Exception) -> str:
 def create_configured_exploration_workflow(
     settings: Settings | None = None,
     *,
-    database_session_factory: async_sessionmaker[AsyncSession] = session_factory,
+    database_session_factory: async_sessionmaker[AsyncSession],
     observability: Observability | None = None,
 ) -> ExplorationWorkflow:
     """Build the Exploration graph with configured provider-backed services."""

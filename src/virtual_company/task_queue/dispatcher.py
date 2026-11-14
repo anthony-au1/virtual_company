@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Mapping
-from enum import StrEnum
 from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from virtual_company.observability import get_observability
 from virtual_company.task_queue.adapters.base import WorkflowAdapter
@@ -14,15 +15,9 @@ from virtual_company.task_queue.adapters.exploration import (
     ExplorationWorkflowAdapter,
 )
 from virtual_company.task_queue.adapters.research import ResearchWorkflowAdapter
+from virtual_company.task_queue.workflow_types import WorkflowType
 
 logger = logging.getLogger(__name__)
-
-
-class WorkflowType(StrEnum):
-    """Business workflow names carried by the serializable Taskiq envelope."""
-
-    RESEARCH = "research"
-    EXPLORATION = "exploration"
 
 
 class InvalidWorkflowDispatchError(ValueError):
@@ -60,6 +55,8 @@ async def dispatch_workflow(
     run_id: str,
     *,
     adapters: Mapping[WorkflowType, WorkflowAdapter] | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    task_id: str | None = None,
 ) -> None:
     """Validate identifiers and invoke exactly one registered adapter."""
     try:
@@ -95,6 +92,7 @@ async def dispatch_workflow(
             observability.bind(
                 workflow_type=resolved_type.value,
                 run_id=str(resolved_run_id),
+                task_id=task_id,
             )
         except Exception as error:  # noqa: BLE001 - telemetry cannot block work
             logger.warning(
@@ -107,7 +105,11 @@ async def dispatch_workflow(
             run_id=str(resolved_run_id),
         )
         try:
-            await adapter.execute(resolved_run_id)
+            await adapter.execute(
+                resolved_run_id,
+                session_factory=session_factory,
+                task_id=task_id,
+            )
         except asyncio.CancelledError:
             _safe_event(
                 "workflow_dispatch_cancelled",

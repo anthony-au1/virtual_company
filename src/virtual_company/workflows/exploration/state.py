@@ -57,6 +57,7 @@ class ExplorationWorkflowState(TypedDict, total=False):
     """Values passed between Exploration graph nodes; never ORM entities."""
 
     exploration_run_id: UUID
+    workflow_execution_id: UUID
     exploration_id: UUID
     research_run_id: UUID
     business_context: str

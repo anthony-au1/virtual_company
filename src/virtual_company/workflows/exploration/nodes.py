@@ -28,6 +28,10 @@ from virtual_company.repositories.research_company_qualification import (
     ResearchCompanyQualificationRepository,
 )
 from virtual_company.repositories.research_run import ResearchRunRepository
+from virtual_company.repositories.workflow_execution import (
+    ExecutionOwnershipLostError,
+    WorkflowExecutionRepository,
+)
 from virtual_company.services.exploration_evidence_extractor import (
     ExplorationEvidenceExtractionFailureCategory,
     ExplorationEvidenceExtractionOutcome,
@@ -378,6 +382,7 @@ class ExplorationNodes:
     ) -> dict[str, object]:
         batch = self._evidence_result(state)
         async with self._session_factory() as session, session.begin():
+            await self._require_execution_ownership(session, state)
             result = await ExplorationEvidencePersistenceService(
                 session, observability=self._observability
             ).persist(batch)
@@ -460,6 +465,7 @@ class ExplorationNodes:
     ) -> dict[str, object]:
         batch = self._fact_result(state)
         async with self._session_factory() as session, session.begin():
+            await self._require_execution_ownership(session, state)
             result = await ExplorationFactPersistenceService(
                 session, observability=self._observability
             ).persist(batch)
@@ -525,6 +531,7 @@ class ExplorationNodes:
     ) -> dict[str, object]:
         batch = self._hypothesis_result(state)
         async with self._session_factory() as session, session.begin():
+            await self._require_execution_ownership(session, state)
             result = await ExplorationHypothesisPersistenceService(
                 session, observability=self._observability
             ).persist(batch)
@@ -558,14 +565,6 @@ class ExplorationNodes:
             if state["recoverable_failure_count"]
             else ExplorationRunStatus.COMPLETED
         )
-        async with self._session_factory() as session, session.begin():
-            run = await ExplorationRunRepository(session).transition(
-                state["exploration_run_id"], status
-            )
-            if run is None:
-                raise ExplorationWorkflowInputError(
-                    "ExplorationRun disappeared before finalization"
-                )
         self._observability.event(
             "exploration_workflow_finalized",
             exploration_run_id=str(state["exploration_run_id"]),
@@ -581,6 +580,20 @@ class ExplorationNodes:
             recoverable_failure_count=state["recoverable_failure_count"],
         )
         return {"final_status": status}
+
+    @staticmethod
+    async def _require_execution_ownership(
+        session: AsyncSession, state: ExplorationWorkflowState
+    ) -> None:
+        execution_id = state.get("workflow_execution_id")
+        run_id = state.get("exploration_run_id")
+        if execution_id is None or run_id is None:
+            raise ExecutionOwnershipLostError("Execution ownership context is missing")
+        await WorkflowExecutionRepository(session).lock_running_ownership(
+            workflow_type="exploration",
+            run_id=run_id,
+            execution_id=execution_id,
+        )
 
     def _recoverable(
         self, state: ExplorationWorkflowState, stage: str, category: str

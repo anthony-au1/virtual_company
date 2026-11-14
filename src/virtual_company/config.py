@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     taskiq_worker_concurrency: int = Field(default=1, ge=1, le=100)
     taskiq_worker_shutdown_grace_seconds: int = Field(default=3600, ge=1)
     taskiq_heartbeat_interval_seconds: int = Field(default=30, ge=1)
-    taskiq_running_stale_after_seconds: int = Field(default=600, ge=1)
-    taskiq_queued_stale_after_seconds: int = Field(default=3600, ge=1)
+    taskiq_running_stale_after_seconds: int = Field(default=3600, ge=1)
+    taskiq_queued_stale_after_seconds: int = Field(default=86_400, ge=1)
     taskiq_reconciliation_interval_seconds: int = Field(default=30, ge=1)
     taskiq_reconciliation_enabled: bool = True
     environment: str = "local"

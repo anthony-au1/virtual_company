@@ -27,7 +27,9 @@ async def test_dispatcher_routes_valid_identifier_to_explicit_adapter() -> None:
         adapters={WorkflowType.EXPLORATION: adapter},
     )
 
-    adapter.execute.assert_awaited_once_with(run_id)
+    adapter.execute.assert_awaited_once_with(
+        run_id, session_factory=None, task_id=None
+    )
 
 
 @pytest.mark.parametrize(
@@ -61,11 +63,16 @@ async def test_business_adapter_failure_propagates() -> None:
         )
 
 
-@pytest.mark.parametrize("workflow_type", list(WorkflowType))
 @pytest.mark.asyncio
-async def test_unmigrated_workflow_adapters_fail_closed(workflow_type) -> None:
+async def test_unmigrated_research_adapter_fails_closed() -> None:
     with pytest.raises(InactiveWorkflowAdapterError):
-        await dispatch_workflow(workflow_type.value, str(uuid4()))
+        await dispatch_workflow(WorkflowType.RESEARCH.value, str(uuid4()))
+
+
+@pytest.mark.asyncio
+async def test_exploration_adapter_rejects_missing_worker_session_factory() -> None:
+    with pytest.raises(RuntimeError, match="session factory"):
+        await dispatch_workflow(WorkflowType.EXPLORATION.value, str(uuid4()))
 
 
 def test_shared_task_is_registered_without_retry() -> None:

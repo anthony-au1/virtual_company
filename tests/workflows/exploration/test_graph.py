@@ -14,9 +14,6 @@ from virtual_company.domain.exploration.facts import ExplorationFact
 from virtual_company.domain.exploration.hypotheses import ExplorationHypothesis
 from virtual_company.domain.exploration.run import ExplorationRunStatus
 from virtual_company.llm.base import LLMAuthenticationError, LLMRateLimitError
-from virtual_company.repositories.exploration_run import (
-    InvalidExplorationRunTransitionError,
-)
 from virtual_company.services.exploration_evidence_extractor import (
     ExplorationEvidenceExtractionBatchResult,
     ExplorationEvidenceExtractionOutcome,
@@ -48,6 +45,7 @@ from virtual_company.workflows.exploration.models import (
     ExplorationFactExtractionOutcome,
     ExplorationHypothesisGenerationOutcome,
 )
+from virtual_company.workflows.exploration.nodes import ExplorationWorkflowInputError
 
 
 class SessionTracker:
@@ -126,7 +124,7 @@ def make_inputs(company_count: int = 1, obligation_count: int = 1):
         id=run_id,
         exploration_id=exploration_id,
         research_run_id=research_run_id,
-        status="QUEUED",
+        status="RUNNING",
     )
     return run, companies, obligations
 
@@ -135,21 +133,6 @@ def install_repository_fakes(monkeypatch, run, companies, obligations, tracker, 
     class RunRepository:
         def __init__(self, _session):
             pass
-
-        async def transition(self, run_id, target):
-            if run_id != run.id:
-                return None
-            allowed = {
-                ("QUEUED", ExplorationRunStatus.RUNNING),
-                ("RUNNING", ExplorationRunStatus.COMPLETED),
-                ("RUNNING", ExplorationRunStatus.PARTIAL),
-                ("RUNNING", ExplorationRunStatus.FAILED),
-                ("RUNNING", ExplorationRunStatus.CANCELLED),
-            }
-            if (run.status, target) not in allowed:
-                raise InvalidExplorationRunTransitionError("invalid transition")
-            run.status = target.value
-            return run
 
         async def get_by_id(self, run_id):
             return run if run_id == run.id else None
@@ -216,7 +199,15 @@ def install_repository_fakes(monkeypatch, run, companies, obligations, tracker, 
                 if row.exploration_company_id == company_id
             ]
 
+    class WorkflowExecutionRepository:
+        def __init__(self, _session):
+            pass
+
+        async def lock_running_ownership(self, **_kwargs):
+            return None
+
     for name, repository in (
+        ("WorkflowExecutionRepository", WorkflowExecutionRepository),
         ("ExplorationRunRepository", RunRepository),
         ("ExplorationRepository", ExplorationRepository),
         ("ResearchRunRepository", ResearchRunRepository),
@@ -229,10 +220,6 @@ def install_repository_fakes(monkeypatch, run, companies, obligations, tracker, 
         monkeypatch.setattr(
             "virtual_company.workflows.exploration.nodes." + name, repository
         )
-    monkeypatch.setattr(
-        "virtual_company.workflows.exploration.graph.ExplorationRunRepository",
-        RunRepository,
-    )
 
 
 def make_workflow(
@@ -285,9 +272,9 @@ async def test_compiled_graph_contains_explicit_pipeline_nodes() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "status", ["READY", "RUNNING", "COMPLETED", "PARTIAL", "FAILED", "CANCELLED"]
+    "status", ["READY", "QUEUED", "COMPLETED", "PARTIAL", "FAILED", "CANCELLED"]
 )
-async def test_non_queued_runs_are_rejected_before_provider_work(
+async def test_non_running_runs_are_rejected_before_provider_work(
     monkeypatch, status: str
 ) -> None:
     tracker = SessionTracker()
@@ -303,8 +290,8 @@ async def test_non_queued_runs_are_rejected_before_provider_work(
             provider_calls += 1
             raise AssertionError("provider work must not start")
 
-    with pytest.raises(InvalidExplorationRunTransitionError):
-        await make_workflow(tracker, QueryGenerator()).run(run.id)
+    with pytest.raises(ExplorationWorkflowInputError):
+        await make_workflow(tracker, QueryGenerator()).run(run.id, uuid4())
     assert provider_calls == 0
     assert run.status == status
 
@@ -325,7 +312,7 @@ async def test_empty_query_results_finish_all_company_obligation_units(
             calls.append((company.name, obligation.description, business_context))
             return ExplorationQueryGenerationResult(queries=[])
 
-    result = await make_workflow(tracker, QueryGenerator()).run(run.id)
+    result = await make_workflow(tracker, QueryGenerator()).run(run.id, uuid4())
 
     assert result.status is ExplorationRunStatus.COMPLETED
     assert result.selected_company_count == 2
@@ -337,7 +324,7 @@ async def test_empty_query_results_finish_all_company_obligation_units(
         for company_index in range(2)
         for obligation_index in range(2)
     ]
-    assert run.status == "COMPLETED"
+    assert run.status == "RUNNING"
     assert tracker.active == 0
 
 
@@ -355,7 +342,7 @@ async def test_scoped_query_failure_finishes_partial_and_auth_failure_is_fatal(
             assert tracker.active == 0
             raise LLMRateLimitError("private provider detail")
 
-    partial = await make_workflow(tracker, RateLimitedGenerator()).run(run.id)
+    partial = await make_workflow(tracker, RateLimitedGenerator()).run(run.id, uuid4())
     assert partial.status is ExplorationRunStatus.PARTIAL
     assert partial.recoverable_failure_count == 2
     assert partial.failure_categories == (
@@ -363,7 +350,7 @@ async def test_scoped_query_failure_finishes_partial_and_auth_failure_is_fatal(
         "query_generation:rate_limited",
     )
 
-    run.status = "QUEUED"
+    run.status = "RUNNING"
 
     class AuthenticationFailure:
         async def generate(self, *_args):
@@ -376,13 +363,13 @@ async def test_scoped_query_failure_finishes_partial_and_auth_failure_is_fatal(
             tracker,
             AuthenticationFailure(),
             observability=observability,
-        ).run(run.id)
-    assert run.status == "FAILED"
+        ).run(run.id, uuid4())
+    assert run.status == "RUNNING"
     assert "secret credential detail" not in repr(observability.events)
 
 
 @pytest.mark.asyncio
-async def test_cancellation_marks_run_cancelled_and_propagates(monkeypatch) -> None:
+async def test_cancellation_propagates_without_owning_lifecycle(monkeypatch) -> None:
     tracker = SessionTracker()
     run, companies, obligations = make_inputs()
     store = {"evidence": [], "facts": []}
@@ -393,8 +380,8 @@ async def test_cancellation_marks_run_cancelled_and_propagates(monkeypatch) -> N
             raise asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
-        await make_workflow(tracker, CancelledGenerator()).run(run.id)
-    assert run.status == "CANCELLED"
+        await make_workflow(tracker, CancelledGenerator()).run(run.id, uuid4())
+    assert run.status == "RUNNING"
 
 
 @pytest.mark.asyncio
@@ -593,7 +580,7 @@ async def test_complete_pipeline_aggregates_cross_obligation_evidence(monkeypatc
         evidence_extractor=EvidenceExtractor(),
         fact_extractor=FactExtractor(),
         hypothesis_generator=HypothesisGenerator(),
-    ).run(run.id)
+    ).run(run.id, uuid4())
 
     assert result.status is ExplorationRunStatus.COMPLETED
     assert result.completed_company_obligation_count == 2
@@ -605,12 +592,12 @@ async def test_complete_pipeline_aggregates_cross_obligation_evidence(monkeypatc
     assert generation_inputs["facts"][0].statement == "Company has relevant products."
     assert len(generation_inputs["facts"]) == 1
     assert tuple(evidence_ids) == tuple(item.id for item in obligations) if False else True
-    assert run.status == "COMPLETED"
+    assert run.status == "RUNNING"
     assert tracker.active == 0
 
 
 @pytest.mark.asyncio
-async def test_ready_run_is_rejected_without_provider_calls(monkeypatch) -> None:
+async def test_non_running_run_is_rejected_without_provider_calls(monkeypatch) -> None:
     tracker = SessionTracker()
     run, companies, obligations = make_inputs()
     run.status = "READY"
@@ -621,6 +608,6 @@ async def test_ready_run_is_rejected_without_provider_calls(monkeypatch) -> None
         async def generate(self, *_args):
             pytest.fail("provider must not be called")
 
-    with pytest.raises(InvalidExplorationRunTransitionError):
-        await make_workflow(tracker, NeverCall()).run(run.id)
+    with pytest.raises(ExplorationWorkflowInputError):
+        await make_workflow(tracker, NeverCall()).run(run.id, uuid4())
     assert run.status == "READY"

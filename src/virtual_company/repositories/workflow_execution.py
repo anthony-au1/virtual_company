@@ -35,6 +35,10 @@ class WorkflowExecutionClaimResult:
     execution_id: UUID | None = None
 
 
+class ExecutionOwnershipLostError(RuntimeError):
+    """A graph stage attempted persistence after execution ownership was lost."""
+
+
 class WorkflowExecutionRepository:
     """Own execution persistence and transactionally coordinate business status."""
 
@@ -142,6 +146,23 @@ class WorkflowExecutionRepository:
             )
         )
 
+    async def lock_running_ownership(
+        self, *, workflow_type: str, run_id: UUID, execution_id: UUID
+    ) -> None:
+        """Lock the live execution row until the caller's persistence commits."""
+        owner_id = await self._session.scalar(
+            select(WorkflowExecution.id)
+            .where(
+                WorkflowExecution.id == execution_id,
+                WorkflowExecution.workflow_type == workflow_type,
+                WorkflowExecution.run_id == run_id,
+                WorkflowExecution.status == WorkflowExecutionStatus.RUNNING.value,
+            )
+            .with_for_update()
+        )
+        if owner_id is None:
+            raise ExecutionOwnershipLostError("Execution ownership is no longer valid")
+
     async def heartbeat(self, execution_id: UUID) -> bool:
         return await self._session.scalar(
             update(WorkflowExecution)
@@ -191,6 +212,31 @@ class WorkflowExecutionRepository:
         )
         if business is None:
             raise ValueError("Business run is missing or no longer RUNNING")
+        return True
+
+    async def fail_queued(self, workflow_type: str, run_id: UUID) -> bool:
+        """Fail a definitely unpublished queued execution and its business run."""
+        model = self._run_model(workflow_type)
+        execution_id = await self._session.scalar(
+            update(WorkflowExecution)
+            .where(
+                WorkflowExecution.workflow_type == workflow_type,
+                WorkflowExecution.run_id == run_id,
+                WorkflowExecution.status == WorkflowExecutionStatus.QUEUED.value,
+            )
+            .values(status=WorkflowExecutionStatus.FAILED.value, completed_at=func.now())
+            .returning(WorkflowExecution.id)
+        )
+        if execution_id is None:
+            return False
+        run_id_updated = await self._session.scalar(
+            update(model)
+            .where(model.id == run_id, model.status == "QUEUED")
+            .values(status="FAILED", completed_at=func.now())
+            .returning(model.id)
+        )
+        if run_id_updated is None:
+            raise RuntimeError("Queued business run changed before publish failure")
         return True
 
     async def fail_stale(

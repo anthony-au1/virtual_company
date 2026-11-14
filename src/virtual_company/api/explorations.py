@@ -6,13 +6,11 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from redis.exceptions import ResponseError
+from taskiq import SendTaskError
 
 from virtual_company.api.dependencies import get_exploration_service
-from virtual_company.api.exploration_execution import (
-    execute_exploration_run,
-    fail_if_still_queued,
-)
 from virtual_company.api.models import (
     ExplorationCompanyResultResponse,
     ExplorationCreateRequest,
@@ -29,6 +27,7 @@ from virtual_company.api.models import (
     ExplorationUpdateRequest,
 )
 from virtual_company.db.models import ExplorationFact, ExplorationHypothesis
+from virtual_company.observability import get_observability
 from virtual_company.repositories.dtos import (
     ExplorationUpdate,
 )
@@ -41,6 +40,7 @@ from virtual_company.services.exploration import (
     ExplorationStartConflictError,
     ExplorationStartNotFoundError,
 )
+from virtual_company.task_queue.tasks import execute_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +58,17 @@ ExplorationServiceDependency = Annotated[
 async def execute_run(
     exploration_id: UUID,
     run_id: UUID,
-    background_tasks: BackgroundTasks,
     service: ExplorationServiceDependency,
 ) -> ExplorationRunExecutionResponse:
+    try:
+        get_observability().event(
+            "exploration_enqueue_requested", workflow_type="exploration", run_id=str(run_id)
+        )
+    except Exception as error:
+        logger.warning(
+            "exploration_enqueue_observability_failed",
+            extra={"context": {"error_type": type(error).__name__}},
+        )
     try:
         claim = await service.claim_run_for_execution(exploration_id, run_id)
     except Exception as error:
@@ -81,21 +89,72 @@ async def execute_run(
     if claim.outcome is ExplorationRunClaimOutcome.NOT_READY:
         raise HTTPException(status_code=409, detail="Exploration run is not READY")
     try:
-        background_tasks.add_task(execute_exploration_run, run_id)
-    except Exception as error:
-        await fail_if_still_queued(run_id)
+        task = await execute_workflow.kiq("exploration", str(run_id))
+    except SendTaskError as error:
+        definitive = isinstance(error.__cause__, ResponseError)
+        if definitive:
+            try:
+                await service.fail_queued_execution(run_id)
+            except Exception as transition_error:
+                logger.error(
+                    "exploration_enqueue_compensation_failed",
+                    extra={"context": {"run_id": str(run_id), "error_type": type(transition_error).__name__}},
+                )
+        try:
+            get_observability().event(
+                "exploration_enqueue_failed" if definitive else "exploration_enqueue_outcome_unknown",
+                workflow_type="exploration",
+                run_id=str(run_id),
+                error_type=type(error).__name__,
+            )
+        except Exception as telemetry_error:
+            logger.warning(
+                "exploration_enqueue_observability_failed",
+                extra={"context": {"error_type": type(telemetry_error).__name__}},
+            )
         logger.error(
-            "exploration_run_scheduling_failed",
+            "exploration_taskiq_publish_failed",
             extra={
                 "context": {
                     "exploration_run_id": str(run_id),
                     "error_type": type(error).__name__,
+                    "outcome": "definitive_failure" if definitive else "unknown",
                 }
             },
         )
         raise HTTPException(
-            status_code=500, detail="Execution could not be scheduled"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Execution could not be scheduled",
         ) from error
+    except Exception as error:
+        try:
+            get_observability().event(
+                "exploration_enqueue_outcome_unknown",
+                workflow_type="exploration",
+                run_id=str(run_id),
+                error_type=type(error).__name__,
+            )
+        except Exception as telemetry_error:
+            logger.warning(
+                "exploration_enqueue_observability_failed",
+                extra={"context": {"error_type": type(telemetry_error).__name__}},
+            )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Execution publish outcome is unknown",
+        ) from error
+    try:
+        get_observability().event(
+            "exploration_enqueue_accepted",
+            workflow_type="exploration",
+            run_id=str(run_id),
+            task_id=task.task_id,
+        )
+    except Exception as error:
+        logger.warning(
+            "exploration_enqueue_observability_failed",
+            extra={"context": {"error_type": type(error).__name__}},
+        )
     return ExplorationRunExecutionResponse(exploration_run_id=run_id, status="QUEUED")
 
 

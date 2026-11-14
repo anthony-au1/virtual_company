@@ -3,11 +3,15 @@
 import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import ResponseError
+from redis.exceptions import TimeoutError as RedisTimeoutError
+from taskiq import SendTaskError
 
 from virtual_company.api import explorations
 from virtual_company.api.dependencies import get_exploration_service
@@ -25,25 +29,25 @@ def clear_overrides():
     app.dependency_overrides.clear()
 
 
-def test_execute_commits_claim_before_scheduling(monkeypatch):
+def test_execute_commits_claim_before_taskiq_publish(monkeypatch):
     exploration_id, run_id = uuid4(), uuid4()
     events: list[str] = []
 
     class ServiceStub:
-        async def claim_run_for_execution(
-            self, requested_exploration_id, requested_run_id
-        ):
+        async def claim_run_for_execution(self, requested_exploration_id, requested_run_id):
             assert requested_exploration_id == exploration_id
             assert requested_run_id == run_id
             events.append("committed")
             return ExplorationRunClaimResult(ExplorationRunClaimOutcome.CLAIMED)
 
-    async def scheduled(requested_run_id):
-        assert requested_run_id == run_id
+    async def publish(workflow_type, requested_run_id):
         assert events == ["committed"]
-        events.append("executed")
+        assert workflow_type == "exploration"
+        assert requested_run_id == str(run_id)
+        events.append("published")
+        return SimpleNamespace(task_id="task-123")
 
-    monkeypatch.setattr(explorations, "execute_exploration_run", scheduled)
+    monkeypatch.setattr(explorations.execute_workflow, "kiq", publish)
     app.dependency_overrides[get_exploration_service] = ServiceStub
 
     response = TestClient(app).post(
@@ -51,15 +55,12 @@ def test_execute_commits_claim_before_scheduling(monkeypatch):
     )
 
     assert response.status_code == 202
-    assert response.json() == {
-        "exploration_run_id": str(run_id),
-        "status": "QUEUED",
-    }
-    assert events == ["committed", "executed"]
+    assert response.json() == {"exploration_run_id": str(run_id), "status": "QUEUED"}
+    assert events == ["committed", "published"]
 
 
 @pytest.mark.asyncio
-async def test_execute_endpoint_only_schedules_background_callable():
+async def test_execute_endpoint_publishes_without_running_workflow(monkeypatch):
     exploration_id, run_id = uuid4(), uuid4()
     events: list[str] = []
 
@@ -68,118 +69,127 @@ async def test_execute_endpoint_only_schedules_background_callable():
             events.append("claim_committed")
             return ExplorationRunClaimResult(ExplorationRunClaimOutcome.CLAIMED)
 
-    tasks = BackgroundTasks()
-    response = await explorations.execute_run(
-        exploration_id, run_id, tasks, ServiceStub()
-    )
+    async def publish(*args):
+        events.append(("publish", *args))
+        return SimpleNamespace(task_id="task-456")
+
+    monkeypatch.setattr(explorations.execute_workflow, "kiq", publish)
+    response = await explorations.execute_run(exploration_id, run_id, ServiceStub())
 
     assert response.status == "QUEUED"
-    assert events == ["claim_committed"]
-    assert len(tasks.tasks) == 1
-    assert tasks.tasks[0].args == (run_id,)
-    assert tasks.tasks[0].func is explorations.execute_exploration_run
+    assert events == ["claim_committed", ("publish", "exploration", str(run_id))]
 
 
 @pytest.mark.asyncio
-async def test_concurrent_execute_requests_schedule_only_the_successful_claim():
+async def test_concurrent_execute_requests_publish_only_successful_claim(monkeypatch):
     exploration_id, run_id = uuid4(), uuid4()
     claim_lock = asyncio.Lock()
     already_claimed = False
+    published = 0
 
     class ServiceStub:
         async def claim_run_for_execution(self, *_args):
             nonlocal already_claimed
             async with claim_lock:
                 if already_claimed:
-                    return ExplorationRunClaimResult(
-                        ExplorationRunClaimOutcome.NOT_READY
-                    )
+                    return ExplorationRunClaimResult(ExplorationRunClaimOutcome.NOT_READY)
                 already_claimed = True
                 return ExplorationRunClaimResult(ExplorationRunClaimOutcome.CLAIMED)
 
-    tasks = [BackgroundTasks(), BackgroundTasks()]
+    async def publish(*_args):
+        nonlocal published
+        published += 1
+        return SimpleNamespace(task_id="task")
+
+    monkeypatch.setattr(explorations.execute_workflow, "kiq", publish)
     outcomes = await asyncio.gather(
-        *(
-            explorations.execute_run(
-                exploration_id, run_id, background_tasks, ServiceStub()
-            )
-            for background_tasks in tasks
-        ),
+        explorations.execute_run(exploration_id, run_id, ServiceStub()),
+        explorations.execute_run(exploration_id, run_id, ServiceStub()),
         return_exceptions=True,
     )
-
-    assert (
-        sum(
-            isinstance(item, HTTPException) and item.status_code == 409
-            for item in outcomes
-        )
-        == 1
-    )
+    assert sum(isinstance(item, HTTPException) and item.status_code == 409 for item in outcomes) == 1
     assert sum(getattr(item, "status", None) == "QUEUED" for item in outcomes) == 1
-    assert sum(len(background_tasks.tasks) for background_tasks in tasks) == 1
+    assert published == 1
 
 
 @pytest.mark.parametrize(
     "outcome,status_code",
-    [
-        (ExplorationRunClaimOutcome.NOT_FOUND, 404),
-        (ExplorationRunClaimOutcome.NOT_READY, 409),
-    ],
+    [(ExplorationRunClaimOutcome.NOT_FOUND, 404), (ExplorationRunClaimOutcome.NOT_READY, 409)],
 )
-def test_execute_rejects_failed_claim_without_scheduling(
-    outcome, status_code, monkeypatch
-):
-    async def unexpected_task(_run_id):
-        raise AssertionError("a failed claim must not schedule execution")
+def test_execute_rejects_failed_claim_without_publishing(outcome, status_code, monkeypatch):
+    async def unexpected_publish(*_args):
+        raise AssertionError("a rejected claim must not publish")
 
     class ServiceStub:
         async def claim_run_for_execution(self, *_args):
             return ExplorationRunClaimResult(outcome)
 
-    monkeypatch.setattr(explorations, "execute_exploration_run", unexpected_task)
+    monkeypatch.setattr(explorations.execute_workflow, "kiq", unexpected_publish)
     app.dependency_overrides[get_exploration_service] = ServiceStub
-
     response = TestClient(app).post(
         f"/api/v1/explorations/{uuid4()}/runs/{uuid4()}/execute"
     )
-
     assert response.status_code == status_code
 
 
-def test_execute_returns_generic_500_and_guardedly_fails_after_schedule_error(
-    monkeypatch,
-):
+def test_definitive_redis_rejection_fails_queued_records(monkeypatch):
     run_id = uuid4()
-    calls: list[object] = []
+    compensated: list[UUID] = []
 
     class ServiceStub:
         async def claim_run_for_execution(self, *_args):
             return ExplorationRunClaimResult(ExplorationRunClaimOutcome.CLAIMED)
 
-    async def schedule_failure(_run_id):
-        return None
+        async def fail_queued_execution(self, requested_run_id):
+            compensated.append(requested_run_id)
+            return True
 
-    async def fail(requested_run_id):
-        calls.append(requested_run_id)
+    async def publish(*_args):
+        try:
+            raise ResponseError("NOGROUP")
+        except ResponseError as cause:
+            raise SendTaskError from cause
 
-    monkeypatch.setattr(explorations, "execute_exploration_run", schedule_failure)
-    monkeypatch.setattr(explorations, "fail_if_still_queued", fail)
+    monkeypatch.setattr(explorations.execute_workflow, "kiq", publish)
     app.dependency_overrides[get_exploration_service] = ServiceStub
-    # Starlette's BackgroundTasks.add_task does not execute until response handling;
-    # simulate a synchronously detectable scheduler failure at the route boundary.
-    monkeypatch.setattr(
-        explorations.BackgroundTasks,
-        "add_task",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("sensitive")),
-    )
-
     response = TestClient(app).post(
         f"/api/v1/explorations/{uuid4()}/runs/{run_id}/execute"
     )
+    assert response.status_code == 503
+    assert compensated == [run_id]
 
-    assert response.status_code == 500
-    assert response.json() == {"detail": "Execution could not be scheduled"}
-    assert calls == [run_id]
+
+@pytest.mark.parametrize(
+    "failure",
+    [RedisConnectionError("connection lost after write"), RedisTimeoutError("publish timed out")],
+)
+@pytest.mark.asyncio
+async def test_ambiguous_redis_publish_does_not_compensate_or_retry(monkeypatch, failure):
+    run_id = uuid4()
+    compensated: list[UUID] = []
+    publish_calls = 0
+
+    class ServiceStub:
+        async def claim_run_for_execution(self, *_args):
+            return ExplorationRunClaimResult(ExplorationRunClaimOutcome.CLAIMED)
+
+        async def fail_queued_execution(self, requested_run_id):
+            compensated.append(requested_run_id)
+
+    async def publish(*_args):
+        nonlocal publish_calls
+        publish_calls += 1
+        try:
+            raise failure
+        except (RedisConnectionError, RedisTimeoutError) as cause:
+            raise SendTaskError from cause
+
+    monkeypatch.setattr(explorations.execute_workflow, "kiq", publish)
+    with pytest.raises(HTTPException) as error:
+        await explorations.execute_run(uuid4(), run_id, ServiceStub())
+    assert error.value.status_code == 503
+    assert not compensated
+    assert publish_calls == 1
 
 
 def test_run_status_and_ownership():

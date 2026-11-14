@@ -155,10 +155,10 @@ criterion-level results for that run/company pair.
 These tables describe the Exploration domain and its provenance model.
 Implemented behavior includes Exploration CRUD, obligation generation and
 regeneration, lifecycle restrictions, and starting an ExplorationRun with a
-selected-company snapshot. Exploration research execution remains future work:
-Company × Obligation investigation, query generation, external search, Evidence
-collection orchestration, Fact derivation, and Hypothesis derivation are not
-currently orchestrated by the application.
+selected-company snapshot. Exploration research execution uses Taskiq delivery
+to invoke the existing Company × Obligation LangGraph, including query
+generation, external search, Evidence collection, Fact derivation, and
+Hypothesis derivation.
 
 The API lifecycle is Exploration → choose one ResearchRun → choose one or more
 companies from that run → `POST /api/v1/explorations/{exploration_id}/runs` →
@@ -167,6 +167,8 @@ have a persisted `ResearchCompanyQualification` row for the chosen ResearchRun;
 qualification status does not gate eligibility. One Exploration can have
 multiple ExplorationRuns, and each may refer to a different ResearchRun. A
 ResearchRun may be reused. Run creation does not execute Exploration research.
+The execute endpoint queues an eligible run for Taskiq and returns immediately;
+existing status and result endpoints remain the business-facing contract.
 `GET /api/v1/explorations/{exploration_id}/runs` returns compact run summaries
 with Campaign name and selected-company count for Exploration Detail.
 
@@ -557,6 +559,7 @@ referenced business run through the repository.
 
 Indexes are the unique `(workflow_type, run_id)` constraint plus `(status, queued_at)` and `(status, heartbeat_at)` for
 stale scans. Claim changes QUEUED to RUNNING atomically and uses the execution UUID for heartbeat and terminal fencing.
-There are no automatic retries, checkpoints, resumes, or multiple attempts. Stale reconciliation fails the execution
-and, in the same transaction, marks its corresponding business run FAILED only when that run is nonterminal. Business
-runs without an execution record are outside reconciliation.
+Exploration Evidence, Fact, and Hypothesis writes lock the live execution row through commit, so reconciliation cannot
+invalidate ownership during a result transaction. There are no automatic retries, checkpoints, resumes, or multiple
+attempts. Stale reconciliation fails the execution and, in the same transaction, marks its corresponding business run
+FAILED only when that run is nonterminal. Business runs without an execution record are outside reconciliation.

@@ -11,17 +11,14 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from virtual_company.repositories.workflow_execution import (
+    ExecutionOwnershipLostError,
     WorkflowExecutionClaimOutcome,
     WorkflowExecutionClaimResult,
     WorkflowExecutionRepository,
 )
-from virtual_company.task_queue.dispatcher import WorkflowType
+from virtual_company.task_queue.workflow_types import WorkflowType
 
 logger = logging.getLogger(__name__)
-
-
-class ExecutionOwnershipLostError(RuntimeError):
-    """The worker no longer owns the database execution claim."""
 
 
 class HeartbeatUnavailableError(RuntimeError):

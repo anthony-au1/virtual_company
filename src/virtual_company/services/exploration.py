@@ -38,6 +38,7 @@ from virtual_company.repositories.exploration_obligation import (
     ExplorationObligationRepository,
 )
 from virtual_company.repositories.exploration_run import (
+    ExplorationRunClaimOutcome,
     ExplorationRunClaimResult,
     ExplorationRunRepository,
 )
@@ -45,6 +46,7 @@ from virtual_company.repositories.research_company_qualification import (
     ResearchCompanyQualificationRepository,
 )
 from virtual_company.repositories.research_run import ResearchRunRepository
+from virtual_company.repositories.workflow_execution import WorkflowExecutionRepository
 from virtual_company.services.obligation_generator import (
     ObligationGenerationResult,
     ObligationGenerator,
@@ -266,7 +268,18 @@ class ExplorationService:
             if run is None or run.exploration_id != exploration_id:
                 return None
             result = await self._runs.claim_for_execution(run_id)
+            if result.outcome is ExplorationRunClaimOutcome.CLAIMED:
+                await WorkflowExecutionRepository(self._session).create_queued(
+                    "exploration", run_id
+                )
         return result
+
+    async def fail_queued_execution(self, run_id: UUID) -> bool:
+        """Guardedly fail an Exploration enqueue rejected before Redis accepted it."""
+        async with self._session.begin():
+            return await WorkflowExecutionRepository(self._session).fail_queued(
+                "exploration", run_id
+            )
 
     async def get_run(
         self, exploration_id: UUID, run_id: UUID

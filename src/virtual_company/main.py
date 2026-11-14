@@ -11,6 +11,7 @@ from virtual_company.api.research_companies import router as companies_router
 from virtual_company.api.research_runs import router as research_runs_router
 from virtual_company.config import get_settings
 from virtual_company.db.session import session_factory
+from virtual_company.task_queue.broker import broker
 from virtual_company.task_queue.reconciliation import run_reconciliation_loop
 from virtual_company.tools import WebSearchConfigurationError
 
@@ -25,6 +26,7 @@ async def lifespan(_: FastAPI):
 
     settings = get_settings()
     configure_observability(settings)
+    await broker.startup()
     reconciler: asyncio.Task[None] | None = None
     if settings.taskiq_reconciliation_enabled:
         reconciler = asyncio.create_task(
@@ -38,7 +40,10 @@ async def lifespan(_: FastAPI):
             reconciler.cancel()
             with suppress(asyncio.CancelledError):
                 await reconciler
-        shutdown_observability()
+        try:
+            await broker.shutdown()
+        finally:
+            shutdown_observability()
 
 
 app = FastAPI(lifespan=lifespan)

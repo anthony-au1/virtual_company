@@ -66,7 +66,7 @@ def test_taskiq_settings_have_safe_defaults_and_environment_overrides(
     assert defaults.taskiq_worker_shutdown_grace_seconds == 3600
     assert defaults.taskiq_heartbeat_interval_seconds == 30
     assert defaults.taskiq_running_stale_after_seconds == 600
-    assert defaults.taskiq_queued_stale_after_seconds == 3600
+    assert defaults.taskiq_queued_stale_after_seconds == 86400
     assert defaults.taskiq_reconciliation_interval_seconds == 30
     assert defaults.taskiq_reconciliation_enabled is True
 

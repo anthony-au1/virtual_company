@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections import Counter
@@ -53,6 +54,7 @@ from virtual_company.tools.web_search import SearchResponse, SearchResult
 from virtual_company.workflows.exploration.graph import ExplorationWorkflow
 
 RUN_DB_TESTS = os.getenv("RUN_EXPLORATION_DB_TESTS") == "true"
+RUN_TASKIQ_TESTS = os.getenv("RUN_EXPLORATION_TASKIQ_TESTS") == "true"
 EXCERPT = "The company provides payment services to regional businesses."
 
 
@@ -179,15 +181,21 @@ class DeterministicFetchTool:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-@pytest.mark.skipif(not RUN_DB_TESTS, reason="Opt-in PostgreSQL Exploration E2E")
+@pytest.mark.skipif(
+    not (RUN_DB_TESTS and RUN_TASKIQ_TESTS),
+    reason="Opt-in PostgreSQL and Redis Taskiq Exploration E2E",
+)
 async def test_real_graph_and_fastapi_execute_multi_company_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database_url = os.getenv("EXPLORATION_TEST_DATABASE_URL")
+    redis_url = os.getenv("TASKIQ_TEST_REDIS_URL")
     if not database_url:
         pytest.skip(
             "EXPLORATION_TEST_DATABASE_URL must target a dedicated test database"
         )
+    if not redis_url:
+        pytest.skip("TASKIQ_TEST_REDIS_URL must target an isolated Redis instance")
 
     schema = f"phase5_full_workflow_{uuid4().hex}"
     engine = create_async_engine(database_url)
@@ -255,13 +263,29 @@ async def test_real_graph_and_fastapi_execute_multi_company_run(
             hypothesis_generator=ExplorationHypothesisGenerator(provider),
         )
 
-        from virtual_company.api import exploration_execution
+        from redis.asyncio import BlockingConnectionPool
+        from taskiq.receiver.receiver import Receiver
+
+        from virtual_company.task_queue import tasks
+        from virtual_company.task_queue.broker import broker
+        from virtual_company.task_queue.tasks import execute_workflow
+        from virtual_company.workflows.exploration import graph as exploration_graph
 
         monkeypatch.setattr(
-            exploration_execution,
+            exploration_graph,
             "create_configured_exploration_workflow",
-            lambda: workflow,
+            lambda **_kwargs: workflow,
         )
+        monkeypatch.setattr(tasks, "create_async_engine", lambda *_a, **_k: scoped_engine)
+        monkeypatch.setattr(tasks, "async_sessionmaker", lambda *_a, **_k: sessions)
+
+        previous_pool = broker.connection_pool
+        previous_queue = broker.queue_name
+        previous_group = broker.consumer_group_name
+        broker.connection_pool = BlockingConnectionPool.from_url(redis_url)
+        broker.queue_name = f"phase3-exploration-{uuid4().hex}"
+        broker.consumer_group_name = f"phase3-workers-{uuid4().hex}"
+        await broker.startup()
 
         async def tracked_app(scope, receive, send):
             async def tracked_send(message):
@@ -319,6 +343,38 @@ async def test_real_graph_and_fastapi_execute_multi_company_run(
                 "exploration_run_id": str(run_id),
                 "status": "QUEUED",
             }
+
+            queued_status_response = await client.get(
+                f"/api/v1/explorations/{exploration_id}/runs/{run_id}"
+            )
+            assert queued_status_response.status_code == 200
+            assert queued_status_response.json()["status"] == "QUEUED"
+
+            finish_event = asyncio.Event()
+            broker.is_worker_process = True
+            receiver = Receiver(broker, run_startup=True, propagate_exceptions=True)
+            receiver_task = asyncio.create_task(receiver.listen(finish_event))
+            try:
+                deadline = asyncio.get_running_loop().time() + 60
+                while asyncio.get_running_loop().time() < deadline:
+                    async with sessions() as session:
+                        current_status = await session.scalar(
+                            select(ExplorationRun.status).where(
+                                ExplorationRun.id == run_id
+                            )
+                        )
+                    if current_status in {"COMPLETED", "PARTIAL", "FAILED"}:
+                        break
+                    await asyncio.sleep(0.05)
+                assert current_status == "COMPLETED"
+                await execute_workflow.kiq("exploration", str(run_id))
+                await execute_workflow.kiq("exploration", str(run_id))
+                await asyncio.sleep(0.5)
+                assert len(provider.query_inputs) == 4
+            finally:
+                finish_event.set()
+                await __import__("asyncio").wait_for(receiver_task, timeout=10)
+                broker.is_worker_process = False
 
             status_response = await client.get(
                 f"/api/v1/explorations/{exploration_id}/runs/{run_id}"
@@ -449,6 +505,13 @@ async def test_real_graph_and_fastapi_execute_multi_company_run(
             assert (evidence_count, facts_count, hypotheses_count) == (4, 4, 2)
     finally:
         app.dependency_overrides.clear()
+        if "broker" in locals():
+            await broker.shutdown()
+            await broker.connection_pool.disconnect()
+            broker.connection_pool = previous_pool
+            broker.queue_name = previous_queue
+            broker.consumer_group_name = previous_group
+            broker.is_worker_process = False
         async with engine.begin() as connection:
             await connection.execute(DropSchema(schema, cascade=True, if_exists=True))
         await engine.dispose()
