@@ -1,4 +1,4 @@
-import { ExplorationDetailsPage } from "@/components/explorations/exploration-details-page";
+import { ExplorationDetailsPage } from "@/features/exploration/components/exploration-details-page";
 
 export default async function ExplorationDetailsRoute({
   params,

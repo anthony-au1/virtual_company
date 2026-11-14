@@ -6,18 +6,19 @@ import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { DeleteExplorationAction } from "@/components/explorations/delete-exploration-action";
+import { DeleteExplorationAction } from "@/features/exploration/components/delete-exploration-action";
 import {
   getExploration,
   listExplorationObligations,
   listExplorationRuns,
-} from "@/lib/api/explorations";
+} from "@/features/exploration/api/explorations";
 import {
   explorationObligationsQueryKey,
   explorationQueryKey,
   explorationRunsQueryKey,
-} from "@/lib/queries/query-keys";
+} from "@/features/exploration/query-keys";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/format-date";
 
 export function ExplorationDetailsPage({
   explorationId,
@@ -320,9 +321,3 @@ function contextHeading(value: string): string {
   return line.length > 90 ? `${line.slice(0, 87)}…` : line;
 }
 
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}

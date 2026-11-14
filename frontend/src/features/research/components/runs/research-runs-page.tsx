@@ -6,10 +6,13 @@ import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { DeleteRunAction } from "@/components/research/delete-run-action";
+import { DeleteRunAction } from "@/features/research/components/runs/delete-run-action";
+import { RunStatus } from "@/features/research/components/runs/run-status-badge";
 import { cn } from "@/lib/utils";
-import { listResearchRuns } from "@/lib/api/research";
-import { researchRunsQueryKey } from "@/lib/queries/query-keys";
+import { listResearchRuns } from "@/features/research/api/research";
+import { researchRunsQueryKey } from "@/features/research/query-keys";
+import { formatDate } from "@/lib/format-date";
+import { isTerminalRunStatus } from "@/features/research/status";
 
 export function ResearchRunsPage() {
   const query = useQuery({
@@ -146,30 +149,4 @@ export function ResearchRunsPage() {
       )}
     </section>
   );
-}
-
-export function RunStatus({ status }: { status: string }) {
-  const tone =
-    status === "COMPLETED"
-      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-      : status === "FAILED"
-        ? "bg-destructive/10 text-destructive"
-        : "bg-amber-500/10 text-amber-700 dark:text-amber-300";
-  return (
-    <Badge className={tone} variant="secondary">
-      {status.replaceAll("_", " ")}
-    </Badge>
-  );
-}
-
-export function isTerminalRunStatus(status: string) {
-  return ["COMPLETED", "FAILED", "CANCELLED"].includes(status);
-}
-
-export function formatDate(value: string | null) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
 }

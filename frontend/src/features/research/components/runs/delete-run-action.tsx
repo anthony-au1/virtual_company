@@ -6,11 +6,11 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { apiErrorMessages } from "@/lib/api/client";
-import { deleteResearchRun } from "@/lib/api/research";
+import { deleteResearchRun } from "@/features/research/api/research";
 import {
   researchRunResultsQueryKey,
   researchRunsQueryKey,
-} from "@/lib/queries/query-keys";
+} from "@/features/research/query-keys";
 
 export function DeleteRunAction({
   runId,

@@ -16,13 +16,13 @@ import {
   getExploration,
   updateExploration,
   type CreateExplorationPayload,
-} from "@/lib/api/explorations";
+} from "@/features/exploration/api/explorations";
 import { ApiError, apiErrorMessages } from "@/lib/api/client";
 import {
   explorationObligationsQueryKey,
   explorationQueryKey,
   explorationsQueryKey,
-} from "@/lib/queries/query-keys";
+} from "@/features/exploration/query-keys";
 
 const schema = z.object({
   business_context: z

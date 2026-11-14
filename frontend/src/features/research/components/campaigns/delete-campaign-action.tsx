@@ -7,8 +7,8 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ApiError, apiErrorMessages } from "@/lib/api/client";
-import { deleteCampaign } from "@/lib/api/campaigns";
-import { campaignQueryKey, campaignsQueryKey } from "@/lib/queries/query-keys";
+import { deleteCampaign } from "@/features/research/api/campaigns";
+import { campaignQueryKey, campaignsQueryKey } from "@/features/research/query-keys";
 
 const LIFECYCLE_MESSAGE =
   "This Campaign cannot be deleted because it has already been used for research.";

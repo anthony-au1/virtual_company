@@ -9,13 +9,13 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ResearchResultsPage } from "@/components/research/research-results-page";
-import { ResearchRunsPage } from "@/components/research/research-runs-page";
-import type { ResearchResults, ResearchRunListItem } from "@/lib/api/research";
+import { ResearchResultsPage } from "@/features/research/components/results/research-results-page";
+import { ResearchRunsPage } from "@/features/research/components/runs/research-runs-page";
+import type { ResearchResults, ResearchRunListItem } from "@/features/research/api/research";
 import {
   researchRunResultsQueryKey,
   researchRunsQueryKey,
-} from "@/lib/queries/query-keys";
+} from "@/features/research/query-keys";
 
 const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
 
@@ -23,8 +23,8 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
-vi.mock("@/lib/api/research", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/api/research")>();
+vi.mock("@/features/research/api/research", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/features/research/api/research")>();
   return {
     ...actual,
     listResearchRuns: vi.fn(),
@@ -37,7 +37,7 @@ import {
   deleteResearchRun,
   getResearchRunResults,
   listResearchRuns,
-} from "@/lib/api/research";
+} from "@/features/research/api/research";
 
 const mockedListRuns = vi.mocked(listResearchRuns);
 const mockedGetResults = vi.mocked(getResearchRunResults);

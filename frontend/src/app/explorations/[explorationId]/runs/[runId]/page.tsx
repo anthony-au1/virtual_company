@@ -1,4 +1,4 @@
-import { ExplorationRunDetailsPage } from "@/components/explorations/exploration-run-details-page";
+import { ExplorationRunDetailsPage } from "@/features/exploration/components/exploration-run-details-page";
 
 export default async function ExplorationRunRoute({
   params,

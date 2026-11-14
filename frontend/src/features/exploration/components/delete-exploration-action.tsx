@@ -7,12 +7,12 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ApiError, apiErrorMessages } from "@/lib/api/client";
-import { deleteExploration } from "@/lib/api/explorations";
+import { deleteExploration } from "@/features/exploration/api/explorations";
 import {
   explorationObligationsQueryKey,
   explorationQueryKey,
   explorationsQueryKey,
-} from "@/lib/queries/query-keys";
+} from "@/features/exploration/query-keys";
 
 const LIFECYCLE_MESSAGE =
   "This Exploration cannot be deleted because it has already been run.";

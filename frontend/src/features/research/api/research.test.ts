@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { deleteResearchRun } from "@/lib/api/research";
+import { deleteResearchRun } from "@/features/research/api/research";
 
 afterEach(() => vi.restoreAllMocks());
 

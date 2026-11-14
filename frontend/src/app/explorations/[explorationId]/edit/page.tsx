@@ -1,4 +1,4 @@
-import { ExplorationFormPage } from "@/components/explorations/exploration-form-page";
+import { ExplorationFormPage } from "@/features/exploration/components/exploration-form-page";
 
 export default async function EditExplorationRoute({
   params,

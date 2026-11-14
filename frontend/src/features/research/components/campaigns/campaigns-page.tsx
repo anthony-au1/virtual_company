@@ -4,13 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Plus, RefreshCw } from "lucide-react";
 import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { listCampaigns } from "@/lib/api/campaigns";
-import { campaignsQueryKey } from "@/lib/queries/query-keys";
+import { CampaignStatusBadge } from "@/features/research/components/campaigns/campaign-status-badge";
+import { DeleteCampaignAction } from "@/features/research/components/campaigns/delete-campaign-action";
+import { listCampaigns } from "@/features/research/api/campaigns";
+import { campaignsQueryKey } from "@/features/research/query-keys";
 import { cn } from "@/lib/utils";
-import { formatDate } from "@/components/research/research-runs-page";
-import { DeleteCampaignAction } from "@/components/campaigns/delete-campaign-action";
+import { formatDate } from "@/lib/format-date";
 
 export function CampaignsPage() {
   const query = useQuery({
@@ -153,21 +153,5 @@ export function CampaignsPage() {
         </div>
       )}
     </section>
-  );
-}
-
-export function CampaignStatusBadge({ status }: { status: string }) {
-  const style =
-    status === "COMPLETED"
-      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-      : status === "FAILED"
-        ? "bg-destructive/10 text-destructive"
-        : status === "RUNNING"
-          ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
-          : "";
-  return (
-    <Badge className={style} variant="secondary">
-      {status}
-    </Badge>
   );
 }

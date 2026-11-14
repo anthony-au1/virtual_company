@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ExplorationRunDetailsPage,
   explorationRunStatusPollingInterval,
-} from "@/components/explorations/exploration-run-details-page";
+} from "@/features/exploration/components/exploration-run-details-page";
 import { ApiError } from "@/lib/api/client";
 import {
   executeExplorationRun,
@@ -23,9 +23,9 @@ import {
   listExplorationObligations,
   listExplorationRunCompanies,
   listExplorationRuns,
-} from "@/lib/api/explorations";
+} from "@/features/exploration/api/explorations";
 
-vi.mock("@/lib/api/explorations", () => ({
+vi.mock("@/features/exploration/api/explorations", () => ({
   executeExplorationRun: vi.fn(),
   getExplorationRun: vi.fn(),
   listExplorationCompanyEvidence: vi.fn(),

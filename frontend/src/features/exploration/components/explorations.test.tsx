@@ -9,16 +9,16 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ExplorationDetailsPage } from "@/components/explorations/exploration-details-page";
-import { ExplorationFormPage } from "@/components/explorations/exploration-form-page";
-import { ExplorationsPage } from "@/components/explorations/explorations-page";
+import { ExplorationDetailsPage } from "@/features/exploration/components/exploration-details-page";
+import { ExplorationFormPage } from "@/features/exploration/components/exploration-form-page";
+import { ExplorationsPage } from "@/features/exploration/components/explorations-page";
 import type {
   Exploration,
   ExplorationObligation,
   ExplorationRunSummary,
-} from "@/lib/api/explorations";
+} from "@/features/exploration/api/explorations";
 import { ApiError } from "@/lib/api/client";
-import { explorationsQueryKey } from "@/lib/queries/query-keys";
+import { explorationsQueryKey } from "@/features/exploration/query-keys";
 
 const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
 
@@ -26,7 +26,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
-vi.mock("@/lib/api/explorations", () => ({
+vi.mock("@/features/exploration/api/explorations", () => ({
   listExplorations: vi.fn(),
   getExploration: vi.fn(),
   createExploration: vi.fn(),
@@ -44,7 +44,7 @@ import {
   listExplorationRuns,
   listExplorations,
   updateExploration,
-} from "@/lib/api/explorations";
+} from "@/features/exploration/api/explorations";
 
 const mockList = vi.mocked(listExplorations);
 const mockGet = vi.mocked(getExploration);

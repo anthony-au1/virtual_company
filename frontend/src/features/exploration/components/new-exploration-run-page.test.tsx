@@ -8,19 +8,19 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { NewExplorationRunPage } from "@/components/explorations/new-exploration-run-page";
+import { NewExplorationRunPage } from "@/features/exploration/components/new-exploration-run-page";
 import { ApiError } from "@/lib/api/client";
 import type {
   ResearchCompany,
   ResearchResults,
   ResearchRunListItem,
-} from "@/lib/api/research";
-import { getResearchRunResults, listResearchRuns } from "@/lib/api/research";
+} from "@/features/research/api/research";
+import { getResearchRunResults, listResearchRuns } from "@/features/research/api/research";
 import {
   startExplorationRun,
   type StartedExplorationRun,
-} from "@/lib/api/explorations";
-import { explorationRunsQueryKey } from "@/lib/queries/query-keys";
+} from "@/features/exploration/api/explorations";
+import { explorationRunsQueryKey } from "@/features/exploration/query-keys";
 
 const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
 
@@ -28,12 +28,12 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
-vi.mock("@/lib/api/explorations", () => ({
+vi.mock("@/features/exploration/api/explorations", () => ({
   listExplorationRuns: vi.fn(),
   startExplorationRun: vi.fn(),
 }));
 
-vi.mock("@/lib/api/research", () => ({
+vi.mock("@/features/research/api/research", () => ({
   getResearchRunResults: vi.fn(),
   listResearchRuns: vi.fn(),
 }));

@@ -1,4 +1,4 @@
-import { ResearchResultsPage } from "@/components/research/research-results-page";
+import { ResearchResultsPage } from "@/features/research/components/results/research-results-page";
 
 export default async function ResearchRunPage({
   params,

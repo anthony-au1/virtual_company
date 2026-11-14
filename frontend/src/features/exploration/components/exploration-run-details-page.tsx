@@ -32,8 +32,9 @@ import {
   type ExplorationFact,
   type ExplorationHypothesis,
   type ExplorationRunStatus,
-} from "@/lib/api/explorations";
+} from "@/features/exploration/api/explorations";
 import { ApiError } from "@/lib/api/client";
+import { formatDate } from "@/lib/format-date";
 import {
   explorationCompanyEvidenceQueryKey,
   explorationCompanyFactsQueryKey,
@@ -42,7 +43,7 @@ import {
   explorationRunCompaniesQueryKey,
   explorationRunStatusQueryKey,
   explorationRunsQueryKey,
-} from "@/lib/queries/query-keys";
+} from "@/features/exploration/query-keys";
 
 const POLL_INTERVAL_MS = 2_500;
 const resultSections = ["evidence", "facts", "hypotheses"] as const;
@@ -930,13 +931,6 @@ function BackToExploration({ explorationId }: { explorationId: string }) {
       Back to Exploration
     </Link>
   );
-}
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
 }
 
 function capitalize(value: string): string {

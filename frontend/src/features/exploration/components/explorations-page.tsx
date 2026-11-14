@@ -6,9 +6,10 @@ import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { DeleteExplorationAction } from "@/components/explorations/delete-exploration-action";
-import { listExplorations } from "@/lib/api/explorations";
-import { explorationsQueryKey } from "@/lib/queries/query-keys";
+import { DeleteExplorationAction } from "@/features/exploration/components/delete-exploration-action";
+import { listExplorations } from "@/features/exploration/api/explorations";
+import { explorationsQueryKey } from "@/features/exploration/query-keys";
+import { formatDate } from "@/lib/format-date";
 import { cn } from "@/lib/utils";
 
 export function ExplorationsPage() {
@@ -153,9 +154,3 @@ function preview(value: string): string {
   return normalized.length > 120 ? `${normalized.slice(0, 117)}…` : normalized;
 }
 
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}

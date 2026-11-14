@@ -19,9 +19,9 @@ import {
   type Campaign,
   type CreateCampaignPayload,
   type UpdateCampaignPayload,
-} from "@/lib/api/campaigns";
+} from "@/features/research/api/campaigns";
 import { apiErrorMessages } from "@/lib/api/client";
-import { campaignQueryKey, campaignsQueryKey } from "@/lib/queries/query-keys";
+import { campaignQueryKey, campaignsQueryKey } from "@/features/research/query-keys";
 
 const campaignFormSchema = z
   .object({

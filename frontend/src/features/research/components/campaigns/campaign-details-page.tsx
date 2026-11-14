@@ -6,24 +6,22 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { CampaignStatusBadge } from "@/components/campaigns/campaigns-page";
-import {
-  RunStatus,
-  formatDate,
-  isTerminalRunStatus,
-} from "@/components/research/research-runs-page";
+import { CampaignStatusBadge } from "@/features/research/components/campaigns/campaign-status-badge";
+import { RunStatus } from "@/features/research/components/runs/run-status-badge";
+import { isTerminalRunStatus } from "@/features/research/status";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { DeleteRunAction } from "@/components/research/delete-run-action";
-import { DeleteCampaignAction } from "@/components/campaigns/delete-campaign-action";
-import { getCampaign, type Campaign } from "@/lib/api/campaigns";
+import { DeleteRunAction } from "@/features/research/components/runs/delete-run-action";
+import { DeleteCampaignAction } from "@/features/research/components/campaigns/delete-campaign-action";
+import { getCampaign, type Campaign } from "@/features/research/api/campaigns";
 import { apiErrorMessages } from "@/lib/api/client";
-import { listResearchRuns, startResearch } from "@/lib/api/research";
+import { listResearchRuns, startResearch } from "@/features/research/api/research";
 import {
   campaignQueryKey,
   researchRunsQueryKey,
-} from "@/lib/queries/query-keys";
+} from "@/features/research/query-keys";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/format-date";
 
 export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
   const router = useRouter();

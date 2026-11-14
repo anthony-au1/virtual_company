@@ -1,4 +1,4 @@
-import { CampaignDetailsPage } from "@/components/campaigns/campaign-details-page";
+import { CampaignDetailsPage } from "@/features/research/components/campaigns/campaign-details-page";
 
 export default async function CampaignDetailsRoute({
   params,

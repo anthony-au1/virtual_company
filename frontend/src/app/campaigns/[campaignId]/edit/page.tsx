@@ -1,4 +1,4 @@
-import { CampaignFormPage } from "@/components/campaigns/campaign-form-page";
+import { CampaignFormPage } from "@/features/research/components/campaigns/campaign-form-page";
 
 export default async function CampaignEditRoute({
   params,

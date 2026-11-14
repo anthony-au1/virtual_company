@@ -1,4 +1,4 @@
-import { NewExplorationRunPage } from "@/components/explorations/new-exploration-run-page";
+import { NewExplorationRunPage } from "@/features/exploration/components/new-exploration-run-page";
 
 export default async function NewExplorationRunRoute({
   params,

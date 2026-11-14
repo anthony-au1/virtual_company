@@ -9,13 +9,13 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CampaignDetailsPage } from "@/components/campaigns/campaign-details-page";
-import { CampaignFormPage } from "@/components/campaigns/campaign-form-page";
-import { CampaignsPage } from "@/components/campaigns/campaigns-page";
-import type { Campaign } from "@/lib/api/campaigns";
+import { CampaignDetailsPage } from "@/features/research/components/campaigns/campaign-details-page";
+import { CampaignFormPage } from "@/features/research/components/campaigns/campaign-form-page";
+import { CampaignsPage } from "@/features/research/components/campaigns/campaigns-page";
+import type { Campaign } from "@/features/research/api/campaigns";
 import { ApiError } from "@/lib/api/client";
-import { campaignsQueryKey } from "@/lib/queries/query-keys";
-import type { ResearchRunListItem } from "@/lib/api/research";
+import { campaignsQueryKey } from "@/features/research/query-keys";
+import type { ResearchRunListItem } from "@/features/research/api/research";
 
 const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
 
@@ -24,15 +24,15 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
-vi.mock("@/lib/api/campaigns", () => ({
+vi.mock("@/features/research/api/campaigns", () => ({
   listCampaigns: vi.fn(),
   getCampaign: vi.fn(),
   createCampaign: vi.fn(),
   deleteCampaign: vi.fn(),
 }));
 
-vi.mock("@/lib/api/research", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/api/research")>();
+vi.mock("@/features/research/api/research", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/features/research/api/research")>();
   return { ...actual, listResearchRuns: vi.fn(), startResearch: vi.fn() };
 });
 
@@ -41,8 +41,8 @@ import {
   deleteCampaign,
   getCampaign,
   listCampaigns,
-} from "@/lib/api/campaigns";
-import { listResearchRuns, startResearch } from "@/lib/api/research";
+} from "@/features/research/api/campaigns";
+import { listResearchRuns, startResearch } from "@/features/research/api/research";
 
 const mockListCampaigns = vi.mocked(listCampaigns);
 const mockGetCampaign = vi.mocked(getCampaign);

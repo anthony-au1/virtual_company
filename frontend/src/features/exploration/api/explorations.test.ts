@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import * as explorationApi from "@/lib/api/explorations";
+import * as explorationApi from "@/features/exploration/api/explorations";
 
 afterEach(() => vi.restoreAllMocks());
 
