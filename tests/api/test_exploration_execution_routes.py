@@ -159,6 +159,31 @@ def test_definitive_redis_rejection_fails_queued_records(monkeypatch):
     assert compensated == [run_id]
 
 
+@pytest.mark.asyncio
+async def test_definitive_rejection_compensation_error_preserves_503(monkeypatch):
+    run_id = uuid4()
+
+    class ServiceStub:
+        async def claim_run_for_execution(self, *_args):
+            return ExplorationRunClaimResult(ExplorationRunClaimOutcome.CLAIMED)
+
+        async def fail_queued_execution(self, _requested_run_id):
+            raise RuntimeError("database unavailable")
+
+    async def publish(*_args):
+        try:
+            raise ResponseError("NOGROUP")
+        except ResponseError as cause:
+            raise SendTaskError from cause
+
+    monkeypatch.setattr(explorations.execute_workflow, "kiq", publish)
+    with pytest.raises(HTTPException) as error:
+        await explorations.execute_run(uuid4(), run_id, ServiceStub())
+
+    assert error.value.status_code == 503
+    assert error.value.detail == "Execution could not be scheduled"
+
+
 @pytest.mark.parametrize(
     "failure",
     [RedisConnectionError("connection lost after write"), RedisTimeoutError("publish timed out")],

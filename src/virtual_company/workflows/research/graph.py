@@ -10,7 +10,7 @@ from langgraph.graph import END, START, StateGraph
 
 from virtual_company.config import Settings, get_settings
 from virtual_company.llm.base import LLMProvider
-from virtual_company.observability import get_observability
+from virtual_company.observability import Observability, get_observability
 from virtual_company.services import CampaignService, ResearchService
 from virtual_company.tools.web_fetch import WebFetchTool
 from virtual_company.tools.web_search import WebSearchTool
@@ -80,11 +80,37 @@ class ResearchWorkflow:
         *,
         research_run_id: UUID | None = None,
         execution_id: UUID | None = None,
+        task_id: str | None = None,
     ) -> ResearchWorkflowResult:
         """Execute research and return its concise application result."""
         observability = get_observability()
-        observability.clear_context()
-        observability.bind(campaign_id=str(campaign_id), workflow="company_research")
+        with observability.context(
+            replace=True,
+            workflow_type="research",
+            run_id=str(research_run_id) if research_run_id is not None else None,
+            execution_id=str(execution_id) if execution_id is not None else None,
+            task_id=task_id,
+            campaign_id=str(campaign_id),
+            research_run_id=(
+                str(research_run_id) if research_run_id is not None else None
+            ),
+            workflow="company_research",
+        ):
+            return await self._run_in_context(
+                campaign_id,
+                research_run_id=research_run_id,
+                execution_id=execution_id,
+                observability=observability,
+            )
+
+    async def _run_in_context(
+        self,
+        campaign_id: UUID,
+        *,
+        research_run_id: UUID | None,
+        execution_id: UUID | None,
+        observability: Observability,
+    ) -> ResearchWorkflowResult:
         observability.event("research_workflow_started")
         observability.record(
             "research_runs_total", status="started", workflow="company_research"

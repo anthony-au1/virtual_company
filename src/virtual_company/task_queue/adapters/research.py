@@ -77,6 +77,7 @@ class ResearchWorkflowAdapter:
                         campaign_id,
                         research_run_id=run_id,
                         execution_id=execution_id,
+                        task_id=task_id,
                     ),
                 )
             transitioned = await transition_workflow_run(

@@ -345,3 +345,29 @@ def test_research_publish_ambiguity_does_not_fail_queued_run(
         else "Execution publish outcome is unknown"
     )
     assert service.failed is compensated
+
+
+def test_research_enqueue_compensation_error_preserves_503_response(monkeypatch) -> None:
+    from taskiq import SendTaskError
+
+    import virtual_company.api.campaigns as campaign_routes
+
+    run_id = uuid4()
+    service = ResearchServiceStub(type("Run", (), {"id": run_id})())
+
+    async def fail_compensation(_run_id):
+        raise RuntimeError("database unavailable")
+
+    service.fail_queued_execution = fail_compensation
+    app.dependency_overrides[get_research_service] = lambda: service
+
+    async def publish(*_args):
+        error = SendTaskError()
+        error.__cause__ = ResponseError("NOAUTH")
+        raise error
+
+    monkeypatch.setattr(campaign_routes.execute_workflow, "kiq", publish)
+    response = TestClient(app).post(f"/api/v1/campaigns/{uuid4()}/research")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Execution could not be scheduled"

@@ -68,9 +68,17 @@ docker compose start worker
 
 `docker compose stop worker` allows the configured graceful wait (default one hour).
 Redis Streams may reclaim pending messages after the idle timeout, so delivery is not
-exactly once. The shortened-timeout/redelivery scenarios are for isolated
-infrastructure verification only; business workflow duplicate protection is a later
-phase.
+exactly once. Duplicate Taskiq messages are guarded by the shared PostgreSQL execution
+claim, so an already-claimed or terminal Research or Exploration run is not executed a
+second time. A pending message may remain idle until new stream traffic causes the
+broker to check for reclaim; reconciliation marks abandoned executions failed but does
+not resume their graphs or automatically republish them. The shortened-timeout and
+redelivery scenarios are for isolated infrastructure verification only.
+
+Phase 3 and Phase 4 integration reports record tests executed at those points in time;
+they are historical evidence, not a check of the current checkout or local services.
+Run the documented opt-in tests with isolated PostgreSQL and Redis settings when
+revalidating the current code.
 
 ## Frontend development
 
@@ -93,18 +101,19 @@ address, while Compose uses the internal `http://app:8000` service address. Brow
 requests use the same-origin `/api/backend` proxy, so Docker hostnames and secrets are
 never exposed through `NEXT_PUBLIC_*`, and backend CORS is not required.
 
-The proxy and `apiFetch<T>` are transport foundations only; product-specific clients
-will be added with their screens. The intended contract workflow is:
+Research and Exploration have feature-owned API clients and use TanStack Query for
+status polling, caching, and mutation invalidation. The same-origin proxy and
+`apiFetch<T>` provide shared transport. The intended contract workflow is:
 
 ```text
 Pydantic backend DTOs -> OpenAPI -> generated TypeScript types/client -> frontend
 ```
 
-Large backend DTOs should not be duplicated manually. Local component state is the
-current UI-state strategy. Add TanStack Query when polling, caching, refetching, and
-mutation invalidation become concrete requirements. Add React Hook Form with Zod when
-the first real product form is implemented; Zod is already available for schema and
-configuration validation.
+Large backend DTOs should not be duplicated manually. The frontend uses feature-based
+Research/Campaign and Exploration modules, with thin App Router route files and shared
+UI primitives. Local component state remains appropriate for transient form state.
+React Hook Form with Zod can be considered when form complexity warrants it; Zod is
+already available for schema and configuration validation.
 
 ## Checks and builds
 
@@ -135,9 +144,14 @@ than the development server.
 
 ## Observability
 
-Application events use structured JSON logs by default, with UTC timestamps and
-campaign/run correlation fields. OpenTelemetry records workflow, node, HTTP, and LLM
-spans plus lightweight metrics. Langfuse is optional and disabled by default.
+Application events use structured logs with UTC timestamps and campaign/run
+correlation fields. Select `LOG_FORMAT=json` for JSON output; console output includes
+available structured context in a readable form. OpenTelemetry instrumentation
+creates workflow, node, HTTP, and LLM spans and records lightweight metrics, but the
+current providers have no configured span exporter or metric reader. Setting
+`OTEL_ENABLED=true` alone therefore does not make traces or metrics available to an
+external collector. Langfuse is optional and disabled by default; it can export
+observations when explicitly configured.
 
 The Research Workflow reports read the app container's retained Docker logs and
 select the latest completed run by default:
@@ -154,8 +168,8 @@ filter for the latest completed run of a campaign with
 the provider reports actual usage; unavailable credits and LLM token counts are
 shown as `N/A`.
 
-If you already have a `.env` file created before JSON became the default, set
-`LOG_FORMAT=json` there and restart the app container before collecting new runs.
+Set `LOG_FORMAT=json` in `.env` when machine-readable logs are useful, then restart
+the app container before collecting new runs.
 
 To enable Langfuse locally, set `LANGFUSE_ENABLED=true` plus its public/secret keys
 and base URL in `.env`, then restart the app. Prompts and structured outputs are not

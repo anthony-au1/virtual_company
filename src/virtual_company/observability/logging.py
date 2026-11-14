@@ -38,6 +38,17 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+class ConsoleFormatter(logging.Formatter):
+    """Render standard log fields and safe structured context for humans."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        message = super().format(record)
+        context = redact(getattr(record, "context", {}))
+        if not context:
+            return message
+        return f"{message} context={json.dumps(context, sort_keys=True, default=str)}"
+
+
 def configure_logging(*, level: str, log_format: str) -> None:
     """Configure the application root logger once per process."""
     root = logging.getLogger()
@@ -49,7 +60,7 @@ def configure_logging(*, level: str, log_format: str) -> None:
         handler.setFormatter(JsonFormatter())
     else:
         handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+            ConsoleFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
         )
     root.addHandler(handler)
     root._virtual_company_configured = True  # type: ignore[attr-defined]

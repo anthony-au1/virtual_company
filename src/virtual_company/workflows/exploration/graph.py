@@ -95,15 +95,24 @@ class ExplorationWorkflow:
         task_id: str | None = None,
     ) -> ExplorationWorkflowResult:
         """Run the graph; the shared execution layer owns all DB lifecycle changes."""
-        started = perf_counter()
-        self._observability.clear_context()
-        self._observability.bind(
+        with self._observability.context(
+            replace=True,
             exploration_run_id=str(exploration_run_id),
             workflow="exploration",
             workflow_type="exploration",
             workflow_execution_id=str(workflow_execution_id),
             task_id=task_id,
-        )
+        ):
+            return await self._run_in_context(
+                exploration_run_id, workflow_execution_id
+            )
+
+    async def _run_in_context(
+        self,
+        exploration_run_id: UUID,
+        workflow_execution_id: UUID,
+    ) -> ExplorationWorkflowResult:
+        started = perf_counter()
         self._observability.event("exploration_workflow_started")
         try:
             with self._observability.span("exploration_workflow"):

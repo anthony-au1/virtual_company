@@ -148,7 +148,7 @@ async def research_campaign(
         if definitive:
             try:
                 await service.fail_queued_execution(run.id)
-            except Exception as transition_error:
+            except Exception as transition_error:  # noqa: BLE001 - retain publish failure as primary
                 logger.error(
                     "research_enqueue_compensation_failed",
                     extra={"context": {"error_type": type(transition_error).__name__}},

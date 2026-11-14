@@ -64,7 +64,7 @@ async def execute_run(
         get_observability().event(
             "exploration_enqueue_requested", workflow_type="exploration", run_id=str(run_id)
         )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - telemetry must not block enqueue
         logger.warning(
             "exploration_enqueue_observability_failed",
             extra={"context": {"error_type": type(error).__name__}},
@@ -95,7 +95,7 @@ async def execute_run(
         if definitive:
             try:
                 await service.fail_queued_execution(run_id)
-            except Exception as transition_error:
+            except Exception as transition_error:  # noqa: BLE001 - retain publish failure as primary
                 logger.error(
                     "exploration_enqueue_compensation_failed",
                     extra={"context": {"run_id": str(run_id), "error_type": type(transition_error).__name__}},
@@ -107,7 +107,7 @@ async def execute_run(
                 run_id=str(run_id),
                 error_type=type(error).__name__,
             )
-        except Exception as telemetry_error:
+        except Exception as telemetry_error:  # noqa: BLE001 - telemetry is best effort
             logger.warning(
                 "exploration_enqueue_observability_failed",
                 extra={"context": {"error_type": type(telemetry_error).__name__}},
@@ -134,7 +134,7 @@ async def execute_run(
                 run_id=str(run_id),
                 error_type=type(error).__name__,
             )
-        except Exception as telemetry_error:
+        except Exception as telemetry_error:  # noqa: BLE001 - telemetry is best effort
             logger.warning(
                 "exploration_enqueue_observability_failed",
                 extra={"context": {"error_type": type(telemetry_error).__name__}},
@@ -150,7 +150,7 @@ async def execute_run(
             run_id=str(run_id),
             task_id=task.task_id,
         )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - telemetry must not change enqueue result
         logger.warning(
             "exploration_enqueue_observability_failed",
             extra={"context": {"error_type": type(error).__name__}},

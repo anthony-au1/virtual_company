@@ -84,9 +84,11 @@ class Observability:
         _context.set({})
 
     @contextmanager
-    def context(self, **values: str | None) -> Generator[None, None, None]:
+    def context(
+        self, *, replace: bool = False, **values: str | None
+    ) -> Generator[None, None, None]:
         """Temporarily enrich correlated telemetry without leaking values to later work."""
-        current = dict(_context.get() or {})
+        current = {} if replace else dict(_context.get() or {})
         current.update(
             {key: value for key, value in values.items() if value is not None}
         )

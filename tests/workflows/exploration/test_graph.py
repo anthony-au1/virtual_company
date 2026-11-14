@@ -82,6 +82,10 @@ class ObservabilityStub:
     def bind(self, **_values: str) -> None:
         pass
 
+    @contextmanager
+    def context(self, **_values: object):
+        yield
+
     def event(self, name: str, **metadata: object) -> None:
         self.events.append((name, metadata))
 
