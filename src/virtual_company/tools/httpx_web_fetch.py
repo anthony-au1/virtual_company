@@ -25,8 +25,11 @@ from virtual_company.tools.web_fetch import (
 )
 
 Resolver = Callable[[str], Awaitable[list[str]]]
+TransportFactory = Callable[[], httpx.AsyncBaseTransport]
 _MAX_REDIRECTS = 5
-_USER_AGENT = "virtual-company-research/0.1 (+https://github.com/anthony-au1/virtual_company)"
+_USER_AGENT = (
+    "virtual-company-research/0.1 (+https://github.com/anthony-au1/virtual_company)"
+)
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
@@ -41,64 +44,60 @@ class HttpxWebFetchTool:
         timeout_seconds: float,
         max_response_bytes: int,
         max_content_chars: int,
-        client: httpx.AsyncClient | None = None,
+        transport_factory: TransportFactory | None = None,
         resolver: Resolver | None = None,
     ) -> None:
         self._max_response_bytes = max_response_bytes
         self._max_content_chars = max_content_chars
-        self._client = client
+        self._transport_factory = transport_factory
         self._timeout_seconds = timeout_seconds
         self._resolver = resolver or self._resolve_host
 
     async def fetch(self, url: str) -> WebPage:
         """Fetch one safe public page and extract bounded readable text."""
-        if self._client is not None:
-            return await self._fetch_with_client(url, self._client)
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(self._timeout_seconds),
-            follow_redirects=False,
-            headers={"User-Agent": _USER_AGENT},
-        ) as client:
-            return await self._fetch_with_client(url, client)
-
-    async def _fetch_with_client(self, url: str, client: httpx.AsyncClient) -> WebPage:
-        """Fetch with one client, retaining redirect state for this request."""
         requested_url = url
         current_url = url
         for redirect_count in range(_MAX_REDIRECTS + 1):
-            await self._validate_public_url(current_url)
+            original_url, addresses = await self._validate_public_url(current_url)
+            response, client = await self._send_to_approved_address(
+                original_url, addresses
+            )
             try:
-                async with client.stream(
-                    "GET", current_url, follow_redirects=False
-                ) as response:
-                    if response.status_code in _REDIRECT_STATUSES:
-                        location = response.headers.get("location")
-                        if not location:
-                            raise WebFetchHttpError(response.status_code)
-                        if redirect_count == _MAX_REDIRECTS:
-                            raise WebFetchHttpError(response.status_code)
-                        current_url = urljoin(current_url, location)
-                        continue
-                    if not 200 <= response.status_code < 300:
+                if response.status_code in _REDIRECT_STATUSES:
+                    location = response.headers.get("location")
+                    if not location:
                         raise WebFetchHttpError(response.status_code)
-                    content_type = self._content_type(response)
-                    if content_type not in {"text/html", "text/plain"}:
-                        raise WebFetchUnsupportedContentError(
-                            f"Unsupported content type: {content_type or 'missing'}"
-                        )
-                    body = await self._read_bounded_body(response)
+                    if redirect_count == _MAX_REDIRECTS:
+                        raise WebFetchHttpError(response.status_code)
+                    current_url = urljoin(str(original_url), location)
+                    continue
+                if not 200 <= response.status_code < 300:
+                    raise WebFetchHttpError(response.status_code)
+                content_type = self._content_type(response)
+                if content_type not in {"text/html", "text/plain"}:
+                    raise WebFetchUnsupportedContentError(
+                        f"Unsupported content type: {content_type or 'missing'}"
+                    )
+                body = await self._read_bounded_body(response)
             except httpx.TimeoutException as error:
                 raise WebFetchTimeoutError("Web page request timed out") from error
             except httpx.HTTPError as error:
                 raise WebFetchNetworkError("Web page request failed") from error
+            finally:
+                await response.aclose()
+                await client.aclose()
 
-            content, title = self._extract_content(body, content_type, response.encoding)
+            content, title = self._extract_content(
+                body, content_type, response.encoding
+            )
             if not content:
-                raise WebFetchEmptyContentError("No readable page content was extracted")
+                raise WebFetchEmptyContentError(
+                    "No readable page content was extracted"
+                )
             truncated = len(content) > self._max_content_chars
             return WebPage(
                 url=requested_url,
-                final_url=str(response.url),
+                final_url=str(original_url),
                 title=title,
                 content=content[: self._max_content_chars],
                 content_type=content_type,
@@ -106,28 +105,124 @@ class HttpxWebFetchTool:
             )
         raise WebFetchError("Web page redirect handling failed")
 
-    async def _validate_public_url(self, value: str) -> None:
-        parsed = urlsplit(value)
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-            raise WebFetchInvalidUrlError("Only absolute HTTP(S) URLs may be fetched")
+    async def _validate_public_url(
+        self, value: str
+    ) -> tuple[httpx.URL, list[ipaddress.IPv4Address | ipaddress.IPv6Address]]:
         try:
-            addresses = await self._resolver(parsed.hostname.rstrip("."))
+            parsed = urlsplit(value)
+            original_url = httpx.URL(value)
+            hostname = parsed.hostname
+            # Accessing the port validates malformed and out-of-range port values.
+            _ = parsed.port
+        except (ValueError, httpx.InvalidURL) as error:
+            raise WebFetchInvalidUrlError("URL is malformed") from error
+        if parsed.scheme.lower() not in {"http", "https"} or not hostname:
+            raise WebFetchInvalidUrlError("Only absolute HTTP(S) URLs may be fetched")
+        if parsed.username is not None or parsed.password is not None:
+            raise WebFetchInvalidUrlError(
+                "URLs with embedded credentials may not be fetched"
+            )
+        try:
+            resolved_addresses = await self._resolver(hostname.rstrip("."))
         except OSError as error:
-            raise WebFetchInvalidUrlError("URL hostname could not be resolved") from error
-        if not addresses:
+            raise WebFetchInvalidUrlError(
+                "URL hostname could not be resolved"
+            ) from error
+        if not resolved_addresses:
             raise WebFetchInvalidUrlError("URL hostname did not resolve to an address")
         try:
-            if any(not ipaddress.ip_address(address).is_global for address in addresses):
-                raise WebFetchSsrfError("URL resolves to a non-public network address")
+            addresses = list(
+                dict.fromkeys(ipaddress.ip_address(item) for item in resolved_addresses)
+            )
         except ValueError as error:
-            raise WebFetchInvalidUrlError("URL hostname resolved to an invalid address") from error
+            raise WebFetchInvalidUrlError(
+                "URL hostname resolved to an invalid address"
+            ) from error
+        if any(not self._is_public_destination(address) for address in addresses):
+            raise WebFetchSsrfError("URL resolves to a non-public network address")
+        return original_url, addresses
+
+    @staticmethod
+    def _is_public_destination(
+        address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    ) -> bool:
+        """Reject special-use addresses, including multicast marked global by Python."""
+        if (
+            isinstance(address, ipaddress.IPv6Address)
+            and address.ipv4_mapped is not None
+        ):
+            address = address.ipv4_mapped
+        return (
+            address.is_global
+            and not address.is_private
+            and not address.is_loopback
+            and not address.is_link_local
+            and not address.is_unspecified
+            and not address.is_multicast
+            and not address.is_reserved
+        )
+
+    async def _send_to_approved_address(
+        self,
+        original_url: httpx.URL,
+        addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address],
+    ) -> tuple[httpx.Response, httpx.AsyncClient]:
+        """Connect to numeric, previously checked IPs; never resolve the URL host again."""
+        last_error: httpx.ConnectError | httpx.ConnectTimeout | None = None
+        for address in addresses:
+            transport = (
+                self._transport_factory()
+                if self._transport_factory is not None
+                else None
+            )
+            client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self._timeout_seconds),
+                follow_redirects=False,
+                headers={"User-Agent": _USER_AGENT},
+                trust_env=False,
+                transport=transport,
+            )
+            request_url = original_url.copy_with(host=str(address))
+            request = client.build_request(
+                "GET",
+                request_url,
+                headers={"Host": original_url.netloc.decode("ascii")},
+                extensions={"sni_hostname": original_url.raw_host.decode("ascii")},
+            )
+            try:
+                response = await client.send(
+                    request, stream=True, follow_redirects=False
+                )
+                return response, client
+            except httpx.ConnectTimeout as error:
+                last_error = error
+                await client.aclose()
+            except httpx.ConnectError as error:
+                last_error = error
+                await client.aclose()
+            except httpx.TimeoutException as error:
+                await client.aclose()
+                raise WebFetchTimeoutError("Web page request timed out") from error
+            except httpx.HTTPError as error:
+                await client.aclose()
+                raise WebFetchNetworkError("Web page request failed") from error
+            except BaseException:
+                await client.aclose()
+                raise
+        if isinstance(last_error, httpx.ConnectTimeout):
+            raise WebFetchTimeoutError("Web page request timed out") from last_error
+        if last_error is not None:
+            raise WebFetchNetworkError("Web page request failed") from last_error
+        raise WebFetchNetworkError("Web page request failed")
 
     async def _read_bounded_body(self, response: httpx.Response) -> bytes:
         content_length = response.headers.get("content-length")
         if content_length is not None:
             try:
                 if int(content_length) > self._max_response_bytes:
-                    raise WebFetchResponseTooLargeError("Response exceeds configured byte limit")
+                    raise WebFetchResponseTooLargeError(
+                        "Response exceeds configured byte limit"
+                    )
             except ValueError:
                 pass
         chunks: list[bytes] = []
@@ -135,7 +230,9 @@ class HttpxWebFetchTool:
         async for chunk in response.aiter_bytes():
             total += len(chunk)
             if total > self._max_response_bytes:
-                raise WebFetchResponseTooLargeError("Response exceeds configured byte limit")
+                raise WebFetchResponseTooLargeError(
+                    "Response exceeds configured byte limit"
+                )
             chunks.append(chunk)
         return b"".join(chunks)
 
@@ -144,7 +241,9 @@ class HttpxWebFetchTool:
     ) -> tuple[str, str | None]:
         text = body.decode(encoding or "utf-8", errors="replace")
         if content_type == "text/plain":
-            return "\n".join(line.strip() for line in text.splitlines() if line.strip()), None
+            return "\n".join(
+                line.strip() for line in text.splitlines() if line.strip()
+            ), None
         metadata = extract_metadata(text)
         title = metadata.title if metadata is not None else None
         content = extract(
