@@ -2,34 +2,34 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from redis.exceptions import ResponseError
+from taskiq import SendTaskError
 
-from virtual_company.api.dependencies import get_campaign_service, get_research_workflow
+from virtual_company.api.dependencies import get_campaign_service, get_research_service
 from virtual_company.api.models import (
     CampaignCreateRequest,
     CampaignResponse,
     CampaignUpdateRequest,
     CompanyResponse,
-    ResearchWorkflowResponse,
+    ResearchRunExecutionResponse,
 )
-from virtual_company.services import CampaignService
+from virtual_company.services import CampaignService, ResearchService
 from virtual_company.services.campaign import (
     CampaignLifecycleConflictError,
     CampaignLimitValidationError,
     CampaignSealedError,
 )
-from virtual_company.tools import WebSearchConfigurationError
-from virtual_company.workflows.research import ResearchWorkflow
-from virtual_company.workflows.research.nodes import (
-    CampaignNotFoundError,
-)
+from virtual_company.task_queue.tasks import execute_workflow
 
 router = APIRouter(prefix="/api/v1/campaigns", tags=["campaigns"])
 CampaignServiceDependency = Annotated[CampaignService, Depends(get_campaign_service)]
-ResearchWorkflowDependency = Annotated[ResearchWorkflow, Depends(get_research_workflow)]
+ResearchServiceDependency = Annotated[ResearchService, Depends(get_research_service)]
+logger = logging.getLogger(__name__)
 
 
 @router.post("", response_model=CampaignResponse, status_code=status.HTTP_201_CREATED)
@@ -125,19 +125,45 @@ async def list_campaign_companies(
     return [CompanyResponse.model_validate(company) for company in companies]
 
 
-@router.post("/{campaign_id}/research", response_model=ResearchWorkflowResponse)
+@router.post(
+    "/{campaign_id}/research",
+    response_model=ResearchRunExecutionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def research_campaign(
-    campaign_id: UUID, workflow: ResearchWorkflowDependency
-) -> ResearchWorkflowResponse:
-    """Run the first synchronous campaign research workflow."""
+    campaign_id: UUID, service: ResearchServiceDependency
+) -> ResearchRunExecutionResponse:
+    """Queue campaign research for execution by a Taskiq worker."""
     try:
-        result = await workflow.run(campaign_id)
-    except CampaignNotFoundError as error:
+        run = await service.prepare_queued_run(campaign_id)
+    except ValueError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
         ) from error
-    except WebSearchConfigurationError as error:
+
+    try:
+        await execute_workflow.kiq("research", str(run.id))
+    except SendTaskError as error:
+        definitive = isinstance(error.__cause__, ResponseError)
+        if definitive:
+            try:
+                await service.fail_queued_execution(run.id)
+            except Exception as transition_error:
+                logger.error(
+                    "research_enqueue_compensation_failed",
+                    extra={"context": {"error_type": type(transition_error).__name__}},
+                )
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Execution could not be scheduled"
+                if definitive
+                else "Execution publish outcome is unknown"
+            ),
         ) from error
-    return ResearchWorkflowResponse.model_validate(result.model_dump())
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Execution publish outcome is unknown",
+        ) from error
+    return ResearchRunExecutionResponse(research_run_id=run.id, status="QUEUED")

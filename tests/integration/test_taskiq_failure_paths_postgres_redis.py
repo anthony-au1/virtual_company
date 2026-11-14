@@ -20,11 +20,15 @@ from sqlalchemy import event, func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.schema import CreateSchema, DropSchema
 
-from virtual_company.api.dependencies import get_exploration_service
+from virtual_company.api.dependencies import (
+    get_exploration_service,
+    get_research_service,
+)
 from virtual_company.config import Settings
 from virtual_company.db import Base
 from virtual_company.db.models import (
     Campaign,
+    CampaignTarget,
     ExplorationCompany,
     ExplorationEvidence,
     ExplorationFact,
@@ -65,12 +69,14 @@ from virtual_company.services.obligation_generator import (
     GeneratedObligation,
     ObligationGenerationResult,
 )
+from virtual_company.services.research import ResearchService
 from virtual_company.task_queue.broker import broker
 from virtual_company.task_queue.lifecycle import (
     claim_workflow_run,
     transition_workflow_run,
 )
 from virtual_company.task_queue.reconciliation import reconcile_taskiq_runs_once
+from virtual_company.task_queue.tasks import execute_workflow
 from virtual_company.task_queue.workflow_types import WorkflowType
 from virtual_company.workflows.exploration.models import (
     ExplorationFactExtractionBatchResult,
@@ -260,6 +266,7 @@ def _start_worker(
     fail_company: str | None = None,
     block_query_call: int | None = None,
     empty: bool = False,
+    research_block: bool = False,
 ) -> _WorkerHarness:
     marker_dir = runtime["markers"]
     marker_dir.mkdir(parents=True, exist_ok=True)
@@ -289,6 +296,8 @@ def _start_worker(
         environment["PHASE3_WORKER_BLOCK_QUERY_CALL"] = str(block_query_call)
     if empty:
         environment["PHASE3_WORKER_EMPTY"] = "true"
+    if research_block:
+        environment["PHASE4_RESEARCH_BLOCK_PROVIDER"] = "true"
     process = subprocess.Popen(
         [
             sys.executable,
@@ -352,9 +361,15 @@ async def _statuses(sessions, run_id: UUID):
         run = await session.scalar(
             select(ExplorationRun).where(ExplorationRun.id == run_id)
         )
+        workflow_type = "exploration"
+        if run is None:
+            run = await session.scalar(
+                select(ResearchRun).where(ResearchRun.id == run_id)
+            )
+            workflow_type = "research"
         execution = await session.scalar(
             select(WorkflowExecution).where(
-                WorkflowExecution.workflow_type == "exploration",
+                WorkflowExecution.workflow_type == workflow_type,
                 WorkflowExecution.run_id == run_id,
             )
         )
@@ -590,6 +605,106 @@ async def test_separate_worker_sigkill_reconciles_and_rejects_redelivery(tmp_pat
             == 1
         )
         assert await _result_counts(runtime["sessions"], run_id) == before
+        assert (await _statuses(runtime["sessions"], run_id))[:2] == (
+            "FAILED",
+            "FAILED",
+        )
+
+
+async def test_research_worker_sigkill_reconciles_and_rejects_redelivery(tmp_path):
+    async with _isolated_runtime(tmp_path) as runtime:
+        async with runtime["sessions"].begin() as session:
+            campaign = Campaign(
+                name="Research worker crash test",
+                keywords=[],
+                target_count=1,
+                max_companies_to_research=1,
+                status="DRAFT",
+            )
+            session.add(campaign)
+            await session.flush()
+            campaign_id = campaign.id
+
+        async def research_service_override():
+            async with runtime["sessions"]() as session:
+                yield ResearchService(session)
+
+        app.dependency_overrides[get_research_service] = research_service_override
+        worker = _start_worker(
+            runtime,
+            tmp_path,
+            worker_id="research-crash-worker",
+            research_block=True,
+        )
+        await _wait_worker_ready(worker)
+        client = runtime["client"]
+        response = await client.post(
+            f"/api/v1/campaigns/{campaign_id}/research"
+        )
+        assert response.status_code == 202
+        run_id = UUID(response.json()["research_run_id"])
+        await _wait_marker(runtime["markers"] / "research-provider-blocked.txt")
+
+        async def running() -> bool:
+            run_status, execution_status, heartbeat, execution_id = await _statuses(
+                runtime["sessions"], run_id
+            )
+            return (
+                run_status == "RUNNING"
+                and execution_status == "RUNNING"
+                and heartbeat is not None
+                and execution_id is not None
+            )
+
+        assert await _eventually(running)
+        graph_pid = int(
+            (runtime["markers"] / "research-graph-started.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()[0]
+        )
+        assert os.getpgid(graph_pid) == worker.process.pid
+        os.kill(graph_pid, signal.SIGKILL)
+        os.killpg(worker.process.pid, signal.SIGKILL)
+        worker.process.wait(timeout=8)
+        worker.log_file.close()
+
+        await asyncio.sleep(1.2)
+        stopped_heartbeat = (await _statuses(runtime["sessions"], run_id))[2]
+        await asyncio.sleep(1.2)
+        assert (await _statuses(runtime["sessions"], run_id))[2] == stopped_heartbeat
+        settings = Settings(
+            taskiq_heartbeat_interval_seconds=1,
+            taskiq_running_stale_after_seconds=3,
+            taskiq_queued_stale_after_seconds=30,
+            taskiq_reconciliation_interval_seconds=1,
+        )
+        reconciled = await reconcile_taskiq_runs_once(
+            runtime["sessions"], settings,
+            now=datetime.now(UTC) + timedelta(seconds=5),
+        )
+        assert reconciled.running_failed == 1
+        assert (await _statuses(runtime["sessions"], run_id))[:2] == (
+            "FAILED",
+            "FAILED",
+        )
+        async with runtime["sessions"]() as session:
+            retained_targets = await session.scalar(
+                select(func.count(CampaignTarget.company_id)).where(
+                    CampaignTarget.campaign_id == campaign_id
+                )
+            )
+            assert retained_targets == 1
+
+        restarted = _start_worker(runtime, tmp_path, worker_id="research-restart-worker")
+        await _wait_worker_ready(restarted)
+        await execute_workflow.kiq("research", str(run_id))
+        await asyncio.sleep(0.6)
+        assert restarted.process.poll() is None
+        assert len(
+            (runtime["markers"] / "research-graph-started.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ) == 1
         assert (await _statuses(runtime["sessions"], run_id))[:2] == (
             "FAILED",
             "FAILED",

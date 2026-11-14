@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 
-from virtual_company.task_queue.adapters.base import InactiveWorkflowAdapterError
 from virtual_company.task_queue.dispatcher import (
     InvalidWorkflowDispatchError,
     WorkflowType,
@@ -64,8 +63,8 @@ async def test_business_adapter_failure_propagates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unmigrated_research_adapter_fails_closed() -> None:
-    with pytest.raises(InactiveWorkflowAdapterError):
+async def test_research_adapter_rejects_missing_worker_session_factory() -> None:
+    with pytest.raises(RuntimeError, match="session factory"):
         await dispatch_workflow(WorkflowType.RESEARCH.value, str(uuid4()))
 
 

@@ -246,6 +246,13 @@ class ResearchWorkflowResponse(BaseModel):
     companies_found: int
 
 
+class ResearchRunExecutionResponse(BaseModel):
+    """Accepted asynchronous Research execution."""
+
+    research_run_id: UUID
+    status: str
+
+
 class CompanyResponse(BaseModel):
     """Company data returned by the API."""
 

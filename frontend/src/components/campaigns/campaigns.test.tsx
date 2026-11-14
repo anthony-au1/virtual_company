@@ -497,7 +497,7 @@ describe("CampaignDetailsPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("prevents a duplicate pending start and navigates with each returned run ID", async () => {
+  it("prevents a duplicate start after accepting a queued run", async () => {
     mockGetCampaign.mockResolvedValue(
       campaign("campaign-a", "Australian Fintech"),
     );
@@ -505,18 +505,12 @@ describe("CampaignDetailsPage", () => {
     let finishStart!: (result: {
       research_run_id: string;
       status: string;
-      companies_found: number;
     }) => void;
     mockStartResearch.mockReturnValueOnce(
       new Promise((resolve) => {
         finishStart = resolve;
       }),
     );
-    mockStartResearch.mockResolvedValueOnce({
-      research_run_id: "run-second",
-      status: "COMPLETED",
-      companies_found: 1,
-    });
     renderWithQuery(<CampaignDetailsPage campaignId="campaign-a" />);
 
     const startButton = await screen.findByRole("button", {
@@ -529,18 +523,14 @@ describe("CampaignDetailsPage", () => {
 
     finishStart({
       research_run_id: "run-first",
-      status: "COMPLETED",
-      companies_found: 1,
+      status: "QUEUED",
     });
     await waitFor(() =>
       expect(mockPush).toHaveBeenCalledWith("/research/run-first"),
     );
-    await waitFor(() => expect(startButton).not.toBeDisabled());
+    expect(startButton).toBeDisabled();
     fireEvent.click(startButton);
-    await waitFor(() =>
-      expect(mockPush).toHaveBeenCalledWith("/research/run-second"),
-    );
+    expect(mockStartResearch).toHaveBeenCalledTimes(1);
     expect(mockStartResearch).toHaveBeenNthCalledWith(1, "campaign-a");
-    expect(mockStartResearch).toHaveBeenNthCalledWith(2, "campaign-a");
   });
 });

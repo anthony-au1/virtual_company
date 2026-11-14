@@ -28,6 +28,7 @@ from virtual_company.repositories.research_company_qualification import (
 )
 from virtual_company.repositories.research_evidence import ResearchEvidenceRepository
 from virtual_company.repositories.research_run import ResearchRunRepository
+from virtual_company.repositories.workflow_execution import WorkflowExecutionRepository
 from virtual_company.utils.url_normalization import normalize_domain
 
 
@@ -80,16 +81,51 @@ class ResearchService:
         await self._session.commit()
         return run
 
+    async def prepare_queued_run(self, campaign_id: UUID) -> ResearchRun:
+        """Seal a campaign and atomically create its queued run and execution."""
+        async with self._session.begin():
+            campaign = await self._campaigns.seal_for_research(campaign_id)
+            if campaign is None:
+                raise ValueError("Campaign was not found")
+            created_at = datetime.now(UTC)
+            run = await self._runs.create(
+                ResearchRunCreate(
+                    campaign_id=campaign_id,
+                    status="QUEUED",
+                    companies_found=0,
+                    created_at=created_at,
+                    started_at=created_at,
+                )
+            )
+            await WorkflowExecutionRepository(self._session).create_queued(
+                "research", run.id
+            )
+        return run
+
+    async def fail_queued_execution(self, run_id: UUID) -> bool:
+        """Compensate only a publication that Redis definitively rejected."""
+        async with self._session.begin():
+            return await WorkflowExecutionRepository(self._session).fail_queued(
+                "research", run_id
+            )
+
     async def persist_companies(
         self,
         *,
         campaign_id: UUID,
         companies: list[DiscoveredCompany],
+        research_run_id: UUID | None = None,
+        execution_id: UUID | None = None,
     ) -> PersistedResearchCompanies:
         """Persist discovery candidates and return their resolved records for this run."""
         created_targets = 0
         persisted_companies: list[ResearchCompany] = []
         discovered_by_company_id: dict[UUID, DiscoveredCompany] = {}
+        if execution_id is not None and research_run_id is not None:
+            await WorkflowExecutionRepository(self._session).lock_running_ownership(
+                workflow_type="research", run_id=research_run_id,
+                execution_id=execution_id,
+            )
         for discovered in companies:
             domain = normalize_domain(discovered.domain or discovered.website)
             company = (
@@ -113,6 +149,8 @@ class ResearchService:
                 created_targets += 1
             persisted_companies.append(company)
             discovered_by_company_id[company.id] = discovered
+        if execution_id is not None:
+            await self._session.commit()
         return PersistedResearchCompanies(
             companies_found=created_targets,
             companies=persisted_companies,
@@ -136,10 +174,31 @@ class ResearchService:
         await self._session.commit()
         return run
 
+    async def record_execution_results(
+        self, research_run_id: UUID, companies_found: int, execution_id: UUID
+    ) -> None:
+        """Persist the graph's final count without changing shared lifecycle state."""
+        await WorkflowExecutionRepository(self._session).lock_running_ownership(
+            workflow_type="research", run_id=research_run_id,
+            execution_id=execution_id,
+        )
+        run = await self._runs.update(
+            research_run_id, ResearchRunUpdate(companies_found=companies_found)
+        )
+        if run is None:
+            raise ValueError("Research run was not found")
+        await self._session.commit()
+
     async def persist_research_evidence(
-        self, *, research_run_id: UUID, evidence: list[ResearchEvidenceCreate]
+        self, *, research_run_id: UUID, evidence: list[ResearchEvidenceCreate],
+        execution_id: UUID | None = None,
     ) -> PersistedResearchEvidence:
         """Store distinct evidence items without duplicating a retried node's output."""
+        if execution_id is not None:
+            await WorkflowExecutionRepository(self._session).lock_running_ownership(
+                workflow_type="research", run_id=research_run_id,
+                execution_id=execution_id,
+            )
         existing = await self._evidence.list_by_research_run_id(research_run_id)
         existing_by_key = {self._research_evidence_key(item): item for item in existing}
         seen = set(existing_by_key)
@@ -164,6 +223,8 @@ class ResearchService:
             created_by_company[item.company_id] = (
                 created_by_company.get(item.company_id, 0) + 1
             )
+        if execution_id is not None:
+            await self._session.commit()
         return PersistedResearchEvidence(
             created_count=created_count,
             skipped_count=skipped_count,
@@ -177,8 +238,14 @@ class ResearchService:
         campaign_id: UUID,
         research_run_id: UUID,
         qualifications: Sequence[ResearchCompanyQualification],
+        execution_id: UUID | None = None,
     ) -> None:
         """Stage final snapshots for the same transaction as run completion."""
+        if execution_id is not None:
+            await WorkflowExecutionRepository(self._session).lock_running_ownership(
+                workflow_type="research", run_id=research_run_id,
+                execution_id=execution_id,
+            )
         for result in qualifications:
             await self._qualifications.upsert(
                 ResearchCompanyQualificationUpsert(
@@ -208,6 +275,8 @@ class ResearchService:
                     },
                 )
             )
+        if execution_id is not None:
+            await self._session.commit()
 
     async def list_research_evidence_for_run(
         self, research_run_id: UUID

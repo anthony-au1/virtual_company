@@ -187,7 +187,9 @@ class ResearchNodes:
     async def create_research_run(
         self, state: ResearchWorkflowState
     ) -> dict[str, object]:
-        """Create a committed RUNNING research run."""
+        """Use the run prepared by the API, preserving legacy direct graph tests."""
+        if state.get("research_run_id") is not None:
+            return {"research_run_id": state["research_run_id"]}
         run = await self._research.create_run(state["campaign_id"])
         return {"research_run_id": run.id}
 
@@ -426,9 +428,16 @@ class ResearchNodes:
             0,
         )
         batch = pending[: min(needed, remaining_capacity)]
+        persistence_context = (
+            {
+                "research_run_id": state["research_run_id"],
+                "execution_id": state["execution_id"],
+            }
+            if state.get("execution_id") is not None
+            else {}
+        )
         persisted = await self._research.persist_companies(
-            campaign_id=state["campaign_id"],
-            companies=batch,
+            campaign_id=state["campaign_id"], companies=batch, **persistence_context
         )
         activated = [
             ResearchCompany.model_validate(company) for company in persisted.companies
@@ -1587,8 +1596,13 @@ class ResearchNodes:
             )
             for item in state["validated_research_evidence"]
         ]
+        persistence_context = (
+            {"execution_id": state["execution_id"]}
+            if state.get("execution_id") is not None
+            else {}
+        )
         outcome = await self._research.persist_research_evidence(
-            research_run_id=research_run_id, evidence=evidence
+            research_run_id=research_run_id, evidence=evidence, **persistence_context
         )
         context = {
             "evidence_items_persisted": outcome.created_count,
@@ -2125,10 +2139,16 @@ class ResearchNodes:
             raise ValueError(
                 "Every researched company must have one final qualification"
             )
+        persistence_context = (
+            {"execution_id": state["execution_id"]}
+            if state.get("execution_id") is not None
+            else {}
+        )
         await self._research.persist_research_company_qualifications(
             campaign_id=state["campaign_id"],
             research_run_id=run_id,
             qualifications=list(results.values()),
+            **persistence_context,
         )
         campaign = self._campaign(state)
         qualified_count = self._qualified_count(state)
@@ -2163,7 +2183,12 @@ class ResearchNodes:
         research_run_id = state["research_run_id"]
         if research_run_id is None:
             raise ValueError("Research run was not created")
-        await self._research.complete_run(research_run_id, state["companies_found"])
+        if state.get("execution_id") is None:
+            await self._research.complete_run(research_run_id, state["companies_found"])
+        else:
+            await self._research.record_execution_results(
+                research_run_id, state["companies_found"], state["execution_id"]
+            )
         return {"error": None}
 
     @staticmethod

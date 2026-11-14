@@ -192,6 +192,30 @@ async def test_ambiguous_redis_publish_does_not_compensate_or_retry(monkeypatch,
     assert publish_calls == 1
 
 
+@pytest.mark.asyncio
+async def test_unexpected_publish_error_returns_unknown_without_compensation(monkeypatch):
+    run_id = uuid4()
+    compensated: list[UUID] = []
+
+    class ServiceStub:
+        async def claim_run_for_execution(self, *_args):
+            return ExplorationRunClaimResult(ExplorationRunClaimOutcome.CLAIMED)
+
+        async def fail_queued_execution(self, requested_run_id):
+            compensated.append(requested_run_id)
+
+    async def publish(*_args):
+        raise RuntimeError("broker adapter failed")
+
+    monkeypatch.setattr(explorations.execute_workflow, "kiq", publish)
+    with pytest.raises(HTTPException) as error:
+        await explorations.execute_run(uuid4(), run_id, ServiceStub())
+
+    assert error.value.status_code == 503
+    assert error.value.detail == "Execution publish outcome is unknown"
+    assert not compensated
+
+
 def test_run_status_and_ownership():
     exploration_id, run_id = uuid4(), uuid4()
     started_at = datetime.now(UTC)

@@ -74,7 +74,13 @@ class ResearchWorkflow:
         self._research = research
         self._graph = build_research_graph(self._nodes, research)
 
-    async def run(self, campaign_id: UUID) -> ResearchWorkflowResult:
+    async def run(
+        self,
+        campaign_id: UUID,
+        *,
+        research_run_id: UUID | None = None,
+        execution_id: UUID | None = None,
+    ) -> ResearchWorkflowResult:
         """Execute research and return its concise application result."""
         observability = get_observability()
         observability.clear_context()
@@ -90,7 +96,8 @@ class ResearchWorkflow:
                     {
                         "campaign_id": campaign_id,
                         "campaign": None,
-                        "research_run_id": None,
+                        "research_run_id": research_run_id,
+                        "execution_id": execution_id,
                         "queries": [],
                         "search_results": [],
                         "extracted_company_candidates": [],
@@ -167,6 +174,29 @@ class ResearchWorkflow:
             status="COMPLETED",
             companies_found=state["companies_found"],
         )
+
+
+def create_configured_research_workflow(
+    *, campaigns: CampaignService, research: ResearchService
+) -> ResearchWorkflow:
+    """Build a worker-scoped Research graph with configured provider clients."""
+    from virtual_company.llm import (
+        InstrumentedLLMProvider,
+        LLMRegistry,
+        LLMRole,
+    )
+    from virtual_company.tools import create_web_fetch_tool, create_web_search_tool
+
+    return ResearchWorkflow(
+        campaigns=campaigns,
+        research=research,
+        research_llm=InstrumentedLLMProvider(LLMRegistry().for_role(LLMRole.RESEARCH)),
+        extraction_llm=InstrumentedLLMProvider(
+            LLMRegistry().for_role(LLMRole.EXTRACTION)
+        ),
+        web_search=create_web_search_tool(),
+        web_fetch=create_web_fetch_tool(),
+    )
 
 
 def build_research_graph(nodes: ResearchNodes, research: ResearchService):
@@ -399,7 +429,7 @@ def _with_failure_handling(
                 return result
             except Exception as error:
                 failed_run_id = state.get("research_run_id")
-                if failed_run_id is not None:
+                if failed_run_id is not None and state.get("execution_id") is None:
                     await research.fail_run(
                         failed_run_id,
                         f"Research workflow failed in {node_name}: {type(error).__name__}",

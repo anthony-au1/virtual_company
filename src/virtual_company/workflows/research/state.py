@@ -29,6 +29,7 @@ class ResearchWorkflowState(TypedDict):
     campaign_id: UUID
     campaign: CampaignCriteria | None
     research_run_id: UUID | None
+    execution_id: UUID | None
     queries: list[str]
     search_results: list[SearchResult]
     extracted_company_candidates: list[ExtractedCompanyCandidate]

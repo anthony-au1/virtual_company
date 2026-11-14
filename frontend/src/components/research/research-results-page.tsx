@@ -46,6 +46,10 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
   const query = useQuery({
     queryKey,
     queryFn: () => getResearchRunResults(runId),
+    refetchInterval: (current) =>
+      current.state.data && isTerminalRunStatus(current.state.data.research_run.status)
+        ? false
+        : 2000,
   });
   const visibleCompanies = useMemo(() => {
     const normalizedSearch = search.trim().toLocaleLowerCase();
@@ -132,10 +136,11 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
             ) : null}
           </div>
         </div>
-        {results.research_run.status === "RUNNING" ? (
+        {results.research_run.status === "RUNNING" || results.research_run.status === "QUEUED" ? (
           <p className="mt-3 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
-            This run is still in progress. Showing the results currently
-            available.
+            {results.research_run.status === "QUEUED"
+              ? "This run is queued. Results will appear here as research progresses."
+              : "This run is still in progress. Showing the results currently available."}
           </p>
         ) : null}
         {results.research_run.error ? (

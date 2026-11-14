@@ -197,6 +197,8 @@ async def transition_workflow_run(
     run_id: UUID,
     execution_id: UUID,
     target: str,
+    *,
+    error: str | None = None,
 ) -> bool:
     """Apply a terminal transition only if the execution UUID still owns the run."""
     async with session_factory() as session, session.begin():
@@ -204,7 +206,7 @@ async def transition_workflow_run(
         transitioned = False
         if execution is not None and execution.workflow_type == workflow_type.value and execution.run_id == run_id:
             transitioned = await WorkflowExecutionRepository(session).transition(
-                execution_id, target
+                execution_id, target, error=error
             )
     if transitioned:
         _safe_event(

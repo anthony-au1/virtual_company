@@ -15,6 +15,10 @@ export function ResearchRunsPage() {
   const query = useQuery({
     queryKey: researchRunsQueryKey,
     queryFn: listResearchRuns,
+    refetchInterval: (current) =>
+      current.state.data?.some((run) => !isTerminalRunStatus(run.status))
+        ? 2000
+        : false,
   });
 
   return (
@@ -159,7 +163,7 @@ export function RunStatus({ status }: { status: string }) {
 }
 
 export function isTerminalRunStatus(status: string) {
-  return status === "COMPLETED" || status === "FAILED";
+  return ["COMPLETED", "FAILED", "CANCELLED"].includes(status);
 }
 
 export function formatDate(value: string | null) {

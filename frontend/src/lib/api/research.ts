@@ -107,7 +107,6 @@ export function deleteResearchRun(runId: string): Promise<void> {
 export function startResearch(campaignId: string): Promise<{
   research_run_id: string;
   status: string;
-  companies_found: number;
 }> {
   return apiFetch(
     `/api/v1/campaigns/${encodeURIComponent(campaignId)}/research`,

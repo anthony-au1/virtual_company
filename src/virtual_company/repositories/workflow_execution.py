@@ -175,12 +175,16 @@ class WorkflowExecutionRepository:
         ) is not None
 
     async def transition(
-        self, execution_id: UUID, target: WorkflowExecutionStatus | str
+        self,
+        execution_id: UUID,
+        target: WorkflowExecutionStatus | str,
+        *,
+        error: str | None = None,
     ) -> bool:
         try:
             status = WorkflowExecutionStatus(target)
-        except ValueError as error:
-            raise ValueError(f"Unsupported execution status: {target}") from error
+        except ValueError as parse_error:
+            raise ValueError(f"Unsupported execution status: {target}") from parse_error
         if status in {WorkflowExecutionStatus.QUEUED, WorkflowExecutionStatus.RUNNING}:
             raise ValueError("Terminal transition requires a terminal status")
         execution = await self._session.scalar(
@@ -204,10 +208,16 @@ class WorkflowExecutionRepository:
             raise ValueError(
                 f"{status.value} is not valid for {execution.workflow_type}"
             )
+        business_values: dict[str, object] = {
+            "status": status.value,
+            "completed_at": func.now(),
+        }
+        if execution.workflow_type == "research" and status is WorkflowExecutionStatus.FAILED:
+            business_values["error"] = error
         business = await self._session.scalar(
             update(model)
             .where(model.id == execution.run_id, model.status == "RUNNING")
-            .values(status=status.value, completed_at=func.now())
+            .values(**business_values)
             .returning(model.id)
         )
         if business is None:

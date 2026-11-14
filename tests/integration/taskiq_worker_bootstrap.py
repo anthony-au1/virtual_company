@@ -29,6 +29,8 @@ from virtual_company.tools.web_fetch import WebPage
 from virtual_company.tools.web_search import SearchResponse, SearchResult
 from virtual_company.workflows.exploration import graph
 from virtual_company.workflows.exploration.graph import ExplorationWorkflow
+from virtual_company.workflows.research import graph as research_graph
+from virtual_company.workflows.research.graph import ResearchWorkflow
 
 
 def _append_marker(name: str, value: str = "") -> None:
@@ -144,6 +146,92 @@ class _FetchTool:
             title="Payment services",
             content="The company provides payment services to local businesses.",
         )
+
+
+class _ResearchLLMProvider:
+    provider = "phase4-deterministic"
+    model = "worker-crash-test"
+
+    async def generate_structured(self, *, system_prompt, user_prompt, response_model):
+        del system_prompt, user_prompt
+        name = response_model.__name__
+        _append_marker("research-provider-calls.txt", name)
+        if name == "GeneratedSearchQueries":
+            return response_model(queries=["Crash Test Company research"])
+        if name == "ExtractedCompanyIdentities":
+            return response_model(
+                companies=[
+                    {
+                        "name": "Crash Test Company",
+                        "website": "https://crash-test-company.example",
+                        "domain": "crash-test-company.example",
+                    }
+                ]
+            )
+        if name == "DiscoveredCompanies":
+            return response_model(
+                companies=[
+                    {
+                        "name": "Crash Test Company",
+                        "domain": "crash-test-company.example",
+                        "discovery_reason": "Deterministic test candidate",
+                        "supporting_urls": ["https://discovery.example/company"],
+                    }
+                ]
+            )
+        if name == "CompanyPageAttribution":
+            if os.getenv("PHASE4_RESEARCH_BLOCK_PROVIDER") == "true":
+                _append_marker("research-provider-blocked.txt", str(os.getpid()))
+                release = Path(os.environ["PHASE3_WORKER_RELEASE_FILE"])
+                deadline = asyncio.get_running_loop().time() + 120
+                while not release.exists():
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise TimeoutError("Research test provider barrier timed out")
+                    await asyncio.sleep(0.02)
+            return response_model(attributable=True, reason="Deterministic attribution")
+        if name == "GeneratedCompanySearchQueries":
+            if os.getenv("PHASE4_RESEARCH_BLOCK_PROVIDER") == "true":
+                _append_marker("research-provider-blocked.txt", str(os.getpid()))
+                release = Path(os.environ["PHASE3_WORKER_RELEASE_FILE"])
+                deadline = asyncio.get_running_loop().time() + 120
+                while not release.exists():
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise TimeoutError("Research test provider barrier timed out")
+                    await asyncio.sleep(0.02)
+            return response_model(queries=["Crash Test Company products"])
+        raise AssertionError(f"Unexpected Research model: {name}")
+
+
+class _ResearchSearchTool:
+    provider = "phase4-deterministic"
+
+    async def search(self, _query: str, limit: int = 10) -> SearchResponse:
+        assert limit >= 1
+        return SearchResponse(
+            results=[
+                SearchResult(
+                    title="Crash Test Company",
+                    url="https://discovery.example/company",
+                    snippet="Crash Test Company builds software.",
+                )
+            ]
+        )
+
+
+def _configured_research_workflow(*, campaigns, research):
+    provider = _ResearchLLMProvider()
+    _append_marker("research-graph-started.txt", str(os.getpid()))
+    return ResearchWorkflow(
+        campaigns=campaigns,
+        research=research,
+        research_llm=provider,
+        extraction_llm=provider,
+        web_search=_ResearchSearchTool(),
+        web_fetch=_FetchTool(),
+    )
+
+
+research_graph.create_configured_research_workflow = _configured_research_workflow
 
 
 def _configured_test_workflow(

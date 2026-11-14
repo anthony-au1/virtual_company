@@ -7,19 +7,15 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from redis.exceptions import ResponseError
 
-from virtual_company.api.dependencies import get_campaign_service, get_research_workflow
+from virtual_company.api.dependencies import get_campaign_service, get_research_service
 from virtual_company.db.models import Campaign
 from virtual_company.main import app
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
 from virtual_company.services.campaign import (
     CampaignLifecycleConflictError,
     CampaignSealedError,
-)
-from virtual_company.tools import WebSearchNotConfiguredError
-from virtual_company.workflows.research.models import ResearchWorkflowResult
-from virtual_company.workflows.research.nodes import (
-    CampaignNotFoundError,
 )
 
 
@@ -56,16 +52,20 @@ class CampaignServiceStub:
         return self.campaign is not None and self.campaign.id == campaign_id
 
 
-class ResearchWorkflowStub:
-    """Research workflow substitute for route tests."""
+class ResearchServiceStub:
+    def __init__(self, run: object = None, error: Exception | None = None) -> None:
+        self.run = run or type("Run", (), {"id": uuid4()})()
+        self.error = error
+        self.failed = False
 
-    def __init__(self, result: ResearchWorkflowResult | Exception) -> None:
-        self.result = result
+    async def prepare_queued_run(self, _campaign_id: object) -> object:
+        if self.error:
+            raise self.error
+        return self.run
 
-    async def run(self, _campaign_id: object) -> ResearchWorkflowResult:
-        if isinstance(self.result, Exception):
-            raise self.result
-        return self.result
+    async def fail_queued_execution(self, _run_id: object) -> bool:
+        self.failed = True
+        return True
 
 
 @pytest.fixture(autouse=True)
@@ -279,38 +279,69 @@ def test_campaign_status_validation_and_missing_campaign_return_errors() -> None
     assert missing.status_code == 404
 
 
-def test_research_campaign_returns_workflow_result() -> None:
+def test_research_campaign_enqueues_and_returns_accepted(monkeypatch) -> None:
+    import virtual_company.api.campaigns as campaign_routes
+
     run_id = uuid4()
-    app.dependency_overrides[get_research_workflow] = lambda: ResearchWorkflowStub(
-        ResearchWorkflowResult(
-            research_run_id=run_id, status="COMPLETED", companies_found=2
-        )
+    service = ResearchServiceStub(type("Run", (), {"id": run_id})())
+    app.dependency_overrides[get_research_service] = lambda: service
+    published = []
+
+    async def publish(*args):
+        published.append(args)
+
+    monkeypatch.setattr(campaign_routes.execute_workflow, "kiq", publish)
+
+    response = TestClient(app).post(f"/api/v1/campaigns/{uuid4()}/research")
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "research_run_id": str(run_id),
+        "status": "QUEUED",
+    }
+    assert published == [("research", str(run_id))]
+
+
+def test_research_campaign_maps_missing_campaign() -> None:
+    app.dependency_overrides[get_research_service] = lambda: ResearchServiceStub(
+        error=ValueError("Campaign was not found")
     )
 
     response = TestClient(app).post(f"/api/v1/campaigns/{uuid4()}/research")
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "research_run_id": str(run_id),
-        "status": "COMPLETED",
-        "companies_found": 2,
-    }
+    assert response.status_code == 404
 
 
 @pytest.mark.parametrize(
-    ("error", "status_code"),
+    ("cause", "compensated"),
     [
-        (CampaignNotFoundError("Campaign not found"), 404),
-        (WebSearchNotConfiguredError("Web search is not configured"), 503),
+        (RuntimeError("timeout"), False),
+        (ResponseError("NOAUTH"), True),
     ],
 )
-def test_research_campaign_maps_expected_workflow_errors(
-    error: Exception, status_code: int
+def test_research_publish_ambiguity_does_not_fail_queued_run(
+    monkeypatch, cause: Exception, compensated: bool
 ) -> None:
-    app.dependency_overrides[get_research_workflow] = lambda: ResearchWorkflowStub(
-        error
-    )
+    from taskiq import SendTaskError
 
+    import virtual_company.api.campaigns as campaign_routes
+
+    run_id = uuid4()
+    service = ResearchServiceStub(type("Run", (), {"id": run_id})())
+    app.dependency_overrides[get_research_service] = lambda: service
+
+    async def publish(*_args):
+        error = SendTaskError()
+        error.__cause__ = cause
+        raise error
+
+    monkeypatch.setattr(campaign_routes.execute_workflow, "kiq", publish)
     response = TestClient(app).post(f"/api/v1/campaigns/{uuid4()}/research")
 
-    assert response.status_code == status_code
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Execution could not be scheduled"
+        if compensated
+        else "Execution publish outcome is unknown"
+    )
+    assert service.failed is compensated

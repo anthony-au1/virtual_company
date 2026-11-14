@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Pencil, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 import { CampaignStatusBadge } from "@/components/campaigns/campaigns-page";
 import {
@@ -27,6 +28,7 @@ import { cn } from "@/lib/utils";
 export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [startedRunId, setStartedRunId] = useState<string | null>(null);
   const campaignQuery = useQuery({
     queryKey: campaignQueryKey(campaignId),
     queryFn: () => getCampaign(campaignId),
@@ -39,6 +41,7 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
     mutationKey: ["start-research", campaignId],
     mutationFn: () => startResearch(campaignId),
     onSuccess: (result) => {
+      setStartedRunId(result.research_run_id);
       void queryClient.invalidateQueries({ queryKey: researchRunsQueryKey });
       void queryClient.invalidateQueries({
         queryKey: campaignQueryKey(campaignId),
@@ -93,6 +96,9 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
   const campaignRuns = (runsQuery.data ?? []).filter(
     (run) => run.campaign.id === campaignId,
   );
+  const activeRun = campaignRuns.find((run) => !isTerminalRunStatus(run.status));
+  const locallyActive = startedRunId !== null &&
+    !campaignRuns.some((run) => run.run_id === startedRunId && isTerminalRunStatus(run.status));
 
   return (
     <section aria-labelledby="page-title" className="mx-auto max-w-5xl">
@@ -122,11 +128,15 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
             </Link>
           ) : null}
           <Button
-            disabled={startMutation.isPending}
+            disabled={startMutation.isPending || Boolean(activeRun) || locallyActive}
             onClick={() => startMutation.mutate()}
           >
-            {startMutation.isPending ? "Starting research…" : "Start Research"}
-            {!startMutation.isPending ? (
+            {startMutation.isPending
+              ? "Starting research…"
+              : activeRun || locallyActive
+                ? "Research in progress"
+                : "Start Research"}
+            {!startMutation.isPending && !activeRun ? (
               <ArrowRight aria-hidden="true" data-icon="inline-end" />
             ) : null}
           </Button>
