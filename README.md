@@ -20,6 +20,13 @@ cp .env.example .env
 make start
 ```
 
+OpenAI calls use `OPENAI_CONNECT_TIMEOUT_SECONDS` (default `5`),
+`OPENAI_READ_TIMEOUT_SECONDS` (default `120`), and `OPENAI_MAX_RETRIES` (default
+`1`). One retry permits up to two attempts for an individual SDK request. The HTTPX
+read timeout limits inactivity while reading from the socket; it is not a guaranteed
+end-to-end deadline, and retries, backoff, connection/write timeouts, and streaming
+can affect total duration.
+
 The frontend is available at `http://localhost:3000`, and the FastAPI service remains
 available directly at `http://localhost:8000`. `make start` migrates the database and
 builds and starts the complete Compose stack, including the Taskiq worker and Redis.

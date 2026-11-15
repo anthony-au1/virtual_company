@@ -35,12 +35,14 @@ class ObservabilityFake:
 
     def __init__(self) -> None:
         self.events: list[str] = []
+        self.event_data: list[tuple[str, dict[str, object]]] = []
         self.metrics: list[tuple[str, dict[str, str]]] = []
         self.span_errors: list[str] = []
         self.updates: list[object] = []
 
-    def event(self, name: str, **_: object) -> None:
+    def event(self, name: str, **data: object) -> None:
         self.events.append(name)
+        self.event_data.append((name, data))
 
     @contextmanager
     def span(self, *_: object, **__: object):
@@ -89,6 +91,14 @@ async def test_instrumented_provider_preserves_original_error() -> None:
 
     assert "llm_request_failed" in observability.events
     assert any(name == "llm_request_failures_total" for name, _ in observability.metrics)
+    failure_event = next(
+        data for name, data in observability.event_data if name == "llm_request_failed"
+    )
+    assert failure_event["provider"] == "openai"
+    assert failure_event["model"] == "gpt-5.6-terra"
+    assert failure_event["role"] == "research"
+    assert failure_event["duration_ms"] >= 0
+    assert failure_event["error_type"] == "RuntimeError"
 
 
 @pytest.mark.asyncio

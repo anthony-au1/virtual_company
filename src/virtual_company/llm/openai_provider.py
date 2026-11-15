@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from typing import cast
 
+import httpx
 from openai import AsyncOpenAI, AuthenticationError, RateLimitError
 from pydantic import SecretStr
 
+from virtual_company.config import get_settings
 from virtual_company.llm.base import (
     LLMAuthenticationError,
     LLMConfigurationError,
@@ -40,7 +42,21 @@ class OpenAIProvider:
 
         self._model = model
         self._role = role
-        self._client = client or AsyncOpenAI(api_key=resolved_api_key)
+        if client is None:
+            settings = get_settings()
+            read_timeout = settings.openai_read_timeout_seconds
+            self._client = AsyncOpenAI(
+                api_key=resolved_api_key,
+                timeout=httpx.Timeout(
+                    connect=settings.openai_connect_timeout_seconds,
+                    read=read_timeout,
+                    write=read_timeout,
+                    pool=read_timeout,
+                ),
+                max_retries=settings.openai_max_retries,
+            )
+        else:
+            self._client = client
 
     @property
     def provider(self) -> str:

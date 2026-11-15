@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     llm_exploration_fact_extraction_provider: str | None = None
     llm_exploration_hypothesis_generation_provider: str | None = None
     openai_api_key: SecretStr | None = None
+    openai_connect_timeout_seconds: float = Field(default=5, gt=0)
+    openai_read_timeout_seconds: float = Field(default=120, gt=0)
+    openai_max_retries: int = Field(default=1, ge=0)
     openai_research_model: str = "gpt-6.1-terra"
     openai_extraction_model: str = "gpt-6-luna"
     openai_obligation_generation_model: str = "gpt-6.1-terra"
@@ -114,6 +117,15 @@ class Settings(BaseSettings):
         if isinstance(value, (bool, float)):
             raise ValueError(  # noqa: TRY004 - Pydantic uses ValueError for validation
                 "exploration_hypothesis_max_hypotheses must be an integer"
+            )
+        return value
+
+    @field_validator("openai_max_retries", mode="before")
+    @classmethod
+    def reject_non_integer_openai_max_retries(cls, value: object) -> object:
+        if isinstance(value, (bool, float)):
+            raise ValueError(  # noqa: TRY004 - Pydantic reports validator errors
+                "openai_max_retries must be an integer"
             )
         return value
 

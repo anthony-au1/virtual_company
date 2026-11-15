@@ -16,6 +16,50 @@ def test_json_logging_is_default_for_machine_readable_research_reports(
     assert Settings().log_format == "json"
 
 
+def test_openai_timeout_and_retry_defaults_and_environment_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "OPENAI_CONNECT_TIMEOUT_SECONDS",
+        "OPENAI_READ_TIMEOUT_SECONDS",
+        "OPENAI_MAX_RETRIES",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    defaults = Settings()
+    assert defaults.openai_connect_timeout_seconds == 5
+    assert defaults.openai_read_timeout_seconds == 120
+    assert defaults.openai_max_retries == 1
+
+    monkeypatch.setenv("OPENAI_CONNECT_TIMEOUT_SECONDS", "3.5")
+    monkeypatch.setenv("OPENAI_READ_TIMEOUT_SECONDS", "45")
+    monkeypatch.setenv("OPENAI_MAX_RETRIES", "0")
+    configured = Settings()
+    assert configured.openai_connect_timeout_seconds == 3.5
+    assert configured.openai_read_timeout_seconds == 45
+    assert configured.openai_max_retries == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("openai_connect_timeout_seconds", 0),
+        ("openai_connect_timeout_seconds", -1),
+        ("openai_read_timeout_seconds", 0),
+        ("openai_read_timeout_seconds", -1),
+        ("openai_max_retries", -1),
+        ("openai_max_retries", True),
+        ("openai_max_retries", 1.5),
+        ("openai_max_retries", "bad"),
+    ],
+)
+def test_invalid_openai_timeout_and_retry_settings_are_rejected(
+    field: str, value: object
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value})
+
+
 def test_research_limit_is_not_an_environment_setting() -> None:
     assert "research_max_candidate_pool_size" not in Settings.model_fields
 
