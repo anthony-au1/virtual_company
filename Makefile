@@ -6,9 +6,12 @@ WAIT_ATTEMPTS ?= 30
 	test lint backend-test backend-lint frontend-install frontend-dev \
 	frontend-build frontend-test frontend-lint frontend-format \
 	frontend-format-check frontend-e2e-install frontend-e2e \
-	research-observability research-cost research-log taskiq-probe
+	research-observability research-cost research-log taskiq-probe \
+	virtual-company-backup virtual-company-restore virtual-company-verify
 
 RESEARCH_REPORT_ARGS = $(if $(RUN_ID),--run-id $(RUN_ID),) $(if $(CAMPAIGN_ID),--campaign-id $(CAMPAIGN_ID),)
+SOURCE_DB ?= virtual_company
+BACKUP_DIR ?= $(HOME)/virtual-company-backups
 
 start: up
 
@@ -58,6 +61,15 @@ build:
 
 taskiq-probe:
 	$(COMPOSE) exec worker uv run --no-dev python -m virtual_company.task_queue.enqueue_probe
+
+virtual-company-backup:
+	@COMPOSE="$(COMPOSE)" SOURCE_DB="$(SOURCE_DB)" BACKUP_DIR="$(BACKUP_DIR)" bash scripts/backup-virtual-company.sh
+
+virtual-company-restore:
+	@COMPOSE="$(COMPOSE)" BACKUP="$(BACKUP)" TARGET_DB="$(TARGET_DB)" bash scripts/restore-virtual-company.sh
+
+virtual-company-verify:
+	@COMPOSE="$(COMPOSE)" BACKUP="$(BACKUP)" TARGET_DB="$(TARGET_DB)" bash scripts/verify-virtual-company.sh
 
 backend-test:
 	uv run pytest

@@ -262,3 +262,164 @@ It uses an isolated temporary schema and removes it after the test. Set
 `QUALIFICATION_TEST_DATABASE_URL` to override the default local PostgreSQL URL.
 Run the isolated initial-migration check with
 `RUN_MIGRATION_DB_TESTS=true uv run pytest tests/integration/test_initial_migration_postgres.py`.
+
+## Virtual Company Database Backup & Restore
+
+These utilities back up and restore a complete PostgreSQL application database.
+Snapshots include Campaigns, Research runs and results, companies, Research evidence
+and qualifications, Exploration runs and results, workflow execution metadata, and
+future application tables included by PostgreSQL `pg_dump`. They preserve UUIDs and
+relationships and never run application workflows or call external providers.
+
+### Prerequisites and backup location
+
+- Docker Compose must already be running and the `postgres` service must be healthy.
+- The scripts use PostgreSQL client tools inside that already-running container;
+  they do not start or restart services.
+- Backups are written on the host to `$HOME/virtual-company-backups` by default,
+  outside the repository and Docker-managed volumes. They survive
+  `docker compose down -v`. Override with `BACKUP_DIR`.
+- A backup directory contains `database.dump` (PostgreSQL custom format),
+  `database.dump.sha256`, and `manifest.json`. The manifest records source identity
+  without credentials, versions, Alembic revision, Git commit, and row counts.
+
+### Create and identify a backup
+
+First ensure no workflow execution is `QUEUED` or `RUNNING`. The backup script checks
+this and refuses to continue if active executions exist. Avoid starting database
+writes while the snapshot is being made.
+
+```bash
+make virtual-company-backup
+```
+
+The command prints the timestamped backup directory. To choose another host path:
+
+```bash
+make virtual-company-backup BACKUP_DIR="$HOME/Backups/Virtual Company"
+```
+
+To back up a different database in the same Compose PostgreSQL server:
+
+```bash
+make virtual-company-backup SOURCE_DB=virtual_company
+```
+
+List and inspect backups without exposing credentials:
+
+```bash
+find "$HOME/virtual-company-backups" -mindepth 2 -maxdepth 2 \
+  -name manifest.json -print
+cat "$HOME/virtual-company-backups/<backup-directory>/manifest.json"
+```
+
+Do not commit backups to Git. They contain company data and source excerpts. Keep
+them on a protected host or external storage location. Deleting Compose containers
+and volumes, including with `docker compose down -v`, does not delete files in this
+host directory.
+
+### Restore into a new disposable database
+
+Restore always creates a new database whose name starts with
+`virtual_company_restore_`. It refuses all existing database names, so it cannot
+replace the normal `virtual_company` database or any existing Exploration data.
+There is no overwrite mode.
+
+```bash
+make virtual-company-restore \
+  BACKUP="$HOME/virtual-company-backups/<backup-directory>" \
+  TARGET_DB=virtual_company_restore_01
+```
+
+You may pass either the backup directory or its `database.dump` file. The manifest,
+checksum, custom archive, Alembic revision, and PostgreSQL major version are checked
+before creating the target. Restore does not run migrations; use matching application
+code/schema or resolve a reported revision mismatch separately. If restore fails
+after target creation, the isolated target is intentionally left in place for
+inspection; choose a different fresh target database for the next attempt.
+
+### Verify the restored data
+
+```bash
+make virtual-company-verify \
+  BACKUP="$HOME/virtual-company-backups/<backup-directory>" \
+  TARGET_DB=virtual_company_restore_01
+```
+
+Verification is read-only. It checks PostgreSQL connectivity, the manifest and
+checksum, Alembic revision, row counts for every application model table, and
+foreign-key validity. It also checks UUID-backed relationships, Research evidence
+and qualification references, Exploration runs, facts, hypotheses, and evidence
+associations, workflow execution consistency, and that a completed baseline has no
+queued or running executions. It does not create runs, publish TaskIQ messages, or
+initialize providers.
+
+The command-line entry points are `scripts/virtual_company_backup.py`,
+`scripts/backup-virtual-company.sh`, `scripts/restore-virtual-company.sh`, and
+`scripts/verify-virtual-company.sh`.
+
+### Connect the application to a restored database
+
+Restoring a database does **not** switch the running API or worker. The current
+Compose file sets `DATABASE_URL` directly for both services, so changing `.env`
+alone does not switch them. When you intentionally want to run the app against a
+restored target, use a temporary Compose override and recreate only `app` and
+`worker`:
+
+```bash
+TARGET_DB=virtual_company_restore_01
+current_url="$(docker compose config --format json | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["services"]["app"]["environment"]["DATABASE_URL"])')"
+export RESTORE_DATABASE_URL="${current_url%/*}/$TARGET_DB"
+override_file="$(mktemp)"
+chmod 600 "$override_file"
+cat >"$override_file" <<'YAML'
+services:
+  app:
+    environment:
+      DATABASE_URL: ${RESTORE_DATABASE_URL}
+  worker:
+    environment:
+      DATABASE_URL: ${RESTORE_DATABASE_URL}
+YAML
+docker compose -f docker-compose.yml -f "$override_file" up -d app worker
+rm -f "$override_file"
+unset RESTORE_DATABASE_URL
+```
+
+This derives the existing local database URL from rendered Compose configuration,
+changes only its database name, and keeps credentials out of the repository and
+command output. The override is temporary; it does not change `docker-compose.yml`.
+To return the API and worker to the normal development database, run:
+
+```bash
+docker compose up -d app worker
+```
+
+Compose may recreate the API and worker when switching either direction. Do not
+point workers at a restored database while it contains unintended queued jobs. The
+backup preflight and verification require terminal execution records for the saved
+snapshot. Exploration execution itself can use external providers and incur costs;
+only backup, restore, and verification are provider-free.
+
+### What happens to later Exploration results
+
+A full database restore reproduces the database as it existed when the backup was
+made. Exploration results created after that snapshot are not included in the
+restored copy. Restoring to the separate `virtual_company_restore_*` database
+leaves the original database and its later Exploration results intact. This tool
+does not merge Research rows into an existing database.
+
+### Troubleshooting
+
+- **PostgreSQL service is unavailable:** start/repair it separately, then retry;
+  backup and restore scripts intentionally do not start Compose services.
+- **Active execution refusal:** wait for all Research and Exploration work to reach
+  a terminal state, then run backup again.
+- **Existing target refusal:** choose a different `virtual_company_restore_*` name.
+  Existing databases are never dropped or cleaned automatically.
+- **Checksum/archive failure:** retain the source backup, check the copied files,
+  and do not attempt to use a partial backup.
+- **Revision mismatch:** restore with the matching application version or perform a
+  separately reviewed migration on a disposable database; the script never
+  migrates automatically.
