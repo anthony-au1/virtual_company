@@ -69,7 +69,7 @@ virtual-company-restore:
 	@COMPOSE="$(COMPOSE)" BACKUP="$(BACKUP)" TARGET_DB="$(TARGET_DB)" bash scripts/restore-virtual-company.sh
 
 virtual-company-verify:
-	@COMPOSE="$(COMPOSE)" BACKUP="$(BACKUP)" TARGET_DB="$(TARGET_DB)" bash scripts/verify-virtual-company.sh
+	@COMPOSE="$(COMPOSE)" BACKUP="$(BACKUP)" bash scripts/verify-virtual-company.sh
 
 backend-test:
 	uv run pytest

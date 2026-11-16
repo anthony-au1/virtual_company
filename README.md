@@ -262,11 +262,14 @@ Criterion JSON contains requirement levels and Evidence IDs, not source content.
 
 ## Virtual Company Database Backup & Restore
 
-These utilities back up and restore a complete PostgreSQL application database.
-Snapshots include Campaigns, Research runs and results, companies, Research evidence
-and qualifications, Exploration runs and results, workflow execution metadata, and
-future application tables included by PostgreSQL `pg_dump`. They preserve UUIDs and
-relationships and never run application workflows or call external providers.
+These utilities back up and restore one complete PostgreSQL application database
+using PostgreSQL's native `pg_dump` and `pg_restore` tools. A custom-format dump
+includes the selected database's schema and data, indexes, constraints, foreign
+keys, triggers, sequences and their values, large objects, and Alembic version
+table. PostgreSQL provides the complete object list; the script does not maintain a
+table allowlist. Backups do not include other databases, cluster roles/tablespaces,
+Redis queue state, or a full PostgreSQL cluster. The commands do not run application
+workflows or call external providers.
 
 ### Prerequisites and backup location
 
@@ -278,13 +281,14 @@ relationships and never run application workflows or call external providers.
   `docker compose down -v`. Override with `BACKUP_DIR`.
 - A backup directory contains `database.dump` (PostgreSQL custom format),
   `database.dump.sha256`, and `manifest.json`. The manifest records source identity
-  without credentials, versions, Alembic revision, Git commit, and row counts.
+  without credentials, PostgreSQL/tool versions, Alembic revision, Git commit, and
+  checksum. Backup files are private to the current host user.
 
 ### Create and identify a backup
 
-First ensure no workflow execution is `QUEUED` or `RUNNING`. The backup script checks
-this and refuses to continue if active executions exist. Avoid starting database
-writes while the snapshot is being made.
+The backup script refuses to start when it finds a queued or running workflow
+execution. PostgreSQL `pg_dump` takes a transaction-consistent snapshot, so ordinary
+concurrent database writes do not require application tables to be copied manually.
 
 ```bash
 make virtual-company-backup
@@ -329,27 +333,27 @@ make virtual-company-restore \
 ```
 
 You may pass either the backup directory or its `database.dump` file. The manifest,
-checksum, custom archive, Alembic revision, and PostgreSQL major version are checked
-before creating the target. Restore does not run migrations; use matching application
-code/schema or resolve a reported revision mismatch separately. If restore fails
-after target creation, the isolated target is intentionally left in place for
-inspection; choose a different fresh target database for the next attempt.
+checksum, custom archive, and PostgreSQL major version are checked before creating
+the target. Alembic revision and Git commit are informational; an older valid backup
+is not rejected merely because this checkout has advanced. Restore does not run
+migrations. The restore runs in one PostgreSQL transaction and stops on the first
+error. If it fails, schema/data changes roll back and the newly created empty target
+database remains for inspection; choose a different fresh target for the next
+attempt. The source and any existing database are never dropped, replaced, or
+cleaned.
 
 ### Verify the restored data
 
 ```bash
 make virtual-company-verify \
-  BACKUP="$HOME/virtual-company-backups/<backup-directory>" \
-  TARGET_DB=virtual_company_restore_01
+  BACKUP="$HOME/virtual-company-backups/<backup-directory>"
 ```
 
-Verification is read-only. It checks PostgreSQL connectivity, the manifest and
-checksum, Alembic revision, row counts for every application model table, and
-foreign-key validity. It also checks UUID-backed relationships, Research evidence
-and qualification references, Exploration runs, facts, hypotheses, and evidence
-associations, workflow execution consistency, and that a completed baseline has no
-queued or running executions. It does not create runs, publish TaskIQ messages, or
-initialize providers.
+Verification checks that the backup files and manifest exist, the archive is
+nonempty, the SHA-256 checksum matches, and PostgreSQL can read the archive listing.
+It does not restore the archive or prove that a full restore will succeed. Perform
+an occasional restore into a new disposable database to validate recovery end to
+end. `verify` does not require `TARGET_DB`.
 
 The command-line entry points are `scripts/virtual_company_backup.py`,
 `scripts/backup-virtual-company.sh`, `scripts/restore-virtual-company.sh`, and
@@ -395,9 +399,9 @@ docker compose up -d app worker
 
 Compose may recreate the API and worker when switching either direction. Do not
 point workers at a restored database while it contains unintended queued jobs. The
-backup preflight and verification require terminal execution records for the saved
-snapshot. Exploration execution itself can use external providers and incur costs;
-only backup, restore, and verification are provider-free.
+backup preflight checks for queued/running workflow rows; archive verification only
+checks files and archive readability. Exploration execution itself can use external
+providers and incur costs; backup, restore, and verification are provider-free.
 
 ### What happens to later Exploration results
 
@@ -417,6 +421,5 @@ does not merge Research rows into an existing database.
   Existing databases are never dropped or cleaned automatically.
 - **Checksum/archive failure:** retain the source backup, check the copied files,
   and do not attempt to use a partial backup.
-- **Revision mismatch:** restore with the matching application version or perform a
-  separately reviewed migration on a disposable database; the script never
-  migrates automatically.
+- **PostgreSQL major version mismatch:** restore with a compatible PostgreSQL
+  version. The script does not migrate the database or rewrite the archive.
