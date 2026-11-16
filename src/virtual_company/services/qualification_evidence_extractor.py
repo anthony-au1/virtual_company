@@ -181,7 +181,9 @@ class QualificationEvidenceExtractor:
                     response = await self._provider.generate_structured(
                         system_prompt=extract_qualification_facts_system_prompt(),
                         user_prompt=extract_qualification_facts_user_prompt(
-                            criteria, prompt_evidence
+                            criteria,
+                            prompt_evidence,
+                            campaign_description=campaign.description,
                         ),
                         response_model=QualificationFacts,
                     )

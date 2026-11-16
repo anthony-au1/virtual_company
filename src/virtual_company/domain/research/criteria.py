@@ -60,6 +60,7 @@ class CompanySizeCriteria(BaseModel):
 
 
 class CampaignForQualification(Protocol):
+    description: str | None
     target_market: str | None
     industry: str | None
     keywords: list[str]
@@ -80,9 +81,7 @@ def campaign_criteria(campaign: CampaignForQualification) -> list[CampaignCriter
         criteria.append(CampaignCriterion("target_market", campaign.target_market))
     if campaign.industry:
         criteria.append(CampaignCriterion("industry", campaign.industry))
-    criteria.extend(
-        CampaignCriterion("keyword", label) for label in campaign.keywords
-    )
+    criteria.extend(CampaignCriterion("keyword", label) for label in campaign.keywords)
     if campaign.company_size:
         for bound_name, operator in (("min", ">="), ("max", "<=")):
             bound = getattr(campaign.company_size, bound_name)

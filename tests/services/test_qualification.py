@@ -25,6 +25,7 @@ def campaign(
     *, minimum: int | None = None, maximum: int | None = None
 ) -> SimpleNamespace:
     return SimpleNamespace(
+        description=None,
         target_market="Australia",
         industry="fintech",
         keywords=["Kafka"],

@@ -69,11 +69,13 @@ from virtual_company.workflows.research.nodes import (
 )
 from virtual_company.workflows.research.observability import SearchProvenanceRecorder
 from virtual_company.workflows.research.prompts import (
+    COMPANY_QUERY_PROMPT,
     EXTRACT_COMPANY_CANDIDATES_PROMPT,
     EXTRACT_COMPANY_EVIDENCE_PROMPT,
     EXTRACT_QUALIFICATION_FACTS_PROMPT,
     FOLLOWUP_COMPANY_QUERY_PROMPT,
     RANK_COMPANY_CANDIDATES_PROMPT,
+    company_query_system_prompt,
     extract_company_candidates_system_prompt,
     extract_company_evidence_system_prompt,
     followup_company_query_system_prompt,
@@ -1005,8 +1007,8 @@ def test_ranking_payload_keeps_same_url_records_with_different_content_distinct(
 def test_evidence_extraction_prompt_requires_company_specific_keyword_support() -> None:
     prompt = extract_company_evidence_system_prompt().lower()
 
-    assert EXTRACT_COMPANY_EVIDENCE_PROMPT.version == "v4"
-    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v4"
+    assert EXTRACT_COMPANY_EVIDENCE_PROMPT.version == "v5"
+    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v5"
     assert "company meaningfully engages with the requested concept" in prompt
     assert "a topical mention alone is not enough" in prompt
     assert "an unrelated article containing the keyword does not qualify" in prompt
@@ -1023,6 +1025,17 @@ def test_evidence_extraction_prompt_requires_company_specific_keyword_support() 
     )
     assert "reusing the same exact excerpt is allowed" in prompt
     assert "spring boot alone does not establish spring" in prompt
+
+
+def test_company_query_prompt_uses_industry_context_without_logical_guesses() -> None:
+    prompt = company_query_system_prompt().lower()
+    assert COMPANY_QUERY_PROMPT.version == "v6"
+    assert "campaign description" in prompt
+    assert "when the campaign specifies an industry" in prompt
+    assert "equivalent industry terminology" in prompt
+    assert "do not require the literal industry phrase" in prompt
+    assert "slash or other separator means and or or" in prompt
+    assert "do not omit a material qualifier" in prompt
 
 
 @pytest.mark.asyncio
@@ -2733,7 +2746,7 @@ async def test_evidence_persistence_collapses_same_statement_across_sources() ->
 
 def test_followup_prompt_requires_diverse_company_attributable_strategies() -> None:
     prompt = followup_company_query_system_prompt()
-    assert FOLLOWUP_COMPANY_QUERY_PROMPT.version == "v5"
+    assert FOLLOWUP_COMPANY_QUERY_PROMPT.version == "v6"
     for instruction in (
         "Use complementary research strategies across the query set",
         "Do not target all queries at the same site, domain, or source family",
@@ -2748,6 +2761,10 @@ def test_followup_prompt_requires_diverse_company_attributable_strategies() -> N
         "must not be targeted again except as necessary context",
         "Preserve each exact requested keyword",
         "do not introduce aliases or implications",
+        "For an industry criterion, use the campaign description",
+        "Equivalent terminology may be useful",
+        "do not assume separators mean AND or OR",
+        "business category and material qualifiers",
         "Choose sources relevant to each keyword",
         "when the query limit allows",
         "Do not repeat prior queries",

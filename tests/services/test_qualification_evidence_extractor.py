@@ -73,6 +73,7 @@ class ProviderSequence:
 
 def campaign(keywords: list[str] | None = None) -> SimpleNamespace:
     return SimpleNamespace(
+        description=None,
         target_market="Australia",
         industry="fintech",
         keywords=keywords or ["Kafka"],
@@ -122,7 +123,7 @@ async def test_different_wording_reaches_the_same_semantic_schema(
     assert result.facts == output
     assert wording in str(provider.calls[0]["user"])
     assert provider.calls[0]["model"] is QualificationFacts
-    assert "EXACT PROPERTY" in str(provider.calls[0]["system"])
+    assert "property requested by THIS CRITERION" in str(provider.calls[0]["system"])
     assert "prefer unknown" in str(provider.calls[0]["system"])
 
 
@@ -217,7 +218,7 @@ async def test_extraction_records_correlated_fact_and_prompt_provenance(
 
     assert result.provenance_by_criterion["criterion_2"] == {
         "prompt_name": "extract_qualification_facts",
-        "prompt_version": "v4",
+        "prompt_version": "v5",
         "model": "test-model",
         "evaluation_stage": "intermediate",
         "investigation_round": "1",
@@ -233,21 +234,32 @@ async def test_extraction_records_correlated_fact_and_prompt_provenance(
     assert record.context["criterion_id"] == "criterion_2"
     assert record.context["fact_state"] == "supported"
     assert record.context["evidence_ids"] == [str(item.id)]
-    assert record.context["prompt_version"] == "v4"
+    assert record.context["prompt_version"] == "v5"
     assert record.context["model"] == "test-model"
     assert "api_key" not in caplog.text.casefold()
 
 
-def test_v3_prompt_requires_excerpt_entailment_and_preserves_job_evidence() -> None:
+def test_v4_prompt_requires_excerpt_entailment_and_preserves_job_evidence() -> None:
     from virtual_company.workflows.research.prompts import (
         EXTRACT_QUALIFICATION_FACTS_PROMPT,
         extract_qualification_facts_system_prompt,
     )
 
     prompt = extract_qualification_facts_system_prompt()
-    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v4"
+    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v5"
     for instruction in (
-        "EXACT PROPERTY",
+        "satisfies the property requested by THIS CRITERION",
+        "business category, market segment, or principal business activities",
+        "the literal label need not appear",
+        "Use the campaign description only to interpret the industry subject",
+        "It is context, not evidence that the company qualifies",
+        "do not automatically treat slash, ampersand",
+        "do not turn every word into a separate hard criterion",
+        "without ignoring material qualifiers",
+        "materially ambiguous or unproven, return unknown",
+        "This semantic treatment is specific to industry",
+        "For keywords, keep the requested concept exact",
+        "infer unsupported company activity, business models, or qualifiers",
         "Normalize spelling, not meaning",
         "evidence_text",
         "they are not proof",
@@ -283,6 +295,97 @@ def test_keyword_qualification_prompt_is_concept_neutral() -> None:
     evidence_prompt = extract_company_evidence_system_prompt().lower()
     assert "doing, using, offering, adopting, implementing" in evidence_prompt
     assert "company-specific context" in evidence_prompt
+
+
+def test_industry_evidence_prompt_allows_supported_category_equivalence() -> None:
+    from virtual_company.workflows.research.prompts import (
+        extract_company_evidence_system_prompt,
+    )
+
+    prompt = extract_company_evidence_system_prompt().lower()
+    for instruction in (
+        "business category, market segment, or principal activities",
+        "do not require the literal industry phrase",
+        "clearly equivalent terminology",
+        "complete intended category",
+        "campaign description only to interpret",
+        "it is context, not evidence about the company",
+        "do not assume a slash or other separator means and or or",
+        "do not ignore material qualifiers",
+        "materially ambiguous",
+        "this company's own business activity",
+    ):
+        assert instruction in prompt
+    assert "a topical mention alone is not enough" in prompt
+    assert "company meaningfully engages with the requested concept" in prompt
+
+
+@pytest.mark.parametrize(
+    ("industry", "description"),
+    [
+        (
+            "AI Workflow Automation / B2B SaaS",
+            (
+                "Research B2B SaaS companies offering AI-powered workflow automation, "
+                "business process automation, and AI agents for small and medium-sized businesses."
+            ),
+        ),
+        (
+            "EV Charging / CleanTech",
+            (
+                "Research Australian companies providing electric vehicle charging "
+                "infrastructure, charging management platforms, and smart energy solutions."
+            ),
+        ),
+        (
+            "Sustainable Skincare / E-commerce",
+            (
+                "Identify Australian direct-to-consumer skincare brands focused on natural "
+                "ingredients, sustainable packaging, ethical production, and environmentally "
+                "conscious consumers."
+            ),
+        ),
+    ],
+)
+def test_qualification_prompt_keeps_industry_and_description_as_context(
+    industry: str, description: str
+) -> None:
+    from virtual_company.workflows.research.prompts import (
+        extract_qualification_facts_user_prompt,
+    )
+
+    item = evidence("Company product and operations excerpt.", criterion="industry")
+    payload = json.loads(
+        extract_qualification_facts_user_prompt(
+            [
+                {
+                    "criterion_id": "criterion_1",
+                    "criterion": "industry",
+                    "subject": industry,
+                }
+            ],
+            [item],
+            campaign_description=description,
+        )
+    )
+    assert payload["campaign_description"] == description
+    assert payload["categorical_criteria"][0]["subject"] == industry
+    assert payload["evidence"][0]["evidence_text"] == item.evidence_text
+    assert "campaign_description" not in payload["evidence"][0]
+
+
+@pytest.mark.asyncio
+async def test_extractor_passes_campaign_description_as_prompt_context() -> None:
+    model = campaign()
+    model.description = "Companies offering a specific business service."
+    provider = ProviderStub(QualificationFacts())
+    item = evidence("A company service page excerpt.", criterion="industry")
+
+    result = await QualificationEvidenceExtractor(provider).extract(model, [item])
+
+    assert result.status is QualificationFactsCacheStatus.SUCCESS
+    prompt_payload = json.loads(provider.calls[0]["user"])
+    assert prompt_payload["campaign_description"] == model.description
 
 
 @pytest.mark.asyncio
@@ -618,7 +721,9 @@ def test_prompt_contains_only_compact_evidence_and_criteria() -> None:
                 }
             ],
             [item],
+            campaign_description=None,
         )
     )
     assert payload["evidence"][0]["id"] == str(item.id)
+    assert payload["campaign_description"] is None
     assert "source_url" not in payload["evidence"][0]

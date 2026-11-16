@@ -234,6 +234,7 @@ CASES = (
 
 def _campaign(case: EvaluationCase) -> SimpleNamespace:
     return SimpleNamespace(
+        description=None,
         target_market=case.subject if case.criterion == "target_market" else None,
         industry=case.subject if case.criterion == "industry" else None,
         keywords=list(case.keywords or (case.subject,))
