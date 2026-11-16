@@ -275,7 +275,7 @@ workflows or call external providers.
 
 - Docker Compose must already be running and the `postgres` service must be healthy.
 - The scripts use PostgreSQL client tools inside that already-running container;
-  they do not start or restart services.
+  backup, disposable restore, and verification do not start or restart services.
 - Backups are written on the host to `$HOME/virtual-company-backups` by default,
   outside the repository and Docker-managed volumes. They survive
   `docker compose down -v`. Override with `BACKUP_DIR`.
@@ -355,9 +355,51 @@ It does not restore the archive or prove that a full restore will succeed. Perfo
 an occasional restore into a new disposable database to validate recovery end to
 end. `verify` does not require `TARGET_DB`.
 
+### Recover a lost primary database
+
+`virtual-company-recover` is for disaster recovery after losing the PostgreSQL data
+volume. It restores a backup of the primary `virtual_company` database into the
+fresh, uninitialized `virtual_company` database created by the local Compose
+PostgreSQL initialization. It is separate from disposable restore: recovery never
+accepts a restore target name and never replaces an existing database.
+
+```bash
+make virtual-company-recover \
+  BACKUP="$HOME/virtual-company-backups/<backup-directory>"
+
+make up
+```
+
+Recovery verifies the backup manifest/checksum and archive, checks that the resolved
+Compose configuration is this repository's PostgreSQL 16 setup with its persistent
+`postgres_data` volume, and refuses to continue while `app` or `worker` is running.
+It starts only `postgres` if needed, waits for readiness, and refuses if the primary
+database contains any user-created objects or Alembic state. An initialized schema is
+refused even when its tables contain no application rows. The restore uses one
+transaction and performs schema/catalog checks afterward without running migrations.
+If recovery started PostgreSQL, it stops only that service afterward; the PostgreSQL
+data volume is retained. If PostgreSQL was already running, its state is preserved.
+The command never starts the application or worker and never removes volumes. A
+successful recovery is then used by the normal `make up` flow without changing
+`DATABASE_URL`; `make up` applies the repository's regular migrations before starting
+the application stack.
+
+Use the commands for these distinct purposes:
+
+- `virtual-company-backup` creates a host-side database archive.
+- `virtual-company-verify` checks archive files, checksum, and archive readability.
+- `virtual-company-restore` restores to a new `virtual_company_restore_*` database for
+  inspection and never touches the primary database.
+- `virtual-company-recover` restores to the primary database only when it is
+  demonstrably fresh and uninitialized.
+
+If the Compose identity or database state is ambiguous, recovery fails closed. It is
+not a replacement for keeping backups outside the Docker volume, and it does not
+recover Redis queue state or cluster-global PostgreSQL roles/tablespaces.
+
 The command-line entry points are `scripts/virtual_company_backup.py`,
-`scripts/backup-virtual-company.sh`, `scripts/restore-virtual-company.sh`, and
-`scripts/verify-virtual-company.sh`.
+`scripts/backup-virtual-company.sh`, `scripts/restore-virtual-company.sh`,
+`scripts/verify-virtual-company.sh`, and `scripts/recover-virtual-company.sh`.
 
 ### Connect the application to a restored database
 

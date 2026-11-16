@@ -76,6 +76,59 @@ class FakePostgres:
             raise backup.BackupError(self.restore_error)
 
 
+class FakeRecoveryPostgres:
+    user = "virtual_company"
+    default_database = "virtual_company"
+
+    def __init__(self, *, unsafe: str | None = None, restore_error: str | None = None) -> None:
+        self.unsafe = unsafe
+        self.restore_error = restore_error
+        self.restored = False
+        self.commands: list[str] = []
+
+    def database_exists(self, database: str) -> bool:
+        self.commands.append("exists:" + database)
+        return True
+
+    def query_json(self, database: str, sql: str) -> dict[str, object]:
+        self.commands.append("state:" + database)
+        initialized = self.unsafe == "schema" or self.restored
+        user_objects = (
+            1 if self.unsafe == "data" else 5 if initialized else 0
+        )
+        return {
+            "database": database,
+            "user": "virtual_company",
+            "database_owner": "virtual_company",
+            "extra_schemas": 0,
+            "user_objects": user_objects,
+            "alembic_table": initialized,
+            "application_tables": 4 if initialized else 0,
+            "foreign_keys": 2 if initialized else 0,
+            "indexes": 3 if initialized else 0,
+        }
+
+    def count(self, database: str, sql: str) -> int:
+        self.commands.append("count_alembic:" + database)
+        return 1 if self.restored else 0
+
+    def query(self, database: str, sql: str) -> str:
+        self.commands.append("version:" + database)
+        return "16.4"
+
+    def inspect_archive(self, archive) -> None:
+        self.commands.append("inspect")
+        assert archive.read() == ARCHIVE_BYTES
+        archive.seek(0)
+
+    def restore_primary(self, archive) -> None:
+        self.commands.append("restore:virtual_company")
+        assert archive.read() == ARCHIVE_BYTES
+        if self.restore_error:
+            raise backup.BackupError(self.restore_error)
+        self.restored = True
+
+
 def _write_backup(
     directory: Path,
     *,
@@ -112,6 +165,31 @@ def _write_backup(
         json.dumps(manifest), encoding="utf-8"
     )
     return directory
+
+
+def _recovery_compose_config() -> dict[str, object]:
+    return {
+        "name": "virtual_company",
+        "services": {
+            "app": {},
+            "worker": {},
+            "postgres": {
+                "image": "postgres:16",
+                "environment": {
+                    "POSTGRES_DB": "virtual_company",
+                    "POSTGRES_USER": "virtual_company",
+                },
+                "volumes": [
+                    {
+                        "type": "volume",
+                        "source": "postgres_data",
+                        "target": "/var/lib/postgresql/data",
+                    }
+                ],
+            },
+        },
+        "volumes": {"postgres_data": {"name": "virtual_company_postgres_data"}},
+    }
 
 
 def test_load_manifest_accepts_legacy_backup_with_removed_metadata(tmp_path: Path) -> None:
@@ -329,4 +407,193 @@ def test_cli_verify_needs_only_backup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(backup, "verify_backup", lambda *, backup: seen.append(backup) or {})
 
     assert backup.main(["verify"]) == 0
+    assert seen == ["/tmp/backup"]
+
+
+def test_recovery_compose_requires_local_project_and_persistent_primary_volume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _recovery_compose_config()
+
+    def run(command, **kwargs):
+        if command[1:3] == ["context", "show"]:
+            stdout = "default\n"
+        elif command[1:3] == ["context", "inspect"]:
+            stdout = json.dumps([{"Endpoints": {"docker": {"Host": "unix:///var/run/docker.sock"}}}])
+        else:
+            stdout = json.dumps(config)
+        return SimpleNamespace(stdout=stdout, stderr="")
+
+    monkeypatch.setattr(
+        backup,
+        "_run",
+        run,
+    )
+
+    backup._validate_recovery_compose(["docker", "compose"])
+
+    config["name"] = "another_project"
+    with pytest.raises(backup.RecoveryError, match="restricted to this repository"):
+        backup._validate_recovery_compose(["docker", "compose"])
+
+
+@pytest.mark.parametrize("app_running", ["app", "worker"])
+def test_recovery_refuses_running_application_services(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, app_running: str
+) -> None:
+    service_state = {"app": app_running == "app", "worker": app_running == "worker", "postgres": False}
+    calls: list[list[str]] = []
+    monkeypatch.setattr(backup, "_validate_recovery_compose", lambda compose: None)
+    monkeypatch.setattr(backup, "_running_services", lambda compose, *services: any(service_state[s] for s in services))
+    monkeypatch.setattr(backup, "_run", lambda command, **kwargs: calls.append(list(command)) or SimpleNamespace(stdout="", stderr=""))
+    directory = _write_backup(tmp_path / "backup")
+
+    with pytest.raises(backup.RecoveryError, match="app or worker service is running"):
+        backup.recover_primary_database(backup=str(directory))
+    assert calls == []
+
+
+@pytest.mark.parametrize("unsafe", ["schema", "data"])
+def test_recovery_refuses_initialized_primary_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe: str,
+) -> None:
+    postgres = FakeRecoveryPostgres(unsafe=unsafe)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(backup, "_validate_recovery_compose", lambda compose: None)
+    monkeypatch.setattr(backup, "_running_services", lambda compose, *services: False)
+    monkeypatch.setattr(backup.ComposePostgres, "connect", lambda **kwargs: postgres)
+    monkeypatch.setattr(backup, "_wait_for_primary", lambda compose: None)
+    monkeypatch.setattr(backup, "_run", lambda command, **kwargs: calls.append(list(command)) or SimpleNamespace(stdout="", stderr=""))
+    directory = _write_backup(tmp_path / "backup")
+
+    with pytest.raises(backup.RecoveryError, match="initialized or contains user-created objects"):
+        backup.recover_primary_database(backup=str(directory))
+
+    assert "restore:virtual_company" not in postgres.commands
+    assert calls[-1][-2:] == ["stop", "postgres"]
+    assert "-v" not in calls[-1]
+
+
+def test_recovery_uses_primary_database_and_stops_only_owned_postgres(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    postgres = FakeRecoveryPostgres()
+    service_state = {"app": False, "worker": False, "postgres": False}
+    lifecycle: list[list[str]] = []
+    monkeypatch.setattr(backup, "_validate_recovery_compose", lambda compose: None)
+
+    def is_running(compose, *services):
+        return any(service_state[service] for service in services)
+
+    def compose_run(command, **kwargs):
+        lifecycle.append(list(command))
+        return SimpleNamespace(stdout="", stderr="")
+
+    monkeypatch.setattr(backup, "_running_services", is_running)
+    monkeypatch.setattr(backup, "_run", compose_run)
+    monkeypatch.setattr(backup, "_wait_for_primary", lambda compose: None)
+    monkeypatch.setattr(backup.ComposePostgres, "connect", lambda **kwargs: postgres)
+    directory = _write_backup(tmp_path / "backup")
+
+    backup.recover_primary_database(backup=str(directory))
+
+    assert postgres.commands == [
+        "exists:virtual_company",
+        "state:virtual_company",
+        "version:virtual_company",
+        "inspect",
+        "restore:virtual_company",
+        "state:virtual_company",
+        "count_alembic:virtual_company",
+    ]
+    assert lifecycle[0][-4:] == ["up", "-d", "--no-deps", "postgres"]
+    assert lifecycle[-1][-2:] == ["stop", "postgres"]
+    assert all("-v" not in command for command in lifecycle)
+
+
+def test_recovery_preserves_previously_running_postgres(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    postgres = FakeRecoveryPostgres()
+    lifecycle: list[list[str]] = []
+    monkeypatch.setattr(backup, "_validate_recovery_compose", lambda compose: None)
+    monkeypatch.setattr(backup, "_running_services", lambda compose, *services: "postgres" in services)
+    monkeypatch.setattr(backup, "_run", lambda command, **kwargs: lifecycle.append(list(command)) or SimpleNamespace(stdout="", stderr=""))
+    monkeypatch.setattr(backup.ComposePostgres, "connect", lambda **kwargs: postgres)
+    directory = _write_backup(tmp_path / "backup")
+
+    backup.recover_primary_database(backup=str(directory))
+
+    assert not any(command[-2:] == ["stop", "postgres"] for command in lifecycle)
+    assert not any(command[-1:] == ["postgres"] and "up" in command for command in lifecycle)
+
+
+def test_recovery_native_restore_targets_primary_transactionally(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    commands: list[tuple[list[str], dict[str, object]]] = []
+
+    def run(command, **kwargs):
+        commands.append((list(command), kwargs))
+        return SimpleNamespace(stdout="", stderr="")
+
+    monkeypatch.setattr(backup, "_run", run)
+    postgres = backup.ComposePostgres(
+        ["docker", "compose"], "virtual_company", "virtual_company"
+    )
+    archive_path = tmp_path / "archive.dump"
+    archive_path.write_bytes(ARCHIVE_BYTES)
+    with archive_path.open("rb") as archive:
+        postgres.restore_primary(archive)
+
+    command, kwargs = commands[0]
+    assert command == [
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        "postgres",
+        "pg_restore",
+        "--exit-on-error",
+        "--single-transaction",
+        "-U",
+        "virtual_company",
+        "-d",
+        "virtual_company",
+    ]
+    assert kwargs["stdin"] is not None
+
+
+def test_recovery_propagates_restore_failure_and_stops_owned_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    postgres = FakeRecoveryPostgres(restore_error="archive restore failed")
+    lifecycle: list[list[str]] = []
+    monkeypatch.setattr(backup, "_validate_recovery_compose", lambda compose: None)
+    monkeypatch.setattr(backup, "_running_services", lambda compose, *services: False)
+    monkeypatch.setattr(backup, "_run", lambda command, **kwargs: lifecycle.append(list(command)) or SimpleNamespace(stdout="", stderr=""))
+    monkeypatch.setattr(backup, "_wait_for_primary", lambda compose: None)
+    monkeypatch.setattr(backup.ComposePostgres, "connect", lambda **kwargs: postgres)
+    directory = _write_backup(tmp_path / "backup")
+
+    with pytest.raises(backup.RecoveryError, match="archive restore failed"):
+        backup.recover_primary_database(backup=str(directory))
+    assert lifecycle[-1][-2:] == ["stop", "postgres"]
+
+
+def test_recovery_rejects_backup_for_non_primary_database(tmp_path: Path) -> None:
+    directory = _write_backup(tmp_path / "other", source_database="another_database")
+
+    with pytest.raises(backup.RecoveryError, match="must identify the virtual_company"):
+        backup.recover_primary_database(backup=str(directory))
+
+
+def test_cli_recover_needs_only_backup(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+    monkeypatch.setenv("BACKUP", "/tmp/backup")
+    monkeypatch.setattr(backup, "recover_primary_database", lambda *, backup: seen.append(backup))
+
+    assert backup.main(["recover"]) == 0
     assert seen == ["/tmp/backup"]

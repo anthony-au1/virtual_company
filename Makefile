@@ -7,7 +7,8 @@ WAIT_ATTEMPTS ?= 30
 	frontend-build frontend-test frontend-lint frontend-format \
 	frontend-format-check frontend-e2e-install frontend-e2e \
 	research-observability research-cost research-log taskiq-probe \
-	virtual-company-backup virtual-company-restore virtual-company-verify
+	virtual-company-backup virtual-company-restore virtual-company-verify \
+	virtual-company-recover
 
 RESEARCH_REPORT_ARGS = $(if $(RUN_ID),--run-id $(RUN_ID),) $(if $(CAMPAIGN_ID),--campaign-id $(CAMPAIGN_ID),)
 SOURCE_DB ?= virtual_company
@@ -70,6 +71,9 @@ virtual-company-restore:
 
 virtual-company-verify:
 	@COMPOSE="$(COMPOSE)" BACKUP="$(BACKUP)" bash scripts/verify-virtual-company.sh
+
+virtual-company-recover:
+	@COMPOSE="$(COMPOSE)" BACKUP="$(BACKUP)" bash scripts/recover-virtual-company.sh
 
 backend-test:
 	uv run pytest

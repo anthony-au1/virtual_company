@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,9 @@ BACKUP_FORMAT_VERSION = 1
 DATABASE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 RESTORE_TARGET_PATTERN = re.compile(r"^virtual_company_restore_[A-Za-z0-9_]{1,36}$")
 CHECKSUM_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+PRIMARY_DATABASE = "virtual_company"
+POSTGRES_SERVICE = "postgres"
+RECOVERY_WAIT_SECONDS = 30
 
 METADATA_SQL = """
 SELECT json_build_object(
@@ -35,6 +39,67 @@ SELECT count(*)
 FROM workflow_execution
 WHERE status IN ('QUEUED', 'RUNNING');
 """
+RECOVERY_DATABASE_STATE_SQL = """
+SELECT json_build_object(
+  'database', current_database(),
+  'user', current_user,
+  'database_owner', pg_get_userbyid((
+    SELECT datdba FROM pg_database WHERE datname = current_database()
+  )),
+  'extra_schemas', (
+    SELECT count(*) FROM pg_namespace
+    WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'public', 'pg_toast')
+      AND nspname NOT LIKE 'pg_temp_%'
+      AND nspname NOT LIKE 'pg_toast_temp_%'
+  ),
+  'user_objects', (
+    (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_operator o JOIN pg_namespace n ON n.oid = o.oprnamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_collation c JOIN pg_namespace n ON n.oid = c.collnamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_conversion c JOIN pg_namespace n ON n.oid = c.connamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_opclass c JOIN pg_namespace n ON n.oid = c.opcnamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_opfamily f JOIN pg_namespace n ON n.oid = f.opfnamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_ts_config c JOIN pg_namespace n ON n.oid = c.cfgnamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_ts_dict d JOIN pg_namespace n ON n.oid = d.dictnamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_ts_parser p JOIN pg_namespace n ON n.oid = p.prsnamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_ts_template t JOIN pg_namespace n ON n.oid = t.tmplnamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_statistic_ext s JOIN pg_namespace n ON n.oid = s.stxnamespace
+      WHERE n.nspname = 'public') +
+    (SELECT count(*) FROM pg_extension WHERE extname <> 'plpgsql') +
+    (SELECT count(*) FROM pg_largeobject_metadata) +
+    (SELECT count(*) FROM pg_publication) +
+    (SELECT count(*) FROM pg_subscription) +
+    (SELECT count(*) FROM pg_event_trigger WHERE NOT evtenabled = 'D')
+  ),
+  'alembic_table', to_regclass('public.alembic_version') IS NOT NULL,
+  'application_tables', (
+    SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
+      AND c.relname <> 'alembic_version'
+  ),
+  'foreign_keys', (
+    SELECT count(*) FROM pg_constraint WHERE contype = 'f'
+  ),
+  'indexes', (
+    SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind = 'i'
+  )
+)::text;
+"""
 
 
 class BackupError(RuntimeError):
@@ -43,6 +108,10 @@ class BackupError(RuntimeError):
 
 class RestoreError(RuntimeError):
     """Raised when a restore operation is invalid or incomplete."""
+
+
+class RecoveryError(RestoreError):
+    """Raised when primary-database recovery cannot safely complete."""
 
 
 class VerificationError(RuntimeError):
@@ -90,18 +159,22 @@ def _run(command: Sequence[str], **kwargs) -> subprocess.CompletedProcess:
 class ComposePostgres:
     """Invoke PostgreSQL client tools in the already-running Compose service."""
 
-    def __init__(self, compose: list[str], user: str, default_database: str) -> None:
+    def __init__(
+        self, compose: list[str], user: str, default_database: str, *, cwd: Path | None = None
+    ) -> None:
         self.compose = compose
         self.user = user
         self.default_database = default_database
+        self.cwd = cwd
 
     @classmethod
-    def connect(cls) -> ComposePostgres:
+    def connect(cls, *, cwd: Path | None = None) -> ComposePostgres:
         compose = _compose_command()
         result = _run(
             [*compose, "ps", "--status", "running", "-q", "postgres"],
             capture_output=True,
             text=True,
+            cwd=cwd,
         )
         if not result.stdout.strip():
             raise BackupError(
@@ -114,6 +187,7 @@ class ComposePostgres:
                 [*compose, "exec", "-T", "postgres", "printenv", name],
                 capture_output=True,
                 text=True,
+                cwd=cwd,
             )
             return result.stdout.strip()
 
@@ -123,7 +197,7 @@ class ComposePostgres:
             raise BackupError("PostgreSQL container returned an invalid user name")
         if not DATABASE_NAME_PATTERN.fullmatch(default_database):
             raise BackupError("PostgreSQL container returned an invalid database name")
-        return cls(compose, user, default_database)
+        return cls(compose, user, default_database, cwd=cwd)
 
     def _client(self, executable: str, *arguments: str) -> list[str]:
         return [
@@ -153,6 +227,7 @@ class ComposePostgres:
             input=sql,
             capture_output=True,
             text=True,
+            cwd=self.cwd,
         )
         return result.stdout.strip()
 
@@ -176,6 +251,7 @@ class ComposePostgres:
             [*self.compose, "exec", "-T", "postgres", executable, "--version"],
             capture_output=True,
             text=True,
+            cwd=self.cwd,
         )
         return result.stdout.strip()
 
@@ -193,6 +269,7 @@ class ComposePostgres:
             self._client("createdb", "-T", "template0", database),
             capture_output=True,
             text=True,
+            cwd=self.cwd,
         )
 
     def dump(self, database: str, destination: BinaryIO) -> None:
@@ -215,6 +292,29 @@ class ComposePostgres:
             ),
             stdin=archive,
             capture_output=True,
+            cwd=self.cwd,
+        )
+
+    def restore_primary(self, archive: BinaryIO) -> None:
+        if self.default_database != PRIMARY_DATABASE:
+            raise RestoreError("Compose PostgreSQL default database is not the primary database")
+        _run(
+            [
+                *self.compose,
+                "exec",
+                "-T",
+                POSTGRES_SERVICE,
+                "pg_restore",
+                "--exit-on-error",
+                "--single-transaction",
+                "-U",
+                self.user,
+                "-d",
+                PRIMARY_DATABASE,
+            ],
+            stdin=archive,
+            capture_output=True,
+            cwd=self.cwd,
         )
 
     def inspect_archive(self, archive: BinaryIO) -> None:
@@ -223,6 +323,7 @@ class ComposePostgres:
             stdin=archive,
             stdout=subprocess.DEVNULL,
             capture_output=True,
+            cwd=self.cwd,
         )
 
 
@@ -437,6 +538,244 @@ def _postgres_major(version: str) -> int:
     return int(match.group(1))
 
 
+def _validate_recovery_compose(compose: list[str]) -> None:
+    if len(compose) < 2 or Path(compose[0]).name != "docker" or compose[1] != "compose":
+        raise RecoveryError("Recovery is supported only with Docker Compose")
+    context = _run(
+        [compose[0], "context", "show"],
+        capture_output=True,
+        text=True,
+        cwd=REPOSITORY_ROOT,
+    ).stdout.strip()
+    if not context:
+        raise RecoveryError("Could not identify the Docker context for recovery")
+    context_result = _run(
+        [compose[0], "context", "inspect", context],
+        capture_output=True,
+        text=True,
+        cwd=REPOSITORY_ROOT,
+    )
+    try:
+        context_data = json.loads(context_result.stdout)
+        endpoint = context_data[0]["Endpoints"]["docker"]["Host"]
+    except (json.JSONDecodeError, IndexError, KeyError, TypeError) as error:
+        raise RecoveryError("Could not verify that Docker is using a local context") from error
+    if not isinstance(endpoint, str) or not endpoint.startswith(("unix://", "npipe://")):
+        raise RecoveryError("Recovery is restricted to a local Docker context")
+    result = _run(
+        [*compose, "config", "--format", "json"],
+        capture_output=True,
+        text=True,
+        cwd=REPOSITORY_ROOT,
+    )
+    try:
+        config = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RecoveryError("Could not identify the local Docker Compose configuration") from error
+    services = config.get("services") if isinstance(config, dict) else None
+    service = services.get(POSTGRES_SERVICE) if isinstance(services, dict) else None
+    environment = service.get("environment") if isinstance(service, dict) else None
+    volumes = service.get("volumes") if isinstance(service, dict) else None
+    project_volumes = config.get("volumes") if isinstance(config, dict) else None
+    if (
+        not isinstance(config, dict)
+        or config.get("name") != "virtual_company"
+        or not isinstance(services, dict)
+        or not {"app", "worker", POSTGRES_SERVICE}.issubset(services)
+        or not isinstance(service, dict)
+        or service.get("image") != "postgres:16"
+        or not isinstance(environment, dict)
+        or environment.get("POSTGRES_DB") != PRIMARY_DATABASE
+        or environment.get("POSTGRES_USER") != "virtual_company"
+        or not isinstance(volumes, list)
+        or not isinstance(project_volumes, dict)
+    ):
+        raise RecoveryError(
+            "Recovery is restricted to this repository's virtual_company Compose setup "
+            "with its PostgreSQL 16 service and primary database"
+        )
+    database_volume = next(
+        (
+            volume
+            for volume in volumes
+            if isinstance(volume, dict)
+            and volume.get("type") == "volume"
+            and volume.get("source") == "postgres_data"
+            and volume.get("target") == "/var/lib/postgresql/data"
+        ),
+        None,
+    )
+    if database_volume is None or "postgres_data" not in project_volumes:
+        raise RecoveryError(
+            "Recovery requires the configured persistent postgres_data Compose volume"
+        )
+
+
+def _running_services(compose: list[str], *services: str) -> bool:
+    result = _run(
+        [*compose, "ps", "--status", "running", "-q", *services],
+        capture_output=True,
+        text=True,
+        cwd=REPOSITORY_ROOT,
+    )
+    return bool(result.stdout.strip())
+
+
+def _wait_for_primary(compose: list[str]) -> None:
+    command = [
+        *compose,
+        "exec",
+        "-T",
+        POSTGRES_SERVICE,
+        "pg_isready",
+        "-U",
+        "virtual_company",
+        "-d",
+        PRIMARY_DATABASE,
+    ]
+    for attempt in range(RECOVERY_WAIT_SECONDS):
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=REPOSITORY_ROOT,
+        )
+        if result.returncode == 0:
+            return
+        if attempt + 1 < RECOVERY_WAIT_SECONDS:
+            time.sleep(1)
+    raise RecoveryError(
+        f"PostgreSQL did not become ready after {RECOVERY_WAIT_SECONDS} seconds"
+    )
+
+
+def _validate_recovery_database(
+    postgres: ComposePostgres, *, restored: bool
+) -> dict[str, object]:
+    state = postgres.query_json(PRIMARY_DATABASE, RECOVERY_DATABASE_STATE_SQL)
+    if (
+        state.get("database") != PRIMARY_DATABASE
+        or state.get("user") != "virtual_company"
+        or state.get("database_owner") != "virtual_company"
+    ):
+        raise RecoveryError("Connected to an unexpected primary database or owner")
+    if not restored:
+        if (
+            state.get("extra_schemas") != 0
+            or state.get("user_objects") != 0
+            or state.get("alembic_table") is not False
+        ):
+            raise RecoveryError(
+                "Primary database is initialized or contains user-created objects; "
+                "recovery refuses to overwrite it"
+            )
+        return state
+    if (
+        state.get("alembic_table") is not True
+        or not isinstance(state.get("application_tables"), int)
+        or state["application_tables"] < 1
+        or not isinstance(state.get("foreign_keys"), int)
+        or state["foreign_keys"] < 1
+        or not isinstance(state.get("indexes"), int)
+        or state["indexes"] < 1
+    ):
+        raise RecoveryError("Restored primary database failed schema verification")
+    try:
+        revision_rows = postgres.count(
+            PRIMARY_DATABASE, "SELECT count(*) FROM public.alembic_version;"
+        )
+    except BackupError as error:
+        raise RecoveryError("Restored Alembic version table could not be read") from error
+    if revision_rows < 1:
+        raise RecoveryError("Restored Alembic version table is empty")
+    return state
+
+
+def recover_primary_database(*, backup: str) -> None:
+    """Restore a valid primary-database backup only into a fresh Compose database."""
+    _, archive, manifest = load_manifest(backup)
+    identity = manifest["database_identity"]
+    if (
+        not isinstance(identity, dict)
+        or identity.get("database") != PRIMARY_DATABASE
+        or identity.get("compose_service") != POSTGRES_SERVICE
+    ):
+        raise RecoveryError(
+            "Recovery backup must identify the virtual_company database from the postgres service"
+        )
+
+    compose = _compose_command()
+    _validate_recovery_compose(compose)
+    if _running_services(compose, "app", "worker"):
+        raise RecoveryError("Refusing recovery while the app or worker service is running")
+
+    postgres_was_running = _running_services(compose, POSTGRES_SERVICE)
+    started_by_recovery = not postgres_was_running
+    operation_error: Exception | None = None
+    try:
+        if started_by_recovery:
+            print("Starting only the PostgreSQL Compose service for recovery")
+            _run(
+                [*compose, "up", "-d", "--no-deps", POSTGRES_SERVICE],
+                capture_output=True,
+                text=True,
+                cwd=REPOSITORY_ROOT,
+            )
+            _wait_for_primary(compose)
+
+        postgres = ComposePostgres.connect(cwd=REPOSITORY_ROOT)
+        if postgres.default_database != PRIMARY_DATABASE or postgres.user != "virtual_company":
+            raise RecoveryError("Compose PostgreSQL environment is not the primary application DB")
+        if not postgres.database_exists(PRIMARY_DATABASE):
+            raise RecoveryError("The primary database was not created by PostgreSQL initialization")
+        _validate_recovery_database(postgres, restored=False)
+        target_version = postgres.query(
+            PRIMARY_DATABASE, "SELECT current_setting('server_version');"
+        )
+        if _postgres_major(str(manifest["postgresql_version"])) != _postgres_major(target_version):
+            raise RecoveryError("Backup and target PostgreSQL major versions differ")
+        with archive.open("rb") as archive_stream:
+            postgres.inspect_archive(archive_stream)
+        print("Restoring backup into the verified-empty primary database")
+        with archive.open("rb") as archive_stream:
+            postgres.restore_primary(archive_stream)
+        restored_state = _validate_recovery_database(postgres, restored=True)
+        print(
+            "Primary database recovery verified: "
+            f"{restored_state['application_tables']} application tables, "
+            f"{restored_state['foreign_keys']} foreign keys, "
+            f"{restored_state['indexes']} indexes"
+        )
+    except Exception as error:  # noqa: BLE001 - preserve cleanup for any operation failure
+        operation_error = error
+    finally:
+        if started_by_recovery:
+            try:
+                _run(
+                    [*compose, "stop", POSTGRES_SERVICE],
+                    capture_output=True,
+                    text=True,
+                    cwd=REPOSITORY_ROOT,
+                )
+            except Exception as stop_error:  # noqa: BLE001 - report lifecycle cleanup failure
+                if operation_error is None:
+                    operation_error = RecoveryError(
+                        "Recovery finished, but PostgreSQL could not be stopped; "
+                        "the persistent volume was left intact"
+                    )
+                else:
+                    operation_error = RecoveryError(
+                        f"{operation_error}; PostgreSQL also could not be stopped: {stop_error}"
+                    )
+    if operation_error is not None:
+        if isinstance(operation_error, RecoveryError):
+            raise operation_error
+        raise RecoveryError(f"Recovery failed: {operation_error}") from operation_error
+    if started_by_recovery:
+        print("Stopped PostgreSQL; recovered data remains in its Compose volume")
+
+
 def restore_backup(*, backup: str, target_database: str) -> None:
     _validate_database_name(target_database, restore_target=True)
     _, archive, manifest = load_manifest(backup)
@@ -498,8 +837,8 @@ def _environment_value(name: str, default: str | None = None) -> str | None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) != 1 or args[0] not in {"backup", "restore", "verify"}:
-        print("Usage: virtual_company_backup.py {backup|restore|verify}", file=sys.stderr)
+    if len(args) != 1 or args[0] not in {"backup", "restore", "verify", "recover"}:
+        print("Usage: virtual_company_backup.py {backup|restore|verify|recover}", file=sys.stderr)
         return 2
     command = args[0]
     try:
@@ -517,11 +856,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not target:
                 raise RestoreError("TARGET_DB is required")
             restore_backup(backup=backup, target_database=target)
-        else:
+        elif command == "verify":
             backup = _environment_value("BACKUP")
             if not backup:
                 raise VerificationError("BACKUP is required")
             verify_backup(backup=backup)
+        else:
+            backup = _environment_value("BACKUP")
+            if not backup:
+                raise RecoveryError("BACKUP is required")
+            recover_primary_database(backup=backup)
         return 0
     except (BackupError, RestoreError, VerificationError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
