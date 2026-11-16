@@ -50,6 +50,9 @@ export function ResearchCompanyCard({
           <div className="mt-2 flex flex-wrap gap-2">
             <QualificationBadge status={company.qualification_status} />
           </div>
+          <p className="text-muted-foreground mt-1 text-xs">
+            {qualificationExplanation(company.qualification_status)}
+          </p>
           <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs">
             <SummaryCounts label="Criteria" counts={company.summary} />
           </div>
@@ -85,7 +88,8 @@ function SummaryCounts({
     <span>
       <span className="font-medium">{label}</span>
       <span className="text-muted-foreground">
-        : {counts.matched} matched · {counts.mismatched} mismatched · {counts.unknown} unknown
+        : {counts.matched} matched · {counts.mismatched} mismatched ·{" "}
+        {counts.unknown} unknown
       </span>
     </span>
   );
@@ -114,6 +118,9 @@ function CriterionDisclosure({ criterion }: { criterion: CriterionResult }) {
         />
         <span className="font-medium">{criterionLabel(criterion)}</span>
         <Badge variant="outline">{criterion.status}</Badge>
+        <span className="text-muted-foreground text-xs">
+          {criterionExplanation(criterion.status)}
+        </span>
         <span className="text-muted-foreground ml-auto text-xs">Details</span>
       </summary>
       <div className="mt-3 border-t pt-3">
@@ -124,7 +131,10 @@ function CriterionDisclosure({ criterion }: { criterion: CriterionResult }) {
               Evidence for this criterion
             </h5>
             {criterion.evidence.map((evidence) => (
-              <div className="bg-muted/40 rounded-md p-3 text-sm" key={evidence.id}>
+              <div
+                className="bg-muted/40 rounded-md p-3 text-sm"
+                key={evidence.id}
+              >
                 <p className="font-medium">{evidence.claim}</p>
                 <p className="mt-1 whitespace-pre-wrap">
                   “{evidence.evidence_text}”
@@ -172,6 +182,30 @@ function QualificationBadge({
 function criterionLabel(criterion: CriterionResult) {
   if (criterion.subject) return criterion.subject;
   return criterion.criterion.replaceAll("_", " ");
+}
+
+function qualificationExplanation(
+  status: ResearchCompany["qualification_status"],
+) {
+  switch (status) {
+    case "QUALIFIED":
+      return "Evidence supports every configured criterion.";
+    case "NOT_QUALIFIED":
+      return "At least one criterion is contradicted by the available evidence.";
+    case "INSUFFICIENT_EVIDENCE":
+      return "No criterion is contradicted, but at least one cannot be verified.";
+  }
+}
+
+function criterionExplanation(status: CriterionResult["status"]) {
+  switch (status) {
+    case "MATCH":
+      return "Supported by evidence.";
+    case "MISMATCH":
+      return "Contradicted by evidence.";
+    case "UNKNOWN":
+      return "Not enough evidence to determine.";
+  }
 }
 
 function sourceHost(url: string) {

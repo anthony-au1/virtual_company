@@ -11,7 +11,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ResearchResultsPage } from "@/features/research/components/results/research-results-page";
 import { ResearchRunsPage } from "@/features/research/components/runs/research-runs-page";
-import type { ResearchResults, ResearchRunListItem } from "@/features/research/api/research";
+import type {
+  ResearchResults,
+  ResearchRunListItem,
+} from "@/features/research/api/research";
 import {
   researchRunResultsQueryKey,
   researchRunsQueryKey,
@@ -24,7 +27,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/features/research/api/research", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/features/research/api/research")>();
+  const actual =
+    await importOriginal<typeof import("@/features/research/api/research")>();
   return {
     ...actual,
     listResearchRuns: vi.fn(),
@@ -105,8 +109,8 @@ function results(runId: string): ResearchResults {
     },
     summary: {
       researched: 1,
-      qualified: 1,
-      not_qualified: 0,
+      qualified: 0,
+      not_qualified: 1,
       insufficient_evidence: 0,
     },
     companies: [
@@ -114,11 +118,11 @@ function results(runId: string): ResearchResults {
         company_id: "same-company-id",
         name: "Airwallex",
         website: "https://airwallex.com",
-        qualification_status: "QUALIFIED",
+        qualification_status: "NOT_QUALIFIED",
         summary: {
-          matched: 2,
-          mismatched: 0,
-          unknown: 2,
+          matched: 1,
+          mismatched: 1,
+          unknown: 1,
         },
         criteria: [
           {
@@ -282,7 +286,12 @@ describe("ResearchResultsPage", () => {
     expect(screen.getAllByText("Australia")).toHaveLength(2);
     expect(screen.getByText("Java")).toBeInTheDocument();
     expect(screen.getByText("≥ 500")).toBeInTheDocument();
-    expect(screen.getByText("AI: QUALIFIED")).toBeInTheDocument();
+    expect(screen.getByText("AI: NOT QUALIFIED")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "At least one criterion is contradicted by the available evidence.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Human review/)).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Accept" }),
@@ -291,11 +300,16 @@ describe("ResearchResultsPage", () => {
       screen.queryByRole("button", { name: "Reject" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/2 matched · 0 mismatched · 2 unknown/),
+      screen.getByText(/1 matched · 1 mismatched · 1 unknown/),
     ).toBeInTheDocument();
     expect(screen.getByText("MATCH")).toBeInTheDocument();
     expect(screen.getByText("MISMATCH")).toBeInTheDocument();
     expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
+    expect(screen.getByText("Supported by evidence.")).toBeInTheDocument();
+    expect(screen.getByText("Contradicted by evidence.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Not enough evidence to determine."),
+    ).toBeInTheDocument();
 
     const criterionDetails = screen
       .getByText("Australia", { selector: "summary span" })
@@ -399,6 +413,67 @@ describe("ResearchResultsPage", () => {
     );
     expect(screen.getByText("Afterpay")).toBeInTheDocument();
     expect(screen.queryByText("Airwallex")).not.toBeInTheDocument();
+  });
+
+  it("explains Qualified and mixed MATCH/UNKNOWN outcomes", async () => {
+    const base = results("run-a");
+    const company = base.companies[0];
+    const matched = company.criteria.find(
+      (criterion) => criterion.status === "MATCH",
+    );
+    const unknown = company.criteria.find(
+      (criterion) => criterion.status === "UNKNOWN",
+    );
+    expect(matched).toBeDefined();
+    expect(unknown).toBeDefined();
+
+    const insufficient = {
+      ...company,
+      company_id: "company-insufficient",
+      name: "Insufficient Co",
+      qualification_status: "INSUFFICIENT_EVIDENCE" as const,
+      summary: { matched: 8, mismatched: 0, unknown: 2 },
+      criteria: [
+        ...Array.from({ length: 8 }, (_, index) => ({
+          ...matched!,
+          subject: `Supported criterion ${index + 1}`,
+        })),
+        ...Array.from({ length: 2 }, (_, index) => ({
+          ...unknown!,
+          subject: `Unverified criterion ${index + 1}`,
+        })),
+      ],
+    };
+    const qualified = {
+      ...company,
+      company_id: "company-qualified",
+      name: "Qualified Co",
+      qualification_status: "QUALIFIED" as const,
+      summary: { matched: 10, mismatched: 0, unknown: 0 },
+      criteria: Array.from({ length: 10 }, (_, index) => ({
+        ...matched!,
+        subject: `Supported criterion ${index + 1}`,
+      })),
+    };
+    mockedGetResults.mockResolvedValue({
+      ...base,
+      companies: [company, insufficient, qualified],
+    });
+
+    renderWithQuery(<ResearchResultsPage runId="run-a" />);
+    await screen.findByText("Insufficient Co");
+
+    expect(
+      screen.getByText(
+        "No criterion is contradicted, but at least one cannot be verified.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Evidence supports every configured criterion."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/8 matched · 0 mismatched · 2 unknown/),
+    ).toBeInTheDocument();
   });
 
   it("renders empty and failed runs", async () => {

@@ -220,20 +220,58 @@ it does not create Evidence records. Fetches are limited by `WEB_FETCH_TIMEOUT_S
 
 ## Qualification
 
-After every company investigation is terminal, `qualify_companies` evaluates validated
-Evidence from the current research run for each company. Coverage remains a separate
-presence check. Both stages share
-conservative spelling/formatting normalization. Keyword criteria are independent:
-Spring Boot does not imply Spring, and Apache Kafka does not imply Kafka.
+Research qualification has four stages:
 
-Qualification uses no LLM, search, or page fetch. Criteria are MATCH, MISMATCH, or
-UNKNOWN; missing evidence never means mismatch. Only required criteria determine
-eligibility: any required mismatch produces NOT_QUALIFIED, otherwise a required
-unknown produces INSUFFICIENT_EVIDENCE, otherwise the company is QUALIFIED. Preferred
-results remain in the snapshot without changing status. Validated target-market,
-industry, and keyword Evidence satisfies its normalized criterion/subject without
-reinterpreting claim or excerpt wording. Size qualification remains a deterministic
-comparison over normalized employee-count facts and conservative bounds.
+1. **Evidence collection:** the workflow searches for company sources, fetches selected
+   pages, and validates evidence and company attribution.
+2. **Fact extraction:** an LLM extracts evidence-grounded facts relevant to the configured
+   criteria. It does not choose the final qualification status.
+3. **Criterion evaluation:** application code deterministically evaluates the validated facts
+   against each criterion. Company-size bounds are compared against validated employee-count
+   facts; categorical facts are checked against their configured subject.
+4. **Status aggregation:** application code calculates the overall status from the individual
+   criterion results after company investigations finish.
+
+Configured campaign fields produce independent qualification criteria:
+
+- Target market produces one criterion when configured.
+- Industry produces one criterion when configured.
+- Every keyword produces its own criterion.
+- Configured minimum and maximum employee counts produce separate criteria.
+
+Every generated criterion is required for a company to be `QUALIFIED`; there are no
+required/preferred settings, scores, or qualification thresholds. Each criterion is `MATCH`
+when evidence supports it, `MISMATCH` when evidence establishes a contradiction, or `UNKNOWN`
+when available evidence is insufficient to establish either outcome. `UNKNOWN` is not the same
+as `MISMATCH`.
+
+| Criterion results | Overall status |
+|---|---|
+| Every criterion is `MATCH` | `QUALIFIED` |
+| At least one criterion is `MISMATCH` | `NOT_QUALIFIED` |
+| No `MISMATCH`, but at least one `UNKNOWN` | `INSUFFICIENT_EVIDENCE` |
+
+For example, a company with eight matches, no mismatches, and two unknowns is
+`INSUFFICIENT_EVIDENCE`: the unknown criteria prevent qualification, but do not establish a
+contradiction.
+
+Industry describes a company's business category, market segment, or principal business
+activities. Evidence of actual products, services, and activities can establish industry
+membership without an exact phrase match. Compound industry descriptions are interpreted
+using campaign context; separators such as `/` do not automatically mean AND or OR, and
+material qualifiers must still be supported. The campaign description helps clarify industry
+intent; it is not evidence about a company. Unsupported or materially ambiguous industry
+evidence remains `UNKNOWN`.
+
+Keywords are not merely discovery hints: every keyword is an independent qualification
+criterion. Evidence must support the specific requested concept and the company's own activity.
+A related concept or topical mention alone is insufficient. For example, Spring Boot does not
+imply Spring, and Apache Kafka does not imply Kafka. Missing evidence remains `UNKNOWN`, not a
+`MISMATCH`.
+
+Coverage remains a separate presence check, and both coverage and qualification use
+conservative spelling/formatting normalization. Size qualification uses deterministic
+comparisons over normalized employee-count facts and conservative bounds.
 
 Results and supporting evidence IDs remain in LangGraph's
 `research_company_qualifications` state and are persisted once all investigations terminate.
@@ -242,10 +280,9 @@ replace its status and criterion results without changing its ID or creation tim
 Snapshots commit with run completion. They do not change campaign-target records
 or the public research response. Company qualification spans contain status and criterion
 counts, never source documents. Discovery sources pass through the normal attribution
-and Evidence validation gates before company-specific searches. A required mismatch
-stops that company's search; unknown required criteria receive priority, followed by
-preferred enrichment within the configured investigation rounds. Evidence extraction
-continues to request positive facts and qualification remains deterministic.
+and Evidence validation gates before company-specific searches. Evidence collection follows
+the configured search limits and unresolved criteria before final qualification; qualification
+does not use required/preferred criteria or stop searches based on a criterion priority.
 
 Inspect a completed run using the Research-scoped tables:
 

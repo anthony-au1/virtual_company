@@ -32,7 +32,8 @@ vi.mock("@/features/research/api/campaigns", () => ({
 }));
 
 vi.mock("@/features/research/api/research", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/features/research/api/research")>();
+  const actual =
+    await importOriginal<typeof import("@/features/research/api/research")>();
   return { ...actual, listResearchRuns: vi.fn(), startResearch: vi.fn() };
 });
 
@@ -42,7 +43,10 @@ import {
   getCampaign,
   listCampaigns,
 } from "@/features/research/api/campaigns";
-import { listResearchRuns, startResearch } from "@/features/research/api/research";
+import {
+  listResearchRuns,
+  startResearch,
+} from "@/features/research/api/research";
 
 const mockListCampaigns = vi.mocked(listCampaigns);
 const mockGetCampaign = vi.mocked(getCampaign);
@@ -278,6 +282,26 @@ describe("CampaignsPage", () => {
 });
 
 describe("CampaignFormPage", () => {
+  it("explains how industry, keywords, and all criteria affect qualification", () => {
+    renderWithQuery(<CampaignFormPage />);
+
+    expect(
+      screen.getByText(/All configured criteria are required/),
+    ).toHaveTextContent(
+      "A company is Qualified only when every criterion matches. Missing evidence is inconclusive.",
+    );
+    expect(
+      screen.getByText(/Describe the business category or market segment/),
+    ).toHaveTextContent(
+      "Qualification checks evidence of the company's actual products, services, and business activities.",
+    );
+    expect(
+      screen.getByText(/Each keyword is evaluated separately/),
+    ).toHaveTextContent(
+      "A company must have supporting evidence for every configured keyword to qualify.",
+    );
+  });
+
   it("validates campaign fields and accepts keywords from one list", async () => {
     mockCreateCampaign.mockResolvedValue(campaign("created", "Campaign"));
     renderWithQuery(<CampaignFormPage />);

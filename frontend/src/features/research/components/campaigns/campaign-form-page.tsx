@@ -21,7 +21,10 @@ import {
   type UpdateCampaignPayload,
 } from "@/features/research/api/campaigns";
 import { apiErrorMessages } from "@/lib/api/client";
-import { campaignQueryKey, campaignsQueryKey } from "@/features/research/query-keys";
+import {
+  campaignQueryKey,
+  campaignsQueryKey,
+} from "@/features/research/query-keys";
 
 const campaignFormSchema = z
   .object({
@@ -277,7 +280,8 @@ export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
           <CardHeader>
             <CardTitle>Market</CardTitle>
             <p className="text-muted-foreground text-xs">
-              All configured campaign criteria are evaluated equally.
+              All configured criteria are required. A company is Qualified only
+              when every criterion matches. Missing evidence is inconclusive.
             </p>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -304,6 +308,11 @@ export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
                 maxLength={255}
                 {...form.register("industry")}
               />
+              <p className="text-muted-foreground mt-1 text-xs">
+                Describe the business category or market segment. Qualification
+                checks evidence of the company&apos;s actual products, services,
+                and business activities.
+              </p>
             </Field>
           </CardContent>
         </Card>
@@ -312,8 +321,9 @@ export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
           <CardHeader>
             <CardTitle>Keywords</CardTitle>
             <p className="text-muted-foreground text-xs">
-              Keywords relevant to the companies you want to find. Examples:
-              Java, cloud migration, process automation, omnichannel.
+              Each keyword is evaluated separately. A company must have
+              supporting evidence for every configured keyword to qualify.
+              Examples: Java, cloud migration, process automation, omnichannel.
             </p>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -321,9 +331,7 @@ export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
               error={form.formState.errors.keywords?.message}
               label="Keywords"
               onAdd={(value) => addKeyword(form, "keywords", value)}
-              onRemove={(index) =>
-                removeKeyword(form, "keywords", index)
-              }
+              onRemove={(index) => removeKeyword(form, "keywords", index)}
               values={keywords}
             />
           </CardContent>
