@@ -89,13 +89,8 @@ exactly once. Duplicate Taskiq messages are guarded by the shared PostgreSQL exe
 claim, so an already-claimed or terminal Research or Exploration run is not executed a
 second time. A pending message may remain idle until new stream traffic causes the
 broker to check for reclaim; reconciliation marks abandoned executions failed but does
-not resume their graphs or automatically republish them. The shortened-timeout and
-redelivery scenarios are for isolated infrastructure verification only.
-
-Phase 3 and Phase 4 integration reports record tests executed at those points in time;
-they are historical evidence, not a check of the current checkout or local services.
-Run the documented opt-in tests with isolated PostgreSQL and Redis settings when
-revalidating the current code.
+not resume their graphs or automatically republish them. The automated suite does not
+currently exercise this recovery behavior against live PostgreSQL and Redis.
 
 ## Frontend development
 
@@ -213,14 +208,6 @@ For a manual comparison, use equivalent campaigns such as Australian fintech com
 (Java, Spring, Spring Boot; 100–5000 employees; target 10), then inspect search result
 quality, discovered companies, workflow latency, and provider spans in tracing.
 
-Live provider smoke tests are opt-in and never run under the normal suite:
-
-```bash
-RUN_WEB_SEARCH_INTEGRATION_TESTS=true TAVILY_API_KEY=... uv run pytest tests/integration/test_web_search_live.py
-```
-
-Replace the provider/key prefix with `WEB_SEARCH_PROVIDER=exa EXA_API_KEY=...` to smoke-test Exa.
-
 Company-specific source discovery runs after initial companies are persisted. For a manual
 end-to-end check, create a small campaign targeting 2–3 Australian fintech companies with
 Java and Spring criteria, then inspect the traces for `generate_company_queries` and
@@ -272,13 +259,6 @@ ORDER BY c.name;
 
 Apply the initial schema with `uv run alembic upgrade head` against an empty database.
 Criterion JSON contains requirement levels and Evidence IDs, not source content.
-
-Run the opt-in PostgreSQL snapshot test with
-`RUN_QUALIFICATION_DB_TESTS=true uv run pytest tests/integration/test_qualification_postgres.py`.
-It uses an isolated temporary schema and removes it after the test. Set
-`QUALIFICATION_TEST_DATABASE_URL` to override the default local PostgreSQL URL.
-Run the isolated initial-migration check with
-`RUN_MIGRATION_DB_TESTS=true uv run pytest tests/integration/test_initial_migration_postgres.py`.
 
 ## Virtual Company Database Backup & Restore
 
