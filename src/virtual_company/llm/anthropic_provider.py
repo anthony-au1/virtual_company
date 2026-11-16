@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import cast
 
 from anthropic import AsyncAnthropic, AuthenticationError, RateLimitError
@@ -15,6 +16,7 @@ from virtual_company.llm.base import (
     LLMStructuredOutputError,
     T,
 )
+from virtual_company.llm.usage import report_llm_usage
 
 DEFAULT_MAX_TOKENS = 4096
 logger = logging.getLogger(__name__)
@@ -72,6 +74,7 @@ class AnthropicProvider:
             self._model,
             self._role,
         )
+        started = time.perf_counter()
         try:
             response = await self._client.messages.parse(
                 model=self._model,
@@ -84,6 +87,36 @@ class AnthropicProvider:
             raise LLMAuthenticationError("Anthropic authentication failed") from error
         except RateLimitError as error:
             raise LLMRateLimitError("Anthropic rate limit exceeded") from error
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        usage = getattr(response, "usage", None)
+        stop_reason = getattr(response, "stop_reason", None)
+        outcome = (
+            "incomplete"
+            if stop_reason in {"max_tokens", "model_context_window_exceeded"}
+            else "completed"
+            if stop_reason in {"end_turn", "stop_sequence"}
+            else "unknown"
+            if stop_reason is None
+            else "other"
+        )
+        report_llm_usage(
+            provider="anthropic",
+            model=getattr(response, "model", None) or self._model,
+            role=self._role,
+            input_tokens=getattr(usage, "input_tokens", None),
+            output_tokens=getattr(usage, "output_tokens", None),
+            reasoning_tokens=None,
+            cached_input_tokens=getattr(usage, "cache_read_input_tokens", None),
+            cache_write_input_tokens=getattr(
+                usage, "cache_creation_input_tokens", None
+            ),
+            response_id=getattr(response, "id", None),
+            request_id=getattr(response, "_request_id", None),
+            response_status=stop_reason,
+            incomplete_reason=(stop_reason if outcome == "incomplete" else None),
+            duration_ms=duration_ms,
+            request_outcome=outcome,
+        )
         if response.parsed_output is None:
             raise LLMStructuredOutputError("Anthropic returned no structured output")
         return cast(T, response.parsed_output)

@@ -9,6 +9,9 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DATABASE_URL = "postgresql+asyncpg://virtual_company:virtual_company@localhost:5432/virtual_company"
+OpenAIReasoningEffort = Literal[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max"
+]
 
 
 class Settings(BaseSettings):
@@ -51,6 +54,10 @@ class Settings(BaseSettings):
     openai_connect_timeout_seconds: float = Field(default=5, gt=0)
     openai_read_timeout_seconds: float = Field(default=120, gt=0)
     openai_max_retries: int = Field(default=1, ge=0)
+    openai_max_output_tokens: int = Field(default=32_768, ge=1)
+    openai_research_max_output_tokens: int | None = Field(default=4_096, ge=1)
+    openai_reasoning_effort: OpenAIReasoningEffort | None = None
+    openai_research_reasoning_effort: OpenAIReasoningEffort | None = None
     openai_research_model: str = "gpt-6.1-terra"
     openai_extraction_model: str = "gpt-6-luna"
     openai_obligation_generation_model: str = "gpt-6.1-terra"
@@ -127,6 +134,33 @@ class Settings(BaseSettings):
             raise ValueError(  # noqa: TRY004 - Pydantic reports validator errors
                 "openai_max_retries must be an integer"
             )
+        return value
+
+    @field_validator(
+        "openai_max_output_tokens", "openai_research_max_output_tokens", mode="before"
+    )
+    @classmethod
+    def reject_non_integer_openai_output_limits(cls, value: object) -> object:
+        if isinstance(value, (bool, float)):
+            raise ValueError(  # noqa: TRY004 - Pydantic wraps validator errors
+                "OpenAI output-token limits must be positive integers"
+            )
+        return value
+
+    @field_validator("openai_research_max_output_tokens", mode="before")
+    @classmethod
+    def normalize_empty_openai_research_output_limit(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator(
+        "openai_reasoning_effort", "openai_research_reasoning_effort", mode="before"
+    )
+    @classmethod
+    def normalize_empty_openai_reasoning_effort(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
 
     @model_validator(mode="after")

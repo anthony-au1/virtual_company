@@ -229,6 +229,56 @@ def test_role_override_can_select_anthropic_without_changing_global_provider() -
     assert isinstance(registry.for_role(LLMRole.EXTRACTION), AnthropicProvider)
 
 
+def test_openai_limits_resolve_by_role_and_follow_model_configuration() -> None:
+    registry = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("test-key"),
+            openai_research_model="custom-openai-model",
+            openai_max_output_tokens=24_000,
+            openai_research_max_output_tokens=4_096,
+            openai_reasoning_effort="low",
+            openai_research_reasoning_effort="high",
+        )
+    )
+
+    research = registry.for_role(LLMRole.RESEARCH)
+    extraction = registry.for_role(LLMRole.EXTRACTION)
+
+    assert isinstance(research, OpenAIProvider)
+    assert research.model == "custom-openai-model"
+    assert research._max_output_tokens == 4_096
+    assert research._reasoning_effort == "high"
+    assert isinstance(extraction, OpenAIProvider)
+    assert extraction._max_output_tokens == 24_000
+    assert extraction._reasoning_effort == "low"
+
+
+def test_blank_research_output_limit_falls_back_to_global_limit() -> None:
+    provider = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("test-key"),
+            openai_max_output_tokens=12_000,
+            openai_research_max_output_tokens=None,
+        )
+    ).for_role(LLMRole.RESEARCH)
+
+    assert isinstance(provider, OpenAIProvider)
+    assert provider._max_output_tokens == 12_000
+
+
+def test_openai_reasoning_is_omitted_when_no_effort_is_configured() -> None:
+    provider = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("test-key"),
+            openai_reasoning_effort=None,
+            openai_research_reasoning_effort=None,
+        )
+    ).for_role(LLMRole.RESEARCH)
+
+    assert isinstance(provider, OpenAIProvider)
+    assert provider._reasoning_effort is None
+
+
 def test_unknown_provider_fails_clearly() -> None:
     registry = LLMRegistry(Settings(llm_provider="unknown"))
 

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import time
+from contextlib import nullcontext
 from typing import Any, cast
+from uuid import uuid4
 
 from virtual_company.llm.base import LLMProvider, T
 from virtual_company.observability import Observability, get_observability
@@ -18,7 +20,7 @@ class InstrumentedLLMProvider:
         observability: Observability | None = None,
         *,
         capture_io: bool | None = None,
-        sanitize_errors: bool = False,
+        sanitize_errors: bool = True,
     ) -> None:
         self._provider = provider
         self._observability = observability or get_observability()
@@ -46,54 +48,80 @@ class InstrumentedLLMProvider:
     ) -> T:
         """Generate structured output and record metadata, latency, and errors."""
         metadata = self._metadata()
+        logical_call_id = str(uuid4())
         capture_io = (
             self._observability.capture_io
             if self._capture_io_override is None
             else self._capture_io_override
         )
-        self._observability.event("llm_request_started", **metadata)
         started = time.perf_counter()
         sanitized_error: Exception | None = None
         result: T | None = None
-        with self._observability.span(
-            "llm.generate_structured", as_type="generation", **metadata
-        ) as observation:
-            try:
-                if hasattr(observation, "update") and capture_io:
-                    observation.update(
-                        input={"system": system_prompt, "user": user_prompt}
+        context = getattr(self._observability, "context", None)
+        scope = (
+            context(logical_llm_call_id=logical_call_id)
+            if context is not None
+            else nullcontext()
+        )
+        with scope:
+            self._observability.event(
+                "llm_request_started",
+                logical_llm_call_id=logical_call_id,
+                **metadata,
+            )
+            with self._observability.span(
+                "llm.generate_structured", as_type="generation", **metadata
+            ) as observation:
+                try:
+                    if hasattr(observation, "update") and capture_io:
+                        observation.update(
+                            input={"system": system_prompt, "user": user_prompt}
+                        )
+                    result = await self._provider.generate_structured(
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        response_model=response_model,
                     )
-                result = await self._provider.generate_structured(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    response_model=response_model,
-                )
-            except Exception as error:
-                if self._sanitize_errors:
-                    # Defer raising until the span closes so raw messages are not
-                    # attached by Observability.span to its status or exception.
-                    sanitized_error = error
-                else:
-                    self._record_failure(error, metadata, started)
-                    raise
-            if result is not None and hasattr(observation, "update") and capture_io:
-                observation.update(output=result.model_dump())
+                except Exception as error:
+                    if self._sanitize_errors:
+                        sanitized_error = error
+                    else:
+                        self._record_failure(
+                            error, metadata, started, logical_call_id
+                        )
+                        raise
+                if result is not None and hasattr(observation, "update") and capture_io:
+                    observation.update(output=result.model_dump())
 
-        if sanitized_error is not None:
-            self._record_failure(sanitized_error, metadata, started)
-            raise sanitized_error
-        duration = time.perf_counter() - started
-        self._observability.record("llm_requests_total", status="completed", **metadata)
-        self._observability.record(
-            "llm_request_duration_seconds", duration, status="completed", **metadata
-        )
-        self._observability.event(
-            "llm_request_completed", duration_ms=int(duration * 1000), **metadata
-        )
+            if sanitized_error is not None:
+                self._record_failure(
+                    sanitized_error, metadata, started, logical_call_id
+                )
+                raise sanitized_error
+            duration = time.perf_counter() - started
+            self._observability.record(
+                "llm_requests_total", status="completed", **metadata
+            )
+            self._observability.record(
+                "llm_request_duration_seconds",
+                duration,
+                status="completed",
+                **metadata,
+            )
+            self._observability.event(
+                "llm_request_completed",
+                logical_llm_call_id=logical_call_id,
+                duration_ms=int(duration * 1000),
+                **metadata,
+            )
         return cast(T, result)
 
     def _record_failure(
-        self, error: Exception, metadata: dict[str, str], started: float
+        self,
+        error: Exception,
+        metadata: dict[str, str],
+        started: float,
+        logical_call_id: str,
     ) -> None:
         """Record safe failure metadata without serializing exception messages."""
         duration = time.perf_counter() - started
@@ -109,6 +137,8 @@ class InstrumentedLLMProvider:
             "llm_request_failed",
             duration_ms=int(duration * 1000),
             error_type=type(error).__name__,
+            request_id=getattr(error, "request_id", None),
+            logical_llm_call_id=logical_call_id,
             **metadata,
         )
 

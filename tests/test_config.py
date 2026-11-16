@@ -40,6 +40,97 @@ def test_openai_timeout_and_retry_defaults_and_environment_overrides(
     assert configured.openai_max_retries == 0
 
 
+def test_openai_output_and_reasoning_settings_have_role_aware_defaults_and_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "OPENAI_MAX_OUTPUT_TOKENS",
+        "OPENAI_RESEARCH_MAX_OUTPUT_TOKENS",
+        "OPENAI_REASONING_EFFORT",
+        "OPENAI_RESEARCH_REASONING_EFFORT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    defaults = Settings()
+    assert defaults.openai_max_output_tokens == 32_768
+    assert defaults.openai_research_max_output_tokens == 4_096
+    assert defaults.openai_reasoning_effort is None
+    assert defaults.openai_research_reasoning_effort is None
+
+    monkeypatch.setenv("OPENAI_MAX_OUTPUT_TOKENS", "24576")
+    monkeypatch.setenv("OPENAI_RESEARCH_MAX_OUTPUT_TOKENS", "2048")
+    monkeypatch.setenv("OPENAI_REASONING_EFFORT", "low")
+    monkeypatch.setenv("OPENAI_RESEARCH_REASONING_EFFORT", "none")
+    configured = Settings()
+    assert configured.openai_max_output_tokens == 24_576
+    assert configured.openai_research_max_output_tokens == 2_048
+    assert configured.openai_reasoning_effort == "low"
+    assert configured.openai_research_reasoning_effort == "none"
+
+    assert Settings(openai_reasoning_effort="minimal").openai_reasoning_effort == (
+        "minimal"
+    )
+
+
+def test_empty_openai_reasoning_settings_omit_reasoning_parameter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_REASONING_EFFORT", "")
+    monkeypatch.setenv("OPENAI_RESEARCH_REASONING_EFFORT", " ")
+
+    settings = Settings()
+
+    assert settings.openai_reasoning_effort is None
+    assert settings.openai_research_reasoning_effort is None
+
+
+def test_empty_research_output_limit_uses_global_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_MAX_OUTPUT_TOKENS", "12000")
+    monkeypatch.setenv("OPENAI_RESEARCH_MAX_OUTPUT_TOKENS", "")
+
+    settings = Settings()
+
+    assert settings.openai_research_max_output_tokens is None
+    assert settings.openai_max_output_tokens == 12_000
+
+
+def test_env_example_has_no_duplicate_configuration_keys() -> None:
+    from collections import Counter
+    from pathlib import Path
+
+    keys = [
+        line.split("=", maxsplit=1)[0].strip()
+        for line in Path(".env.example").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#") and "=" in line
+    ]
+
+    assert [key for key, count in Counter(keys).items() if count > 1] == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("openai_max_output_tokens", 0),
+        ("openai_max_output_tokens", -1),
+        ("openai_max_output_tokens", True),
+        ("openai_max_output_tokens", 2.5),
+        ("openai_research_max_output_tokens", 0),
+        ("openai_research_max_output_tokens", -1),
+        ("openai_research_max_output_tokens", False),
+        ("openai_research_max_output_tokens", 2.5),
+        ("openai_reasoning_effort", "invalid"),
+        ("openai_research_reasoning_effort", "invalid"),
+    ],
+)
+def test_invalid_openai_output_and_reasoning_settings_are_rejected(
+    field: str, value: object
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value})
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

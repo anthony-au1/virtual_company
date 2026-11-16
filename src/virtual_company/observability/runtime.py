@@ -83,6 +83,11 @@ class Observability:
         """Clear event correlation before beginning an independent workflow run."""
         _context.set({})
 
+    @property
+    def current_context(self) -> dict[str, str]:
+        """Return a copy of task-local event metadata."""
+        return dict(_context.get() or {})
+
     @contextmanager
     def context(
         self, *, replace: bool = False, **values: str | None
@@ -187,6 +192,15 @@ class Observability:
             ),
             "llm_output_tokens_total": self._meter.create_counter(
                 "llm_output_tokens_total"
+            ),
+            "llm_reasoning_tokens_total": self._meter.create_counter(
+                "llm_reasoning_tokens_total"
+            ),
+            "llm_cached_input_tokens_total": self._meter.create_counter(
+                "llm_cached_input_tokens_total"
+            ),
+            "llm_cache_write_input_tokens_total": self._meter.create_counter(
+                "llm_cache_write_input_tokens_total"
             ),
             "companies_discovered_total": self._meter.create_counter(
                 "companies_discovered_total"

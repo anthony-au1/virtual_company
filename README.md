@@ -27,6 +27,16 @@ read timeout limits inactivity while reading from the socket; it is not a guaran
 end-to-end deadline, and retries, backoff, connection/write timeouts, and streaming
 can affect total duration.
 
+OpenAI structured responses have a provider-wide output limit of
+`OPENAI_MAX_OUTPUT_TOKENS` (default `32768`); Research uses
+`OPENAI_RESEARCH_MAX_OUTPUT_TOKENS` (default `4096`) unless that role override is
+unset or blank, in which case it inherits the global limit. These are configurable
+request limits, not verified capacity guarantees for every configured model;
+responses marked incomplete fail safely. Empty/unset
+`OPENAI_REASONING_EFFORT` and `OPENAI_RESEARCH_REASONING_EFFORT` omit the optional
+Responses API reasoning parameter. Explicit reasoning values must be supported by
+the selected model. Output limits include any reasoning tokens counted by the API.
+
 The frontend is available at `http://localhost:3000`, and the FastAPI service remains
 available directly at `http://localhost:8000`. `make start` migrates the database and
 builds and starts the complete Compose stack, including the Taskiq worker and Redis.

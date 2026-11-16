@@ -10,12 +10,24 @@ from virtual_company.llm.roles import LLMRole
 
 
 def create_llm_provider(
-    *, provider: str, model: str, api_key: object, role: LLMRole
+    *,
+    provider: str,
+    model: str,
+    api_key: object,
+    role: LLMRole,
+    max_output_tokens: int | None = None,
+    reasoning_effort: str | None = None,
 ) -> LLMProvider:
     """Construct one provider without exposing provider selection to workflows."""
     normalized_provider = provider.lower()
     if normalized_provider == "openai":
-        return OpenAIProvider(api_key=api_key, model=model, role=role.value)
+        return OpenAIProvider(
+            api_key=api_key,
+            model=model,
+            role=role.value,
+            max_output_tokens=max_output_tokens,
+            reasoning_effort=reasoning_effort,
+        )
     if normalized_provider == "anthropic":
         return AnthropicProvider(api_key=api_key, model=model, role=role.value)
     raise LLMConfigurationError(
@@ -38,6 +50,8 @@ class LLMRegistry:
                 model=self._openai_model_for_role(role),
                 api_key=self._settings.openai_api_key,
                 role=role,
+                max_output_tokens=self._openai_max_output_tokens_for_role(role),
+                reasoning_effort=self._openai_reasoning_effort_for_role(role),
             )
         if provider == "anthropic":
             return create_llm_provider(
@@ -98,6 +112,22 @@ class LLMRegistry:
         if role is LLMRole.EXPLORATION_HYPOTHESIS_GENERATION:
             return self._settings.openai_exploration_hypothesis_generation_model
         return self._settings.openai_exploration_query_generation_model
+
+    def _openai_max_output_tokens_for_role(self, role: LLMRole) -> int:
+        if (
+            role is LLMRole.RESEARCH
+            and self._settings.openai_research_max_output_tokens is not None
+        ):
+            return self._settings.openai_research_max_output_tokens
+        return self._settings.openai_max_output_tokens
+
+    def _openai_reasoning_effort_for_role(self, role: LLMRole) -> str | None:
+        if (
+            role is LLMRole.RESEARCH
+            and self._settings.openai_research_reasoning_effort is not None
+        ):
+            return self._settings.openai_research_reasoning_effort
+        return self._settings.openai_reasoning_effort
 
     def _anthropic_model_for_role(self, role: LLMRole) -> str:
         if role is LLMRole.OBLIGATION_GENERATION:

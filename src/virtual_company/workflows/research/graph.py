@@ -436,6 +436,7 @@ def _with_failure_handling(
                 str(research_run_id) if research_run_id is not None else None
             ),
             workflow="company_research",
+            workflow_node=node_name,
         ):
             observability.event("workflow_node_started", workflow_node=node_name)
             started = perf_counter()

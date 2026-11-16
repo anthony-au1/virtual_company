@@ -12,6 +12,20 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class TokenUsageGroup:
+    """Provider-reported usage grouped by one stable display dimension."""
+
+    name: str
+    responses: int
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    reasoning_tokens: int | None
+    cached_input_tokens: int | None
+    cache_write_input_tokens: int | None
+
+
+@dataclass(frozen=True)
 class ResearchUsage:
     """Run-level usage values that can be derived reliably from events."""
 
@@ -52,6 +66,14 @@ class ResearchUsage:
     llm_retries: int | None
     input_tokens: int | None
     output_tokens: int | None
+    total_tokens: int | None
+    reasoning_tokens: int | None
+    cached_input_tokens: int | None
+    cache_write_input_tokens: int | None
+    usage_response_count: int
+    usage_by_provider: list[TokenUsageGroup]
+    usage_by_model: list[TokenUsageGroup]
+    usage_by_operation: list[TokenUsageGroup]
     search_provider: str
     search_modes: str
     actual_search_credits: float | None
@@ -385,6 +407,21 @@ def aggregate_run(
         event.get("event") in {"llm_request_started", "llm_request_failed"}
         for event in events
     )
+    usage_events = [
+        event for event in events if event.get("event") == "llm_usage_reported"
+    ]
+    usage_fields = (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "reasoning_tokens",
+        "cached_input_tokens",
+        "cache_write_input_tokens",
+    )
+    totals = {field: _sum_known(usage_events, field) for field in usage_fields}
+    usage_by_provider = _group_usage_events(usage_events, "provider")
+    usage_by_model = _group_usage_events(usage_events, "model")
+    usage_by_operation = _group_usage_events(usage_events, "operation_name")
     qualification_events_present = bool(qualification_status_by_company)
     search_calls_value = len(search_events) if search_events else None
     search_results_value = search_results if result_events else None
@@ -485,8 +522,16 @@ def aggregate_run(
             else None
         ),
         llm_retries=extraction_retries if extraction_events else None,
-        input_tokens=None,
-        output_tokens=None,
+        input_tokens=totals["input_tokens"],
+        output_tokens=totals["output_tokens"],
+        total_tokens=totals["total_tokens"],
+        reasoning_tokens=totals["reasoning_tokens"],
+        cached_input_tokens=totals["cached_input_tokens"],
+        cache_write_input_tokens=totals["cache_write_input_tokens"],
+        usage_response_count=len(usage_events),
+        usage_by_provider=usage_by_provider,
+        usage_by_model=usage_by_model,
+        usage_by_operation=usage_by_operation,
         search_provider=(", ".join(providers) if providers else "N/A"),
         search_modes=(", ".join(search_modes) if search_modes else "N/A"),
         actual_search_credits=actual_credits,
@@ -503,6 +548,40 @@ def _integer(value: Any) -> int:
 
 def _optional_integer(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _sum_known(events: list[dict[str, Any]], field: str) -> int | None:
+    values = [
+        event[field]
+        for event in events
+        if isinstance(event.get(field), int) and not isinstance(event.get(field), bool)
+    ]
+    return sum(values) if values else None
+
+
+def _group_usage_events(
+    events: list[dict[str, Any]], dimension: str
+) -> list[TokenUsageGroup]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        name = str(event.get(dimension) or "unattributed")
+        groups.setdefault(name, []).append(event)
+    fields = (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "reasoning_tokens",
+        "cached_input_tokens",
+        "cache_write_input_tokens",
+    )
+    return [
+        TokenUsageGroup(
+            name=name,
+            responses=len(group),
+            **{field: _sum_known(group, field) for field in fields},
+        )
+        for name, group in sorted(groups.items())
+    ]
 
 
 def _sum(events: list[dict[str, Any]], name: str, field: str) -> int:
@@ -602,8 +681,23 @@ def render_report(usage: ResearchUsage) -> str:
         _metric("LLM calls", usage.llm_calls),
         _metric("LLM failures", usage.llm_failures),
         _metric("LLM retries (fact extraction)", usage.llm_retries),
-        _metric("Input tokens", _token_display(usage.input_tokens)),
-        _metric("Output tokens", _token_display(usage.output_tokens)),
+        _metric("Reported input tokens", _token_display(usage.input_tokens)),
+        _metric("Reported output tokens", _token_display(usage.output_tokens)),
+        _metric("Reported total tokens", _token_display(usage.total_tokens)),
+        _metric("Reported reasoning tokens", _token_display(usage.reasoning_tokens)),
+        _metric("Cached input tokens (detail)", _token_display(usage.cached_input_tokens)),
+        _metric(
+            "Cache-write input tokens (detail)",
+            _token_display(usage.cache_write_input_tokens),
+        ),
+        _metric("Provider usage responses", usage.usage_response_count),
+        "Usage by provider:",
+        *_usage_group_lines(usage.usage_by_provider),
+        "Usage by model:",
+        *_usage_group_lines(usage.usage_by_model),
+        "Usage by operation:",
+        *_usage_group_lines(usage.usage_by_operation),
+        "Totals include provider-reported values only; failed requests without returned usage and hidden SDK attempts may be absent.",
         "",
         "EFFICIENCY",
         _metric(
@@ -701,6 +795,18 @@ def _percentage(value: float | None) -> str:
 
 def _token_display(value: int | None) -> str:
     return "N/A" if value is None else str(value)
+
+
+def _usage_group_lines(groups: list[TokenUsageGroup]) -> list[str]:
+    if not groups:
+        return ["  N/A (no provider usage events)"]
+    return [
+        f"  {group.name}: responses={group.responses}, "
+        f"input={_token_display(group.input_tokens)}, "
+        f"output={_token_display(group.output_tokens)}, "
+        f"reasoning={_token_display(group.reasoning_tokens)}"
+        for group in groups
+    ]
 
 
 def _yes_no(value: bool | None) -> str:

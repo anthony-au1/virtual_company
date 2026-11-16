@@ -422,6 +422,64 @@ def test_missing_historical_event_families_render_as_unavailable() -> None:
     assert "Fact extraction calls" in output and "N/A" in output
 
 
+def test_token_usage_aggregation_preserves_unknowns_and_groups_by_provider_model_operation() -> None:
+    events = [
+        event(
+            "llm_usage_reported",
+            "run-usage",
+            provider="openai",
+            model="model-a",
+            operation_name="page_attribution",
+            input_tokens=100,
+            output_tokens=25,
+            total_tokens=125,
+            reasoning_tokens=10,
+            cached_input_tokens=40,
+            cache_write_input_tokens=20,
+        ),
+        event(
+            "llm_usage_reported",
+            "run-usage",
+            provider="anthropic",
+            model="model-b",
+            operation_name="evidence_extraction",
+            input_tokens=50,
+            output_tokens=15,
+            total_tokens=65,
+            reasoning_tokens=None,
+            cached_input_tokens=None,
+            cache_write_input_tokens=None,
+        ),
+        event(
+            "research_run_completed",
+            "run-usage",
+            campaign_name="Usage campaign",
+            target_count=1,
+            max_companies_to_research=1,
+            companies_researched=1,
+            target_reached=True,
+        ),
+    ]
+
+    usage = research_report.aggregate_run(events, "campaign-1", "run-usage")
+
+    assert usage.input_tokens == 150
+    assert usage.output_tokens == 40
+    assert usage.total_tokens == 190
+    assert usage.reasoning_tokens == 10
+    assert usage.cached_input_tokens == 40
+    assert usage.cache_write_input_tokens == 20
+    assert usage.usage_response_count == 2
+    assert [(group.name, group.input_tokens) for group in usage.usage_by_provider] == [
+        ("anthropic", 50),
+        ("openai", 100),
+    ]
+    assert usage.usage_by_model[0].reasoning_tokens == 10
+    assert usage.usage_by_model[0].total_tokens == 125
+    assert usage.usage_by_operation[0].reasoning_tokens is None
+    assert usage.usage_by_operation[1].cache_write_input_tokens == 20
+
+
 def test_ambiguous_legacy_boundaries_do_not_mix_campaign_events() -> None:
     events = [
         {
