@@ -11,7 +11,7 @@ WAIT_ATTEMPTS ?= 30
 
 RESEARCH_REPORT_ARGS = $(if $(RUN_ID),--run-id $(RUN_ID),) $(if $(CAMPAIGN_ID),--campaign-id $(CAMPAIGN_ID),)
 SOURCE_DB ?= virtual_company
-BACKUP_DIR ?= $(HOME)/virtual-company-backups
+BACKUP_DIR ?= $(HOME)/Downloads/virtual-company-backups
 
 start: up
 
