@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -513,3 +514,133 @@ def test_ambiguous_legacy_boundaries_do_not_mix_campaign_events() -> None:
 def test_no_completed_run_is_a_clear_error() -> None:
     with pytest.raises(ValueError, match="No completed"):
         research_report.select_run_events([])
+
+
+def test_read_compose_logs_reads_app_and_worker_services(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_logs = "app  | {\"event\":\"app_event\"}\nworker  | {\"event\":\"worker_event\"}"
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append(command)
+        assert kwargs == {"capture_output": True, "text": True, "check": False}
+        return SimpleNamespace(returncode=0, stdout=expected_logs, stderr="")
+
+    monkeypatch.setattr(research_report.subprocess, "run", run)
+
+    collected = research_report.read_compose_logs()
+    assert collected == expected_logs
+    assert [item["event"] for item in research_report.parse_json_events(collected)] == [
+        "app_event",
+        "worker_event",
+    ]
+    assert calls == [
+        ["docker", "compose", "logs", "--no-color", "--timestamps", "app", "worker"]
+    ]
+
+
+def test_worker_events_are_reported_when_app_has_no_matching_run_events(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    logs = "\n".join(
+        json.dumps(item)
+        for item in [
+            event("research_run_completed", "other-run", campaign_name="Other"),
+            event("research_run_completed", "worker-run", campaign_name="Worker run"),
+            event(
+                "llm_usage_reported",
+                "worker-run",
+                provider="openai",
+                input_tokens=7,
+                output_tokens=2,
+                total_tokens=9,
+            ),
+        ]
+    )
+    monkeypatch.setattr(research_report, "read_compose_logs", lambda: logs)
+
+    assert research_report.main(["summary", "--run-id", "worker-run"]) == 0
+    output = capsys.readouterr().out
+    assert "Campaign: Worker run" in output
+    assert "Other" not in output
+    assert "LLM calls" in output and "1" in output
+    assert "Reported input tokens" in output and "7" in output
+
+
+def test_compose_event_sorting_is_stable_and_preserves_repeated_operations() -> None:
+    repeated = event("web_search_started", "run-1", search_phase="initial")
+    repeated["timestamp"] = "2026-10-07T01:00:01+00:00"
+    earlier = event("research_run_started", "run-1")
+    earlier["timestamp"] = "2026-10-07T01:00:00+00:00"
+    untimestamped = {"event": "legacy_event", "research_run_id": "run-1"}
+
+    sorted_events = research_report._sort_events_chronologically(
+        [repeated, earlier, repeated.copy(), untimestamped]
+    )
+
+    assert sorted_events == [earlier, repeated, repeated, untimestamped]
+    raw = "\n".join(
+        [
+            "worker  | not-json",
+            "worker  | {malformed}",
+            f"worker  | {json.dumps(repeated)}",
+            f"worker  | {json.dumps(repeated)}",
+        ]
+    )
+    assert research_report.parse_json_events(raw) == [repeated, repeated]
+
+
+def test_investigation_totals_include_initial_followup_and_legacy_phase_once() -> None:
+    events: list[dict[str, object]] = []
+    for phase, calls, results in (
+        ("discovery", 5, 10),
+        ("initial", 5, 5),
+        ("followup", 3, 4),
+        ("investigation", 2, 3),
+    ):
+        for index in range(calls):
+            events.append(
+                event(
+                    "web_search_started",
+                    "run-phase",
+                    search_phase=phase,
+                    operation_id=f"{phase}-{index}",
+                )
+            )
+        for index in range(calls):
+            events.append(
+                event(
+                    "web_search_completed",
+                    "run-phase",
+                    search_phase=phase,
+                    result_count=results // calls + (index < results % calls),
+                )
+            )
+    events.append(
+        event("research_run_completed", "run-phase", campaign_name="Phase test")
+    )
+
+    usage = research_report.aggregate_run(events, "campaign-1", "run-phase")
+    summary = research_report.render_report(usage)
+    cost = research_report.render_cost_report(usage)
+
+    assert usage.search_calls == 15
+    assert usage.search_results == 22
+    assert usage.calls_by_phase == {
+        "discovery": 5,
+        "initial": 5,
+        "followup": 3,
+        "investigation": 2,
+    }
+    assert sum(usage.calls_by_phase.values()) == usage.search_calls
+    assert sum(usage.search_results_by_phase.values()) == usage.search_results
+    assert any(
+        line.startswith("Investigation search calls") and line.rstrip().endswith("10")
+        for line in summary.splitlines()
+    )
+    assert any(
+        line.startswith("Investigation search results") and line.rstrip().endswith("12")
+        for line in summary.splitlines()
+    )
+    assert "Initial search calls" in cost

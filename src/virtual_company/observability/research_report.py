@@ -7,7 +7,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -604,6 +604,28 @@ def _count_by_phase(events: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _investigation_phase_total(counts: dict[str, int]) -> int:
+    """Count current and legacy company-investigation phase labels once."""
+    return sum(counts.get(phase, 0) for phase in ("initial", "investigation", "followup"))
+
+
+def _sort_events_chronologically(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Sort timestamped events chronologically, stably retaining untimestamped events."""
+
+    def key(indexed_event: tuple[int, dict[str, Any]]) -> tuple[int, datetime, int]:
+        index, event = indexed_event
+        timestamp = _timestamp(event.get("timestamp"))
+        if timestamp is None:
+            return (1, datetime.max.replace(tzinfo=UTC), index)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        return (0, timestamp.astimezone(UTC), index)
+
+    return [event for _, event in sorted(enumerate(events), key=key)]
+
+
 def render_report(usage: ResearchUsage) -> str:
     """Render the complete human-readable run summary."""
     lines = [
@@ -633,8 +655,7 @@ def render_report(usage: ResearchUsage) -> str:
         _metric(
             "Investigation search calls",
             (
-                usage.calls_by_phase.get("investigation", 0)
-                + usage.calls_by_phase.get("followup", 0)
+                _investigation_phase_total(usage.calls_by_phase)
                 if usage.search_calls is not None
                 else None
             ),
@@ -642,8 +663,7 @@ def render_report(usage: ResearchUsage) -> str:
         _metric(
             "Investigation search results",
             (
-                usage.search_results_by_phase.get("investigation", 0)
-                + usage.search_results_by_phase.get("followup", 0)
+                _investigation_phase_total(usage.search_results_by_phase)
                 if usage.search_results is not None
                 else None
             ),
@@ -737,7 +757,13 @@ def render_cost_report(usage: ResearchUsage) -> str:
         _metric("Search mode / depth", usage.search_modes),
     ]
     if usage.actual_search_credits is not None:
-        for phase in ("discovery", "investigation", "followup", "unattributed"):
+        for phase in (
+            "discovery",
+            "initial",
+            "investigation",
+            "followup",
+            "unattributed",
+        ):
             amount = usage.credits_by_phase.get(phase)
             if amount is not None:
                 lines.append(_metric(f"{phase.title()} credits", _display(amount)))
@@ -754,7 +780,13 @@ def render_cost_report(usage: ResearchUsage) -> str:
                 _display(usage.estimated_search_credits),
             )
         )
-    for phase in ("discovery", "investigation", "followup", "unattributed"):
+    for phase in (
+        "discovery",
+        "initial",
+        "investigation",
+        "followup",
+        "unattributed",
+    ):
         if phase in usage.calls_by_phase:
             lines.append(
                 _metric(f"{phase.title()} search calls", usage.calls_by_phase[phase])
@@ -814,10 +846,18 @@ def _yes_no(value: bool | None) -> str:
 
 
 def read_compose_logs() -> str:
-    """Return app container logs, retaining JSON payloads after Compose prefixes."""
+    """Return app and worker logs, retaining JSON payloads after Compose prefixes."""
     try:
         result = subprocess.run(
-            ["docker", "compose", "logs", "--no-color", "--timestamps", "app"],
+            [
+                "docker",
+                "compose",
+                "logs",
+                "--no-color",
+                "--timestamps",
+                "app",
+                "worker",
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -837,7 +877,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--campaign-id")
     arguments = parser.parse_args(argv)
     try:
-        events = parse_json_events(read_compose_logs())
+        events = _sort_events_chronologically(parse_json_events(read_compose_logs()))
         run_id, campaign_id, run_events = select_run_events(
             events, run_id=arguments.run_id, campaign_id=arguments.campaign_id
         )
