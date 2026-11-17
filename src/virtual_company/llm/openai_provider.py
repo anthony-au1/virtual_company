@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import cast
+from collections.abc import Mapping
+from typing import Any, cast
 
 import httpx
 from openai import AsyncOpenAI, AuthenticationError, RateLimitError
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from virtual_company.config import get_settings
 from virtual_company.llm.base import (
@@ -117,7 +118,7 @@ class OpenAIProvider:
             request_options["reasoning"] = {"effort": self._reasoning_effort}
         started = time.perf_counter()
         try:
-            response = await self._client.responses.parse(
+            raw_response = await self._client.responses.with_raw_response.parse(
                 model=self._model,
                 instructions=system_prompt,
                 input=user_prompt,
@@ -128,6 +129,21 @@ class OpenAIProvider:
             raise LLMAuthenticationError("OpenAI authentication failed") from error
         except RateLimitError as error:
             raise LLMRateLimitError("OpenAI rate limit exceeded") from error
+        response_metadata = self._response_metadata(raw_response)
+        try:
+            # The SDK's raw response wrapper exposes a local synchronous parser;
+            # it parses the already-received body and performs no second request.
+            response = raw_response.parse()
+        except Exception as error:
+            try:
+                self._report_parse_failure(
+                    error,
+                    response_metadata,
+                    duration_ms=int((time.perf_counter() - started) * 1000),
+                )
+            except Exception:  # noqa: BLE001 - diagnostics must not mask parse errors
+                logger.warning("openai_structured_output_diagnostic_failed")
+            raise
         duration_ms = int((time.perf_counter() - started) * 1000)
         usage = getattr(response, "usage", None)
         input_details = getattr(usage, "input_tokens_details", None)
@@ -171,3 +187,78 @@ class OpenAIProvider:
         if getattr(response, "output_parsed", None) is None:
             raise LLMStructuredOutputError("OpenAI returned no structured output")
         return cast(T, response.output_parsed)
+
+    def _response_metadata(self, raw_response: Any) -> dict[str, Any]:
+        """Read only provider metadata from the SDK raw response, never its text."""
+        metadata: dict[str, Any] = {
+            "http_status": getattr(raw_response, "status_code", None),
+            "request_id": getattr(raw_response, "request_id", None),
+        }
+        try:
+            payload = raw_response.http_response.json()
+        except Exception:  # noqa: BLE001 - diagnostics must not mask response parsing
+            return metadata
+        if not isinstance(payload, Mapping):
+            return metadata
+
+        metadata["response_id"] = payload.get("id")
+        metadata["response_status"] = payload.get("status")
+        metadata["model"] = payload.get("model") or self._model
+        incomplete = payload.get("incomplete_details")
+        if isinstance(incomplete, Mapping):
+            metadata["incomplete_reason"] = incomplete.get("reason")
+        usage = payload.get("usage")
+        if isinstance(usage, Mapping):
+            metadata["input_tokens"] = usage.get("input_tokens")
+            metadata["output_tokens"] = usage.get("output_tokens")
+            metadata["total_tokens"] = usage.get("total_tokens")
+            output_details = usage.get("output_tokens_details")
+            if isinstance(output_details, Mapping):
+                metadata["reasoning_tokens"] = output_details.get("reasoning_tokens")
+        return metadata
+
+    def _report_parse_failure(
+        self,
+        error: Exception,
+        response_metadata: dict[str, Any],
+        *,
+        duration_ms: int,
+    ) -> None:
+        """Emit metadata-only diagnostics for a structured response parse failure."""
+        if isinstance(error, ValidationError):
+            try:
+                errors = error.errors(include_input=False, include_url=False)
+                error_types = {str(item.get("type", "")) for item in errors}
+            except Exception:  # noqa: BLE001 - preserve the original parse error
+                error_types = set()
+            category = (
+                "malformed_json"
+                if "json_invalid" in error_types
+                or "value_error.jsondecode" in error_types
+                else "schema_validation"
+            )
+        else:
+            category = "provider_sdk_parse_error"
+        from virtual_company.observability import get_observability
+
+        context = get_observability().current_context
+        get_observability().event(
+            "llm_structured_output_parse_failed",
+            provider="openai",
+            operation_name=context.get("prompt_name") or context.get("workflow_node"),
+            role=self._role,
+            model=response_metadata.get("model") or self._model,
+            logical_llm_call_id=context.get("logical_llm_call_id"),
+            request_id=response_metadata.get("request_id"),
+            response_id=response_metadata.get("response_id"),
+            http_status=response_metadata.get("http_status"),
+            response_status=response_metadata.get("response_status"),
+            incomplete_reason=response_metadata.get("incomplete_reason"),
+            configured_max_output_tokens=self._max_output_tokens,
+            input_tokens=response_metadata.get("input_tokens"),
+            output_tokens=response_metadata.get("output_tokens"),
+            reasoning_tokens=response_metadata.get("reasoning_tokens"),
+            exception_type=type(error).__name__,
+            error_category=category,
+            duration_ms=duration_ms,
+        )
