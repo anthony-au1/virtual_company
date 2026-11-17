@@ -69,7 +69,10 @@ class LLMRegistry:
             return (
                 self._settings.llm_research_provider or self._settings.llm_provider
             ).lower()
-        if role is LLMRole.EXTRACTION:
+        if role in {
+            LLMRole.EXTRACTION,
+            LLMRole.QUALIFICATION_FACT_EXTRACTION,
+        }:
             return (
                 self._settings.llm_extraction_provider or self._settings.llm_provider
             ).lower()
@@ -103,6 +106,11 @@ class LLMRegistry:
             return self._settings.openai_research_model
         if role is LLMRole.EXTRACTION:
             return self._settings.openai_extraction_model
+        if role is LLMRole.QUALIFICATION_FACT_EXTRACTION:
+            return (
+                self._settings.openai_qualification_fact_extraction_model
+                or self._settings.openai_extraction_model
+            )
         if role is LLMRole.OBLIGATION_GENERATION:
             return self._settings.openai_obligation_generation_model
         if role is LLMRole.EXPLORATION_EVIDENCE_EXTRACTION:

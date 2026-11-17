@@ -37,6 +37,13 @@ responses marked incomplete fail safely. Empty/unset
 Responses API reasoning parameter. Explicit reasoning values must be supported by
 the selected model. Output limits include any reasoning tokens counted by the API.
 
+Research uses `OPENAI_RESEARCH_MODEL` for query generation and
+`OPENAI_EXTRACTION_MODEL` for candidate extraction, page attribution, and page
+Evidence extraction. `OPENAI_QUALIFICATION_FACT_EXTRACTION_MODEL` independently
+selects the model for Research Qualification Fact Extraction; when unset or empty,
+it falls back to `OPENAI_EXTRACTION_MODEL`. Exploration Evidence and Fact extraction
+use their separate `OPENAI_EXPLORATION_*_EXTRACTION_MODEL` settings.
+
 The frontend is available at `http://localhost:3000`, and the FastAPI service remains
 available directly at `http://localhost:8000`. `make start` migrates the database and
 builds and starts the complete Compose stack, including the Taskiq worker and Redis.

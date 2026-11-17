@@ -8,6 +8,7 @@ class LLMRole(StrEnum):
 
     RESEARCH = "research"
     EXTRACTION = "extraction"
+    QUALIFICATION_FACT_EXTRACTION = "qualification_fact_extraction"
     OBLIGATION_GENERATION = "obligation_generation"
     EXPLORATION_QUERY_GENERATION = "exploration_query_generation"
     EXPLORATION_EVIDENCE_EXTRACTION = "exploration_evidence_extraction"

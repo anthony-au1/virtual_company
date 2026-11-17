@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     openai_research_reasoning_effort: OpenAIReasoningEffort | None = None
     openai_research_model: str = "gpt-6.1-terra"
     openai_extraction_model: str = "gpt-6-luna"
+    openai_qualification_fact_extraction_model: str | None = None
     openai_obligation_generation_model: str = "gpt-6.1-terra"
     openai_exploration_query_generation_model: str = "gpt-6.1-terra"
     openai_exploration_evidence_extraction_model: str = "gpt-6-luna"

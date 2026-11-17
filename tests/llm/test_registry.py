@@ -27,6 +27,78 @@ def test_default_roles_resolve_to_openai_terra_and_luna() -> None:
     assert extraction._model == "gpt-6-luna"
 
 
+def test_qualification_fact_extraction_has_an_independent_model() -> None:
+    registry = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("test-key"),
+            openai_qualification_fact_extraction_model="gpt-6.1-terra",
+        )
+    )
+
+    qualification = registry.for_role(LLMRole.QUALIFICATION_FACT_EXTRACTION)
+    extraction = registry.for_role(LLMRole.EXTRACTION)
+
+    assert isinstance(qualification, OpenAIProvider)
+    assert qualification._model == "gpt-6.1-terra"
+    assert qualification.role == "qualification_fact_extraction"
+    assert isinstance(extraction, OpenAIProvider)
+    assert extraction._model == "gpt-6-luna"
+
+
+@pytest.mark.parametrize("dedicated_model", [None, ""])
+def test_qualification_fact_extraction_falls_back_to_shared_extraction_model(
+    dedicated_model: str | None,
+) -> None:
+    registry = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("test-key"),
+            openai_extraction_model="custom-extraction-model",
+            openai_qualification_fact_extraction_model=dedicated_model,
+        )
+    )
+
+    provider = registry.for_role(LLMRole.QUALIFICATION_FACT_EXTRACTION)
+
+    assert isinstance(provider, OpenAIProvider)
+    assert provider._model == "custom-extraction-model"
+
+
+def test_qualification_fact_extraction_keeps_shared_anthropic_provider_override() -> None:
+    registry = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("openai-key"),
+            anthropic_api_key=SecretStr("anthropic-key"),
+            llm_extraction_provider="anthropic",
+            openai_qualification_fact_extraction_model="gpt-6.1-terra",
+            anthropic_model="custom-anthropic-model",
+        )
+    )
+
+    qualification = registry.for_role(LLMRole.QUALIFICATION_FACT_EXTRACTION)
+    extraction = registry.for_role(LLMRole.EXTRACTION)
+
+    assert isinstance(qualification, AnthropicProvider)
+    assert qualification._model == "custom-anthropic-model"
+    assert qualification.role == "qualification_fact_extraction"
+    assert isinstance(extraction, AnthropicProvider)
+
+
+def test_qualification_role_uses_generic_openai_limits_and_reasoning() -> None:
+    provider = LLMRegistry(
+        Settings(
+            openai_api_key=SecretStr("test-key"),
+            openai_max_output_tokens=12_345,
+            openai_research_max_output_tokens=1_234,
+            openai_reasoning_effort="low",
+            openai_research_reasoning_effort="high",
+        )
+    ).for_role(LLMRole.QUALIFICATION_FACT_EXTRACTION)
+
+    assert isinstance(provider, OpenAIProvider)
+    assert provider._max_output_tokens == 12_345
+    assert provider._reasoning_effort == "low"
+
+
 def test_obligation_generation_has_an_independent_reasoning_model() -> None:
     registry = LLMRegistry(Settings(openai_api_key=SecretStr("test-key")))
 

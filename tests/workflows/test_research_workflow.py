@@ -385,6 +385,93 @@ def make_nodes(
     )
 
 
+def test_qualification_extractor_uses_dedicated_provider_and_legacy_fallback() -> None:
+    model = campaign()
+    shared = ExtractionFake({})
+    dedicated = ExtractionFake({})
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=ResearchServiceFake(),
+        research_llm=ResearchFake([]),
+        extraction_llm=shared,
+        qualification_llm=dedicated,
+        web_search=SearchFake([]),
+        web_fetch=FetchFake({}),
+    )
+
+    assert nodes._extraction_llm is shared
+    assert nodes._qualification_extractor._provider is dedicated
+
+    legacy_nodes = make_nodes(shared, ResearchFake([]), model)
+    assert legacy_nodes._qualification_extractor._provider is shared
+
+
+@pytest.mark.asyncio
+async def test_incremental_and_final_qualification_use_dedicated_provider() -> None:
+    model = campaign()
+    model.target_market = None
+    model.industry = None
+    model.keywords = ["Java"]
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    run_id = uuid4()
+
+    class QualificationProvider:
+        model = "gpt-6.1-terra"
+        role = "qualification_fact_extraction"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate_structured(self, **_: object) -> QualificationFacts:
+            self.calls += 1
+            return QualificationFacts()
+
+    shared = ExtractionFake({})
+    qualification = QualificationProvider()
+    research = ResearchServiceFake()
+
+    def evidence_item() -> SimpleNamespace:
+        return SimpleNamespace(
+            id=uuid4(),
+            company_id=company.id,
+            research_run_id=run_id,
+            criterion="keyword",
+            subject="Java",
+            claim="Acme uses Java.",
+            evidence_text="Acme uses Java.",
+        )
+
+    research.evidence = [evidence_item()]
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=research,
+        research_llm=ResearchFake([]),
+        extraction_llm=shared,
+        qualification_llm=qualification,  # type: ignore[arg-type]
+        web_search=SearchFake([]),
+        web_fetch=FetchFake({}),
+        company_research_max_investigation_rounds=0,
+    )
+    state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "research_run_id": run_id,
+        "research_companies": [company],
+        "investigations": {
+            company.id: CompanyInvestigationState(company_id=company.id)
+        },
+    }
+
+    state.update(await nodes.check_evidence_coverage(state))  # type: ignore[arg-type]
+    assert qualification.calls == 1
+    assert shared.prompts == []
+
+    research.evidence.append(evidence_item())
+    state.update(await nodes.qualify_companies(state))  # type: ignore[arg-type]
+
+    assert qualification.calls == 2
+    assert shared.prompts == []
+
+
 @pytest.mark.asyncio
 async def test_loading_campaign_for_first_run_seals_its_definition() -> None:
     model = campaign()

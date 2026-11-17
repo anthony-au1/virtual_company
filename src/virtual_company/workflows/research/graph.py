@@ -31,6 +31,7 @@ class ResearchWorkflow:
         research: ResearchService,
         research_llm: LLMProvider | None = None,
         extraction_llm: LLMProvider | None = None,
+        qualification_llm: LLMProvider | None = None,
         llm: LLMProvider | None = None,
         web_search: WebSearchTool,
         web_fetch: WebFetchTool,
@@ -42,6 +43,7 @@ class ResearchWorkflow:
             research=research,
             research_llm=research_llm,
             extraction_llm=extraction_llm,
+            qualification_llm=qualification_llm,
             llm=llm,
             web_search=web_search,
             web_fetch=web_fetch,
@@ -219,6 +221,9 @@ def create_configured_research_workflow(
         research_llm=InstrumentedLLMProvider(LLMRegistry().for_role(LLMRole.RESEARCH)),
         extraction_llm=InstrumentedLLMProvider(
             LLMRegistry().for_role(LLMRole.EXTRACTION)
+        ),
+        qualification_llm=InstrumentedLLMProvider(
+            LLMRegistry().for_role(LLMRole.QUALIFICATION_FACT_EXTRACTION)
         ),
         web_search=create_web_search_tool(),
         web_fetch=create_web_fetch_tool(),

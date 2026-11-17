@@ -80,6 +80,27 @@ async def test_instrumented_provider_preserves_result_and_records_metadata() -> 
 
 
 @pytest.mark.asyncio
+async def test_instrumented_provider_reports_qualification_role_and_model() -> None:
+    observability = ObservabilityFake()
+    provider = ProviderFake()
+    provider.model = "gpt-6.1-terra"
+    provider.role = "qualification_fact_extraction"
+    instrumented = InstrumentedLLMProvider(
+        provider, observability=observability  # type: ignore[arg-type]
+    )
+
+    await instrumented.generate_structured(
+        system_prompt="System", user_prompt="User", response_model=Output
+    )
+
+    started = next(
+        data for name, data in observability.event_data if name == "llm_request_started"
+    )
+    assert started["model"] == "gpt-6.1-terra"
+    assert started["role"] == "qualification_fact_extraction"
+
+
+@pytest.mark.asyncio
 async def test_instrumented_provider_preserves_original_error() -> None:
     observability = ObservabilityFake()
     provider = InstrumentedLLMProvider(

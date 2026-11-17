@@ -76,6 +76,13 @@ def get_extraction_llm_provider() -> LLMProvider:
     return InstrumentedLLMProvider(LLMRegistry().for_role(LLMRole.EXTRACTION))
 
 
+def get_qualification_fact_extraction_llm_provider() -> LLMProvider:
+    """Build the configured research qualification fact extraction provider."""
+    return InstrumentedLLMProvider(
+        LLMRegistry().for_role(LLMRole.QUALIFICATION_FACT_EXTRACTION)
+    )
+
+
 def get_web_search_tool() -> WebSearchTool:
     """Build the single web-search provider selected by application configuration."""
     return create_web_search_tool()
@@ -93,6 +100,7 @@ def get_research_workflow(session: SessionDependency) -> ResearchWorkflow:
         research=ResearchService(session),
         research_llm=get_llm_provider(),
         extraction_llm=get_extraction_llm_provider(),
+        qualification_llm=get_qualification_fact_extraction_llm_provider(),
         web_search=get_web_search_tool(),
         web_fetch=get_web_fetch_tool(),
     )

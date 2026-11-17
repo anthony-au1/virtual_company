@@ -115,6 +115,7 @@ class ResearchNodes:
         research: ResearchService,
         research_llm: LLMProvider | None = None,
         extraction_llm: LLMProvider | None = None,
+        qualification_llm: LLMProvider | None = None,
         llm: LLMProvider | None = None,
         web_search: WebSearchTool,
         web_fetch: WebFetchTool,
@@ -139,10 +140,19 @@ class ResearchNodes:
         self._qualification_observability = QualificationObservability(telemetry)
         self._research_llm = research_llm or llm
         self._extraction_llm = extraction_llm or llm
-        if self._research_llm is None or self._extraction_llm is None:
+        self._qualification_llm = (
+            qualification_llm
+            if qualification_llm is not None
+            else self._extraction_llm
+        )
+        if (
+            self._research_llm is None
+            or self._extraction_llm is None
+            or self._qualification_llm is None
+        ):
             raise ValueError("Research and extraction LLM providers are required")
         self._qualification_extractor = QualificationEvidenceExtractor(
-            self._extraction_llm,
+            self._qualification_llm,
             concurrency=evidence_extraction_concurrency,
             observability=self._qualification_observability,
         )

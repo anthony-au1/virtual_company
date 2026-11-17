@@ -96,6 +96,22 @@ def test_empty_research_output_limit_uses_global_limit(
     assert settings.openai_max_output_tokens == 12_000
 
 
+def test_qualification_fact_extraction_model_reads_environment_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_QUALIFICATION_FACT_EXTRACTION_MODEL", "gpt-6.1-terra")
+
+    assert Settings().openai_qualification_fact_extraction_model == "gpt-6.1-terra"
+
+
+def test_empty_qualification_fact_model_environment_value_is_preserved_for_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_QUALIFICATION_FACT_EXTRACTION_MODEL", "")
+
+    assert Settings().openai_qualification_fact_extraction_model == ""
+
+
 def test_env_example_has_no_duplicate_configuration_keys() -> None:
     from collections import Counter
     from pathlib import Path
