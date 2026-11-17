@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from virtual_company.config import Settings
 from virtual_company.db.models import Campaign
@@ -76,9 +77,11 @@ from virtual_company.workflows.research.prompts import (
     FOLLOWUP_COMPANY_QUERY_PROMPT,
     RANK_COMPANY_CANDIDATES_PROMPT,
     company_query_system_prompt,
+    company_query_user_prompt,
     extract_company_candidates_system_prompt,
     extract_company_evidence_system_prompt,
     followup_company_query_system_prompt,
+    followup_company_query_user_prompt,
     rank_company_candidates_system_prompt,
     rank_company_candidates_user_prompt,
 )
@@ -1120,7 +1123,14 @@ def test_company_query_prompt_uses_industry_context_without_logical_guesses() ->
     )
 
     prompt = company_query_system_prompt().lower()
-    assert COMPANY_QUERY_PROMPT.version == "v7"
+    assert COMPANY_QUERY_PROMPT.version == "v8"
+    assert "no longer than 256 characters" in prompt
+    assert "exactly the requested number of queries" in prompt
+    assert "no explanations, commentary, or prose" in prompt
+    assert "avoid repeated keywords" in prompt
+    assert "unnecessary search operators" in prompt
+    assert "excessive exclusion filters" in prompt
+    assert "queries diverse" in prompt
     assert "only the supplied evidence targets" in prompt
     assert "campaign description" in prompt
     assert (
@@ -2847,8 +2857,13 @@ async def test_evidence_persistence_collapses_same_statement_across_sources() ->
 
 def test_followup_prompt_requires_diverse_company_attributable_strategies() -> None:
     prompt = followup_company_query_system_prompt()
-    assert FOLLOWUP_COMPANY_QUERY_PROMPT.version == "v7"
+    assert FOLLOWUP_COMPANY_QUERY_PROMPT.version == "v8"
     for instruction in (
+        "no longer than 256 characters",
+        "no explanations, commentary, or prose",
+        "Avoid repeated keywords",
+        "unnecessary search operators",
+        "excessive exclusion filters",
         "Use complementary research strategies across the query set",
         "Do not target all queries at the same site, domain, or source family",
         "unless the supplied context provides a strong reason",
@@ -2872,6 +2887,22 @@ def test_followup_prompt_requires_diverse_company_attributable_strategies() -> N
         "Do not repeat prior queries",
     ):
         assert instruction in prompt
+
+
+def test_company_query_prompts_include_configured_counts_and_length_limit() -> None:
+    criteria = CampaignCriteria.model_validate(campaign())
+    company = ResearchCompany(id=uuid4(), name="Acme", domain="acme.example")
+    initial_prompt = company_query_user_prompt(
+        criteria, company, [], query_count=5
+    ).lower()
+    followup_prompt = followup_company_query_user_prompt(
+        criteria, company, [], query_count=3
+    ).lower()
+
+    assert "exactly 5" in initial_prompt
+    assert "at or below 256 characters" in initial_prompt
+    assert "exactly 3" in followup_prompt
+    assert "at or below 256 characters" in followup_prompt
 
 
 @pytest.mark.asyncio
@@ -4155,6 +4186,62 @@ async def test_all_unknown_criteria_are_targeted_for_followup() -> None:
     assert "Kafka" in targets
     assert output["investigations"][company.id].round == 1
     assert output["adaptive_mode"] is False
+
+
+@pytest.mark.asyncio
+async def test_overlong_query_is_rejected_before_downstream_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company = ResearchCompany(id=uuid4(), name="Acme")
+    telemetry = ObservabilityFake()
+    monkeypatch.setattr(
+        "virtual_company.workflows.research.nodes.get_observability",
+        lambda: telemetry,
+    )
+
+    class InvalidResearchFake(ResearchFake):
+        model = "gpt-6.1-terra"
+        role = "research"
+
+        async def generate_structured(self, **kwargs: object) -> object:
+            response_model = kwargs["response_model"]
+            self.models.append(response_model)  # type: ignore[arg-type]
+            return GeneratedCompanySearchQueries.model_construct(
+                queries=["q" * 257]
+            )
+
+    model = campaign()
+    research = InvalidResearchFake([])
+    search = SearchFake([])
+    nodes = ResearchNodes(
+        campaigns=CampaignServiceFake(model),
+        research=ResearchServiceFake(),
+        research_llm=research,  # type: ignore[arg-type]
+        extraction_llm=ExtractionFake({}),
+        web_search=search,
+        web_fetch=FetchFake({}),
+    )
+    state = {
+        "campaign": CampaignCriteria.model_validate(model),
+        "research_run_id": uuid4(),
+        "research_companies": [company],
+        "active_company_ids": [company.id],
+        "investigations": {
+            company.id: CompanyInvestigationState(company_id=company.id)
+        },
+    }
+
+    with pytest.raises(ValidationError, match="at most 256 characters"):
+        await nodes.generate_company_queries(state)  # type: ignore[arg-type]
+
+    assert search.calls == []
+    event_name, event = telemetry.events[-1]
+    assert event_name == "company_search_query_validation_failed"
+    assert event["operation_name"] == "generate_company_queries"
+    assert event["company_name"] == "Acme"
+    assert event["model"] == "gpt-6.1-terra"
+    assert event["role"] == "research"
+    assert event["error_category"] == "schema_validation"
 
 
 @pytest.mark.asyncio

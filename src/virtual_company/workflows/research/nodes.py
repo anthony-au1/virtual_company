@@ -7,6 +7,8 @@ from collections.abc import Callable, Sequence
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from virtual_company.domain.research.criteria import (
     EvidenceCriterion,
     campaign_criteria,
@@ -583,12 +585,17 @@ class ResearchNodes:
                 prompt_name=COMPANY_QUERY_PROMPT.name,
                 prompt_version=COMPANY_QUERY_PROMPT.version,
             ):
+                query_limit = self._company_research_query_count
                 response = await self._research_llm.generate_structured(
                     system_prompt=company_query_system_prompt(),
-                    user_prompt=company_query_user_prompt(campaign, company, targets),
+                    user_prompt=company_query_user_prompt(
+                        campaign, company, targets, query_count=query_limit
+                    ),
                     response_model=GeneratedCompanySearchQueries,
                 )
-                query_limit = self._company_research_query_count
+                response = self._validated_company_search_queries(
+                    response, operation_name=COMPANY_QUERY_PROMPT.name, company=company
+                )
                 queries = self._select_investigation_queries(
                     response.queries,
                     investigation.attempted_queries,
@@ -664,22 +671,31 @@ class ResearchNodes:
             ):
                 attempted_queries = investigation.attempted_queries
                 attempted_focuses = investigation.attempted_strategy_focuses
+                query_limit = (
+                    self._company_research_followup_search_queries_per_company
+                )
                 response = await self._research_llm.generate_structured(
                     system_prompt=followup_company_query_system_prompt(),
                     user_prompt=followup_company_query_user_prompt(
                         campaign,
                         company,
                         missing,
+                        query_count=query_limit,
                         attempted_queries=attempted_queries,
                         attempted_strategy_focuses=attempted_focuses,
                     ),
                     response_model=GeneratedCompanySearchQueries,
                 )
+                response = self._validated_company_search_queries(
+                    response,
+                    operation_name=FOLLOWUP_COMPANY_QUERY_PROMPT.name,
+                    company=company,
+                )
                 queries = self._select_investigation_queries(
                     response.queries,
                     attempted_queries,
                     missing,
-                    self._company_research_followup_search_queries_per_company,
+                    query_limit,
                     blocked_targets=blocked_targets,
                 )
                 queries_by_company[company.id] = queries
@@ -2324,6 +2340,30 @@ class ResearchNodes:
                 enumerate(targets), key=lambda item: (counts[item[0]], item[0])
             )
         ]
+
+    def _validated_company_search_queries(
+        self,
+        response: GeneratedCompanySearchQueries,
+        *,
+        operation_name: str,
+        company: ResearchCompany,
+    ) -> GeneratedCompanySearchQueries:
+        """Revalidate provider results before any query can reach web search."""
+        try:
+            return GeneratedCompanySearchQueries.model_validate(response.model_dump())
+        except ValidationError:
+            observability = get_observability()
+            observability.event(
+                "company_search_query_validation_failed",
+                operation_name=operation_name,
+                company_id=str(company.id),
+                company_name=company.name,
+                model=getattr(self._research_llm, "model", "unknown"),
+                role=getattr(self._research_llm, "role", "unknown"),
+                error_category="schema_validation",
+                exception_type="ValidationError",
+            )
+            raise
 
     @classmethod
     def _select_investigation_queries(

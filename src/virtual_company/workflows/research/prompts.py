@@ -12,6 +12,7 @@ from virtual_company.llm.prompts import PromptIdentity
 from virtual_company.tools.web_fetch import WebPage
 from virtual_company.tools.web_search import SearchResult
 from virtual_company.workflows.research.models import (
+    MAX_COMPANY_SEARCH_QUERY_CHARS,
     AggregatedCompanyCandidate,
     CampaignCriteria,
     ResearchCompany,
@@ -31,10 +32,10 @@ class ResearchQualificationEvidencePromptItem(Protocol):
 SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v3")
 EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v2")
 RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v6")
-COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v7")
+COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v8")
 EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v6")
 FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity(
-    "generate_followup_company_queries", "v7"
+    "generate_followup_company_queries", "v8"
 )
 VALIDATE_COMPANY_PAGE_ATTRIBUTION_PROMPT = PromptIdentity(
     "validate_company_page_attribution", "v1"
@@ -173,10 +174,15 @@ def rank_company_candidates_user_prompt(
 def company_query_system_prompt() -> str:
     """Return instructions for source-discovery queries about one known company."""
     return (
-        "Generate concise web-search queries for ONLY the supplied evidence targets. "
+        f"Generate short, focused web-search queries, each no longer than "
+        f"{MAX_COMPANY_SEARCH_QUERY_CHARS} characters, for ONLY the supplied evidence targets. "
         "Include the supplied company name in every query so results stay attributable. Combine related "
-        "targets when one source can establish several. You are generating research queries, "
-        "not asserting facts: queries may investigate and disprove hypotheses. "
+        "targets when one source can establish several. Generate exactly the requested number of "
+        "queries unless fewer distinct useful searches can cover the supplied targets. Return only "
+        "the query strings: no explanations, commentary, or prose. Avoid repeated keywords, "
+        "unnecessary search operators, and excessive exclusion filters. Make the queries diverse "
+        "while preserving target coverage. You are generating research queries, not asserting facts: "
+        "queries may investigate and disprove hypotheses. "
         f"{_CAMPAIGN_DESCRIPTION_TRUST_BOUNDARY}"
         "Only when the supplied evidence targets include an industry criterion, apply this "
         "industry-specific guidance: use the campaign description to understand its business "
@@ -196,9 +202,13 @@ def company_query_user_prompt(
     campaign: CampaignCriteria,
     company: ResearchCompany,
     targets: list[CriterionQualification],
+    *,
+    query_count: int,
 ) -> str:
-    """Serialize campaign criteria and one company for source-query generation."""
+    """Serialize the requested query count and company research context."""
     return (
+        f"Generate exactly {query_count} distinct search queries when useful coverage allows. "
+        f"Keep every query at or below {MAX_COMPANY_SEARCH_QUERY_CHARS} characters.\n\n"
         f"Campaign criteria:\n{campaign.model_dump_json()}\n\n"
         f"Company context:\n{company.model_dump_json()}\n\n"
         f"Evidence targets:\n{_targets_json(targets)}"
@@ -208,9 +218,14 @@ def company_query_user_prompt(
 def followup_company_query_system_prompt() -> str:
     """Return instructions for targeted searches for missing coverage only."""
     return (
-        "Generate a small set of concise web-search queries designed to find source-grounded "
+        f"Generate short, focused web-search queries, each no longer than "
+        f"{MAX_COMPANY_SEARCH_QUERY_CHARS} characters, designed to find source-grounded "
         "evidence for ONLY the listed unresolved campaign criteria for this company. "
-        "Include the company name in every query. Cover every unresolved criterion with at least "
+        "Generate exactly the requested number of queries unless fewer distinct useful searches "
+        "can cover the unresolved criteria. Return only query strings: no explanations, commentary, "
+        "or prose. Avoid repeated keywords, unnecessary search operators, and excessive exclusion "
+        "filters. Make the queries diverse while preserving target coverage. Include the company "
+        "name in every query. Cover every unresolved criterion with at least "
         "one query naming its subject when the query limit allows, before assigning multiple "
         "queries to one criterion. Do not repeat prior queries. Choose a meaningfully different "
         "search strategy and, when the prior channel did not resolve the criteria, prefer a "
@@ -242,11 +257,14 @@ def followup_company_query_user_prompt(
     company: ResearchCompany,
     missing: list[CriterionQualification],
     *,
+    query_count: int,
     attempted_queries: Sequence[str] = (),
     attempted_strategy_focuses: Sequence[str] = (),
 ) -> str:
     """Serialize one company and only its missing coverage expectations."""
     return (
+        f"Generate exactly {query_count} distinct follow-up search queries when useful coverage "
+        f"allows. Keep every query at or below {MAX_COMPANY_SEARCH_QUERY_CHARS} characters.\n\n"
         f"Company:\n{company.model_dump_json()}\n\n"
         f"Campaign context:\n{campaign.model_dump_json()}\n\n"
         f"Unresolved criteria:\n{_targets_json(missing)}\n\n"

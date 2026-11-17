@@ -1,13 +1,18 @@
 """Tests for research workflow data-transfer models."""
 
 import pytest
+from openai.lib._pydantic import to_strict_json_schema
 from pydantic import ValidationError
 
 from virtual_company.domain.research.criteria import EvidenceCriterion
 from virtual_company.domain.research.discovery import DiscoveredCompany
 from virtual_company.tools.web_fetch import WebPage
 from virtual_company.tools.web_search import SearchResult
-from virtual_company.workflows.research.models import ExtractedEvidence
+from virtual_company.workflows.research.models import (
+    MAX_COMPANY_SEARCH_QUERY_CHARS,
+    ExtractedEvidence,
+    GeneratedCompanySearchQueries,
+)
 
 
 def test_research_models_accept_expected_data() -> None:
@@ -39,3 +44,29 @@ def test_discovered_company_limits_supporting_urls() -> None:
             discovery_reason="A credible source identifies the company.",
             supporting_urls=[f"https://example.com/{index}" for index in range(4)],
         )
+
+
+def test_generated_company_queries_enforce_per_query_character_limit() -> None:
+    exact_limit_query = "q" * MAX_COMPANY_SEARCH_QUERY_CHARS
+    result = GeneratedCompanySearchQueries(queries=[exact_limit_query])
+
+    assert result.queries == [exact_limit_query]
+    with pytest.raises(ValidationError, match="at most 256 characters"):
+        GeneratedCompanySearchQueries(queries=[exact_limit_query + "q"])
+    with pytest.raises(ValidationError):
+        GeneratedCompanySearchQueries(queries=[])
+    with pytest.raises(ValidationError):
+        GeneratedCompanySearchQueries(queries=["valid"] * 7)
+    with pytest.raises(ValidationError):
+        GeneratedCompanySearchQueries(queries=[""])
+
+
+def test_openai_strict_query_schema_supports_max_length() -> None:
+    schema = to_strict_json_schema(GeneratedCompanySearchQueries)
+    query_schema = schema["properties"]["queries"]["items"]
+
+    assert query_schema["type"] == "string"
+    assert query_schema["minLength"] == 1
+    assert query_schema["maxLength"] == MAX_COMPANY_SEARCH_QUERY_CHARS
+    assert schema["properties"]["queries"]["minItems"] == 1
+    assert schema["properties"]["queries"]["maxItems"] == 6

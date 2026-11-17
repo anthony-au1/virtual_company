@@ -17,6 +17,15 @@ from virtual_company.domain.research.facts import QualificationFacts
 from virtual_company.tools.web_search import SearchResult
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+MAX_COMPANY_SEARCH_QUERY_CHARS = 256
+CompanySearchQuery = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=MAX_COMPANY_SEARCH_QUERY_CHARS,
+    ),
+]
 
 
 class ExtractedEvidence(BaseModel):
@@ -149,7 +158,7 @@ class ResearchCompany(BaseModel):
 class GeneratedCompanySearchQueries(BaseModel):
     """Structured LLM output used to locate candidate evidence sources for one company."""
 
-    queries: list[NonEmptyString] = Field(min_length=1, max_length=6)
+    queries: list[CompanySearchQuery] = Field(min_length=1, max_length=6)
 
 
 class CompanyPageAttribution(BaseModel):
