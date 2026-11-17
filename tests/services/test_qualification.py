@@ -40,7 +40,10 @@ def campaign(
 
 def supported(index: int, evidence_id: UUID) -> CategoricalEvidenceFact:
     return CategoricalEvidenceFact(
-        criterion_id=f"criterion_{index}", state="supported", evidence_ids=[evidence_id]
+        criterion_id=f"criterion_{index}",
+        state="supported",
+        evidence_ids=[evidence_id],
+        reason="Supplied Evidence supports this criterion.",
     )
 
 
@@ -93,6 +96,7 @@ def test_conflicting_categorical_fact_remains_unknown_with_traceability() -> Non
                 criterion_id="criterion_1",
                 state="conflicting",
                 evidence_ids=evidence_ids,
+                reason="Supplied Evidence contains contradictory observations.",
             )
         ]
     )

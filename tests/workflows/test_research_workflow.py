@@ -284,6 +284,7 @@ def qualification_facts_from_prompt(prompt: str) -> QualificationFacts:
                     criterion_id=configured["criterion_id"],
                     state="supported",
                     evidence_ids=matches,
+                    reason="The supplied company Evidence establishes this criterion.",
                 )
             )
     counts: list[EmployeeCountEvidenceFact] = []
@@ -1098,7 +1099,7 @@ def test_evidence_extraction_prompt_requires_company_specific_keyword_support() 
     prompt = extract_company_evidence_system_prompt().lower()
 
     assert EXTRACT_COMPANY_EVIDENCE_PROMPT.version == "v6"
-    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v6"
+    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v8"
     assert "company meaningfully engages with the requested concept" in prompt
     assert "a topical mention alone is not enough" in prompt
     assert "an unrelated article containing the keyword does not qualify" in prompt

@@ -124,7 +124,38 @@ function CriterionDisclosure({ criterion }: { criterion: CriterionResult }) {
         <span className="text-muted-foreground ml-auto text-xs">Details</span>
       </summary>
       <div className="mt-3 border-t pt-3">
+        <h5 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+          Qualification reason
+        </h5>
         <p className="text-sm">{criterion.reason}</p>
+        {criterion.model_assessment ? (
+          <div className="bg-muted/40 mt-3 rounded-md p-3">
+            <h5 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+              AI assessment · {criterion.model_assessment.state}
+            </h5>
+            <p className="mt-1 text-sm">{criterion.model_assessment.reason}</p>
+            {criterion.model_assessment.reason_truncated ? (
+              <p className="text-muted-foreground mt-1 text-xs">
+                Explanation shortened for display.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {criterion.validation_override ? (
+          <div
+            className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/5 p-3"
+            role="note"
+          >
+            <h5 className="text-xs font-semibold tracking-wide uppercase">
+              Evidence validation override
+            </h5>
+            <p className="mt-1 text-sm">
+              The final {criterion.status} result differs from the model’s{" "}
+              {criterion.validation_override.original_state} assessment.{" "}
+              {criterion.validation_override.reason}
+            </p>
+          </div>
+        ) : null}
         {criterion.evidence.length ? (
           <div className="mt-3 space-y-2">
             <h5 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">

@@ -7,6 +7,10 @@ from contextlib import contextmanager
 import pytest
 from pydantic import BaseModel
 
+from virtual_company.domain.research.facts import (
+    CategoricalEvidenceFact,
+    QualificationFacts,
+)
 from virtual_company.llm import usage as usage_module
 from virtual_company.llm.instrumented import InstrumentedLLMProvider
 from virtual_company.observability.runtime import Observability
@@ -98,6 +102,38 @@ async def test_instrumented_provider_reports_qualification_role_and_model() -> N
     )
     assert started["model"] == "gpt-6.1-terra"
     assert started["role"] == "qualification_fact_extraction"
+
+
+@pytest.mark.asyncio
+async def test_capture_io_includes_qualification_reason_in_structured_output() -> None:
+    observability = ObservabilityFake()
+    observability.capture_io = True
+    fact = CategoricalEvidenceFact(
+        criterion_id="criterion_1",
+        state="supported",
+        evidence_ids=[],
+        reason="The supplied Evidence establishes the requested property.",
+    )
+
+    class QualificationProvider:
+        provider = "openai"
+        model = "gpt-6.1-terra"
+        role = "qualification_fact_extraction"
+
+        async def generate_structured(self, **_: object) -> QualificationFacts:
+            return QualificationFacts(categorical=[fact])
+
+    instrumented = InstrumentedLLMProvider(
+        QualificationProvider(), observability=observability  # type: ignore[arg-type]
+    )
+    await instrumented.generate_structured(
+        system_prompt="system",
+        user_prompt="user",
+        response_model=QualificationFacts,
+    )
+
+    output = next(update["output"] for update in observability.updates if "output" in update)
+    assert output["categorical"][0]["reason"] == fact.reason
 
 
 @pytest.mark.asyncio

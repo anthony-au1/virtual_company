@@ -352,6 +352,22 @@ class CriterionEvidenceResponse(BaseModel):
     source_type: str | None
 
 
+class QualificationModelAssessmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    state: Literal["supported", "unknown", "conflicting"]
+    reason: str
+    reason_truncated: bool = False
+
+
+class QualificationValidationOverrideResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    original_state: Literal["supported", "unknown", "conflicting"]
+    validated_state: Literal["supported", "unknown", "conflicting"]
+    reason: str
+
+
 class CriterionResultResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -360,6 +376,8 @@ class CriterionResultResponse(BaseModel):
     status: QualificationStatus
     reason: str
     evidence: list[CriterionEvidenceResponse]
+    model_assessment: QualificationModelAssessmentResponse | None = None
+    validation_override: QualificationValidationOverrideResponse | None = None
 
 
 class CompanyResearchResultResponse(BaseModel):

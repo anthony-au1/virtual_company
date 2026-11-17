@@ -15,8 +15,10 @@ from virtual_company.db.models import (
     ResearchRun,
 )
 from virtual_company.services.research_results import (
+    MAX_DISPLAY_QUALIFICATION_REASON_CHARS,
     ReferencedResearchRunError,
     ResearchResultsService,
+    _display_qualification_reason,
 )
 
 
@@ -68,6 +70,7 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         id=uuid4(), name="Alpha", website="https://alpha.example"
     )
     company_b = ResearchCompany(id=uuid4(), name="Beta")
+    full_model_reason = "The supplied Evidence supports Spring. " * 50
     java_evidence = ResearchEvidence(
         id=uuid4(),
         company_id=company_a.id,
@@ -106,6 +109,7 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
                     "evidence_ids": [str(java_evidence.id), str(unrelated.id)],
                 },
                 {
+                    "criterion_id": "criterion_1",
                     "criterion": "keyword",
                     "subject": "spring",
                     "status": "UNKNOWN",
@@ -119,7 +123,27 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
                     "reason": "Contradicted",
                     "evidence_ids": [],
                 },
-            ]
+            ],
+            "provenance": {
+                "fact_extraction_by_criterion": {
+                    "criterion_1": {
+                        "model_assessment": {
+                            "state": "supported",
+                            "reason": full_model_reason,
+                            "evidence_ids": [str(java_evidence.id)],
+                        },
+                        "validated_assessment": {
+                            "state": "unknown",
+                            "evidence_ids": [],
+                        },
+                        "validator_override": {
+                            "original_state": "supported",
+                            "validated_state": "unknown",
+                            "reason": "No cited Evidence was admissible for this criterion.",
+                        },
+                    }
+                }
+            },
         },
         created_at=now,
     )
@@ -166,6 +190,41 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         java_evidence.id
     ]
     assert result.companies[0].criteria[1].evidence == []
+    assessment = result.companies[0].criteria[1].model_assessment
+    assert assessment is not None
+    assert assessment.state == "supported"
+    assert len(assessment.reason) <= MAX_DISPLAY_QUALIFICATION_REASON_CHARS
+    assert assessment.reason.startswith("The supplied Evidence supports Spring.")
+    assert assessment.reason.endswith("… [shortened]")
+    assert assessment.reason_truncated is True
+    override = result.companies[0].criteria[1].validation_override
+    assert override is not None
+    assert override.validated_state == "unknown"
+    assert result.companies[1].criteria == []
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected_prefix"),
+    [
+        (("Sentence one. " + "Sentence two. ") * 80, "Sentence one."),
+        ("x" * 1500, "x"),
+    ],
+)
+def test_display_reason_shortening_is_bounded_and_marked(
+    reason: str, expected_prefix: str
+) -> None:
+    display, shortened = _display_qualification_reason(reason)
+
+    assert shortened is True
+    assert len(display) <= MAX_DISPLAY_QUALIFICATION_REASON_CHARS
+    assert display.startswith(expected_prefix)
+    assert display.endswith("… [shortened]")
+
+
+def test_display_reason_keeps_reasons_at_or_below_limit_unchanged() -> None:
+    reason = "x" * MAX_DISPLAY_QUALIFICATION_REASON_CHARS
+
+    assert _display_qualification_reason(reason) == (reason, False)
 
 
 @pytest.mark.asyncio

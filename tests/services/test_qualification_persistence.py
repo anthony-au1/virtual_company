@@ -48,6 +48,20 @@ async def test_serializes_existing_results_without_committing(
             "evaluation_stage": "final",
             "input_evidence_ids": [str(evidence_id)],
             "qualification_facts": {"categorical": []},
+            "fact_extraction_by_criterion": {
+                "criterion_0": {
+                    "model_assessment": {
+                        "state": "supported",
+                        "reason": "Supplied Evidence establishes Java use.",
+                        "evidence_ids": [str(evidence_id)],
+                    },
+                    "validated_assessment": {
+                        "state": "supported",
+                        "evidence_ids": [str(evidence_id)],
+                    },
+                    "validator_override": None,
+                }
+            },
         },
     )
     await service.persist_research_company_qualifications(
@@ -83,6 +97,20 @@ async def test_serializes_existing_results_without_committing(
             "evaluation_stage": "final",
             "input_evidence_ids": [str(evidence_id)],
             "qualification_facts": {"categorical": []},
+            "fact_extraction_by_criterion": {
+                "criterion_0": {
+                    "model_assessment": {
+                        "state": "supported",
+                        "reason": "Supplied Evidence establishes Java use.",
+                        "evidence_ids": [str(evidence_id)],
+                    },
+                    "validated_assessment": {
+                        "state": "supported",
+                        "evidence_ids": [str(evidence_id)],
+                    },
+                    "validator_override": None,
+                }
+            },
         },
     }
     session.commit.assert_not_called()

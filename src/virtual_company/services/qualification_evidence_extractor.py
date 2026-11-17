@@ -187,13 +187,16 @@ class QualificationEvidenceExtractor:
                         ),
                         response_model=QualificationFacts,
                     )
-                    facts = QualificationFacts.model_validate(
+                    model_facts = QualificationFacts.model_validate(
                         response.model_dump()
                         if isinstance(response, BaseModel)
                         else response
                     )
-                    facts = self._validate_references(
-                        facts, criterion_by_id, evidence_by_id, allowed_evidence_ids
+                    facts, decision_provenance = self._validate_references(
+                        model_facts,
+                        criterion_by_id,
+                        evidence_by_id,
+                        allowed_evidence_ids,
                     )
         except Exception as error:  # noqa: BLE001 - one company stays unknown
             status = (
@@ -231,6 +234,7 @@ class QualificationEvidenceExtractor:
                 prompt_evidence_ids=[item.id for item in prompt_evidence],
                 model=str(getattr(self._provider, "model", "unknown")),
                 criterion_ids=criterion_ids,
+                decision_provenance=decision_provenance,
             )
         )
         self._observability.record_extracted_facts(
@@ -252,8 +256,9 @@ class QualificationEvidenceExtractor:
         criteria_by_id: dict[str, CampaignCriterion],
         evidence_by_id: dict[UUID, ResearchEvidenceForExtraction],
         allowed_evidence_ids: set[UUID],
-    ) -> QualificationFacts:
+    ) -> tuple[QualificationFacts, dict[str, dict[str, object]]]:
         categorical = []
+        decision_provenance: dict[str, dict[str, object]] = {}
         seen_criteria: set[str] = set()
         for fact in facts.categorical:
             criterion = criteria_by_id.get(fact.criterion_id)
@@ -272,16 +277,40 @@ class QualificationEvidenceExtractor:
                     evidence_by_id[evidence_id], criterion
                 )
             }
+            validator_override = None
             if fact.state != "unknown" and not admissible:
+                validator_reason = (
+                    "The validator changed the model assessment to unknown because "
+                    "none of its Evidence references were admissible for this criterion."
+                )
                 categorical.append(
                     fact.model_copy(update={"state": "unknown", "evidence_ids": []})
                 )
+                validator_override = {
+                    "original_state": fact.state,
+                    "validated_state": "unknown",
+                    "reason": validator_reason,
+                }
             else:
                 categorical.append(
                     fact.model_copy(
                         update={"evidence_ids": sorted(admissible, key=str)}
                     )
                 )
+            decision_provenance[fact.criterion_id] = {
+                "model_assessment": {
+                    "state": fact.state,
+                    "reason": fact.reason,
+                    "evidence_ids": sorted(str(value) for value in references),
+                },
+                "validated_assessment": {
+                    "state": categorical[-1].state,
+                    "evidence_ids": [
+                        str(value) for value in categorical[-1].evidence_ids
+                    ],
+                },
+                "validator_override": validator_override,
+            }
         employee_counts = []
         for fact in facts.employee_counts:
             references = set(fact.evidence_ids)
@@ -299,8 +328,11 @@ class QualificationEvidenceExtractor:
                 employee_counts.append(
                     fact.model_copy(update={"evidence_ids": admissible})
                 )
-        return QualificationFacts(
-            categorical=categorical, employee_counts=employee_counts
+        return (
+            QualificationFacts(
+                categorical=categorical, employee_counts=employee_counts
+            ),
+            decision_provenance,
         )
 
     @staticmethod

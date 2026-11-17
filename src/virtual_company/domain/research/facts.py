@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+CategoricalEvidenceState = Literal["supported", "unknown", "conflicting"]
 
 
 class EmployeeCountFact(BaseModel):
@@ -32,8 +34,19 @@ class CategoricalEvidenceFact(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     criterion_id: str = Field(min_length=1)
-    state: Literal["supported", "unknown", "conflicting"]
+    state: CategoricalEvidenceState
     evidence_ids: list[UUID] = Field(default_factory=list)
+    reason: str
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise TypeError("Qualification fact reason must be text")
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Qualification fact reason must not be empty")
+        return normalized
 
 
 class EmployeeCountEvidenceFact(EmployeeCountFact):

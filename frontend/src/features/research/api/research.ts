@@ -88,6 +88,16 @@ export type CriterionResult = {
   status: CriterionStatus;
   reason: string;
   evidence: ResearchEvidence[];
+  model_assessment?: {
+    state: "supported" | "unknown" | "conflicting";
+    reason: string;
+    reason_truncated?: boolean;
+  } | null;
+  validation_override?: {
+    original_state: "supported" | "unknown" | "conflicting";
+    validated_state: "supported" | "unknown" | "conflicting";
+    reason: string;
+  } | null;
 };
 
 export function listResearchRuns(): Promise<ResearchRunListItem[]> {

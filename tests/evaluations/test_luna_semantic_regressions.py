@@ -52,6 +52,11 @@ async def test_cases_preserve_exact_criteria_excerpts_and_expected_fact_processi
                     criterion_id=_criterion_id(case),
                     state="supported" if case.expected == "MATCH" else "unknown",
                     evidence_ids=[item.id],
+                    reason=(
+                        "The supplied Evidence establishes the requested concept."
+                        if case.expected == "MATCH"
+                        else "The supplied Evidence does not establish the requested concept."
+                    ),
                 )
             ]
         )
@@ -130,6 +135,7 @@ def test_conflicting_categorical_fact_preserves_existing_unknown_semantics() -> 
                 criterion_id=_criterion_id(case),
                 state="conflicting",
                 evidence_ids=[_evidence(case).id],
+                reason="The supplied Evidence contains contradictory observations.",
             )
         ]
     )

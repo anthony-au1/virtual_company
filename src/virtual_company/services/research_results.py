@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -34,6 +35,25 @@ class ReferencedResearchRunError(ValueError):
 
 
 TERMINAL_RESEARCH_RUN_STATUSES = frozenset({"COMPLETED", "FAILED"})
+MAX_DISPLAY_QUALIFICATION_REASON_CHARS = 1000
+_SHORTENED_REASON_MARKER = " … [shortened]"
+
+
+def _display_qualification_reason(reason: str) -> tuple[str, bool]:
+    """Bound only the user-facing reason, preserving the source in provenance."""
+    if len(reason) <= MAX_DISPLAY_QUALIFICATION_REASON_CHARS:
+        return reason, False
+
+    content_limit = MAX_DISPLAY_QUALIFICATION_REASON_CHARS - len(
+        _SHORTENED_REASON_MARKER
+    )
+    prefix = reason[:content_limit]
+    sentence_ends = list(re.finditer(r"[.!?](?=\s|$)", prefix))
+    if sentence_ends:
+        shortened = prefix[: sentence_ends[-1].end()].rstrip()
+    else:
+        shortened = prefix.rstrip()
+    return f"{shortened}{_SHORTENED_REASON_MARKER}", True
 
 
 @dataclass(frozen=True)
@@ -92,12 +112,28 @@ class ResearchCriterionEvidenceView:
 
 
 @dataclass(frozen=True)
+class QualificationModelAssessmentView:
+    state: str
+    reason: str
+    reason_truncated: bool = False
+
+
+@dataclass(frozen=True)
+class QualificationValidationOverrideView:
+    original_state: str
+    validated_state: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class CriterionResultView:
     criterion: str
     subject: str | None
     status: QualificationStatus
     reason: str
     evidence: list[ResearchCriterionEvidenceView]
+    model_assessment: QualificationModelAssessmentView | None = None
+    validation_override: QualificationValidationOverrideView | None = None
 
 
 @dataclass(frozen=True)
@@ -188,7 +224,13 @@ class ResearchResultsService:
             qualification_counts[qualification_status] += 1
             criteria: list[CriterionResultView] = []
             summary_counts = {status: 0 for status in QualificationStatus}
-            for stored in snapshot.criteria_results.get("criteria", []):
+            stored_provenance = snapshot.criteria_results.get("provenance", {})
+            extraction_provenance = (
+                stored_provenance.get("fact_extraction_by_criterion", {})
+                if isinstance(stored_provenance, dict)
+                else {}
+            )
+            for index, stored in enumerate(snapshot.criteria_results.get("criteria", [])):
                 criterion_status = QualificationStatus(stored["status"])
                 summary_counts[criterion_status] += 1
                 evidence = []
@@ -207,6 +249,12 @@ class ResearchResultsService:
                                 source_type=item.source_type,
                             )
                         )
+                criterion_id = stored.get("criterion_id", f"criterion_{index}")
+                criterion_provenance = (
+                    extraction_provenance.get(criterion_id, {})
+                    if isinstance(extraction_provenance, dict)
+                    else {}
+                )
                 criteria.append(
                     CriterionResultView(
                         criterion=stored["criterion"],
@@ -214,6 +262,12 @@ class ResearchResultsService:
                         status=criterion_status,
                         reason=stored["reason"],
                         evidence=evidence,
+                        model_assessment=self._model_assessment(
+                            criterion_provenance
+                        ),
+                        validation_override=self._validation_override(
+                            criterion_provenance
+                        ),
                     )
                 )
             companies.append(
@@ -269,6 +323,53 @@ class ResearchResultsService:
                 ],
             ),
             companies=companies,
+        )
+
+    @staticmethod
+    def _model_assessment(
+        provenance: object,
+    ) -> QualificationModelAssessmentView | None:
+        if not isinstance(provenance, dict):
+            return None
+        assessment = provenance.get("model_assessment")
+        if not isinstance(assessment, dict):
+            return None
+        state = assessment.get("state")
+        reason = assessment.get("reason")
+        if state not in {"supported", "unknown", "conflicting"} or not isinstance(
+            reason, str
+        ):
+            return None
+        display_reason, was_shortened = _display_qualification_reason(reason)
+        return QualificationModelAssessmentView(
+            state=state,
+            reason=display_reason,
+            reason_truncated=was_shortened,
+        )
+
+    @staticmethod
+    def _validation_override(
+        provenance: object,
+    ) -> QualificationValidationOverrideView | None:
+        if not isinstance(provenance, dict):
+            return None
+        override = provenance.get("validator_override")
+        if not isinstance(override, dict):
+            return None
+        original_state = override.get("original_state")
+        validated_state = override.get("validated_state")
+        reason = override.get("reason")
+        valid_states = {"supported", "unknown", "conflicting"}
+        if (
+            original_state not in valid_states
+            or validated_state not in valid_states
+            or not isinstance(reason, str)
+        ):
+            return None
+        return QualificationValidationOverrideView(
+            original_state=original_state,
+            validated_state=validated_state,
+            reason=reason,
         )
 
     async def delete_run(self, research_run_id: UUID) -> bool:

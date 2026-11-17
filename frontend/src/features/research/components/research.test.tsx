@@ -319,10 +319,55 @@ describe("ResearchResultsPage", () => {
       "Airwallex is an Australian-founded company.",
     );
     expect(
+      within(criterionDetails as HTMLElement).queryByText("AI assessment"),
+    ).not.toBeInTheDocument();
+    expect(
       within(criterionDetails as HTMLElement).getByRole("link", {
         name: /Company profile/,
       }),
     ).toHaveAttribute("href", "https://example.com/source");
+  });
+
+  it("shows model assessment and validator override separately from the final reason", async () => {
+    const base = results("run-a");
+    const criterion = base.companies[0].criteria[1];
+    criterion.model_assessment = {
+      state: "supported",
+      reason: "The excerpt describes the company's own automation capability.",
+      reason_truncated: true,
+    };
+    criterion.validation_override = {
+      original_state: "supported",
+      validated_state: "unknown",
+      reason: "No cited Evidence was admissible for this criterion.",
+    };
+    mockedGetResults.mockResolvedValue(base);
+    renderWithQuery(<ResearchResultsPage runId="run-a" />);
+
+    const summary = await screen.findByText("Spring", {
+      selector: "summary span",
+    });
+    const details = summary.closest("details");
+    details?.setAttribute("open", "");
+    const scope = within(details as HTMLElement);
+
+    expect(scope.getByText("UNKNOWN")).toBeInTheDocument();
+    expect(scope.getByText("No reliable evidence found.")).toBeInTheDocument();
+    expect(scope.getByText(/AI assessment · supported/)).toBeInTheDocument();
+    expect(
+      scope.getByText(
+        "The excerpt describes the company's own automation capability.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      scope.getByText("Explanation shortened for display."),
+    ).toBeInTheDocument();
+    expect(scope.getByText("Evidence validation override")).toBeInTheDocument();
+    expect(
+      scope.getByText(
+        /final UNKNOWN result differs from the model’s supported assessment/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("confirms deletion, clears results, and navigates back to Research Runs", async () => {

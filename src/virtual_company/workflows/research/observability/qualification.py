@@ -125,6 +125,7 @@ class QualificationObservability:
         prompt_evidence_ids: list[UUID],
         model: str,
         criterion_ids: list[str],
+        decision_provenance: dict[str, dict[str, object]],
     ) -> dict[str, dict[str, object]]:
         entry: dict[str, object] = {
             "prompt_name": EXTRACT_QUALIFICATION_FACTS_PROMPT.name,
@@ -134,7 +135,13 @@ class QualificationObservability:
             "investigation_round": str(investigation_round or ""),
             "input_evidence_ids": [str(item) for item in prompt_evidence_ids],
         }
-        return {criterion_id: entry for criterion_id in criterion_ids}
+        return {
+            criterion_id: {
+                **entry,
+                **decision_provenance.get(criterion_id, {}),
+            }
+            for criterion_id in criterion_ids
+        }
 
     @staticmethod
     def final_provenance(
@@ -146,14 +153,23 @@ class QualificationObservability:
             "available_evidence_ids": [
                 str(value) for value in facts_entry.evidence_ids
             ],
-            "qualification_facts": (
-                facts_entry.facts.model_dump(mode="json")
-                if facts_entry.facts is not None
-                else None
+            "qualification_facts": QualificationObservability._validated_facts_dump(
+                facts_entry.facts
             ),
             "fact_extraction_by_criterion": facts_entry.provenance_by_criterion,
             "source_search_observability": source_search_observability,
         }
+
+    @staticmethod
+    def _validated_facts_dump(
+        facts: QualificationFacts | None,
+    ) -> dict[str, object] | None:
+        if facts is None:
+            return None
+        serialized = facts.model_dump(mode="json")
+        for categorical in serialized.get("categorical", []):
+            categorical.pop("reason", None)
+        return serialized
 
     def record_final_evaluation(
         self,
@@ -212,7 +228,11 @@ class QualificationObservability:
                         ]
                     }
                 else:
-                    fact_output = fact.model_dump(mode="json") if fact else None
+                    fact_output = (
+                        fact.model_dump(mode="json", exclude={"reason"})
+                        if fact
+                        else None
+                    )
                 criterion_provenance = facts_entry.provenance_by_criterion.get(
                     criterion_id
                 )
@@ -228,7 +248,20 @@ class QualificationObservability:
                         (criterion_provenance or {}).get("input_evidence_ids", [])
                     ),
                     qualification_fact=fact_output,
-                    extraction_provenance=criterion_provenance,
+                    extraction_provenance=(
+                        {
+                            key: value
+                            for key, value in criterion_provenance.items()
+                            if key
+                            not in {
+                                "model_assessment",
+                                "validated_assessment",
+                                "validator_override",
+                            }
+                        }
+                        if criterion_provenance
+                        else None
+                    ),
                     model=(criterion_provenance or {}).get("model"),
                     prompt_name=EXTRACT_QUALIFICATION_FACTS_PROMPT.name,
                     prompt_version=EXTRACT_QUALIFICATION_FACTS_PROMPT.version,

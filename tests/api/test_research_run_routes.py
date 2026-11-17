@@ -135,6 +135,44 @@ def test_get_results_returns_complete_product_projection() -> None:
     }
     assert body["companies"][0]["qualification_status"] == "QUALIFIED"
     assert body["companies"][0]["criteria"][0]["evidence"][0]["claim"] == ("Uses Java")
+    assert body["companies"][0]["criteria"][0]["model_assessment"] is None
+    assert body["companies"][0]["criteria"][0]["validation_override"] is None
+
+
+def test_get_results_returns_model_assessment_and_validator_override_separately() -> None:
+    result = research_results()
+    criterion = result.companies[0].criteria[0]
+    criterion.model_assessment = {
+        "state": "supported",
+        "reason": "The supplied Evidence supports the capability.",
+        "reason_truncated": True,
+    }
+    criterion.validation_override = {
+        "original_state": "supported",
+        "validated_state": "unknown",
+        "reason": "No cited Evidence was admissible for this criterion.",
+    }
+    app.dependency_overrides[get_research_results_service] = lambda: (
+        ResearchResultsServiceStub(results=result)
+    )
+
+    response = TestClient(app).get(
+        f"/api/v1/research-runs/{result.research_run.id}/results"
+    )
+
+    assert response.status_code == 200
+    criterion_response = response.json()["companies"][0]["criteria"][0]
+    assert criterion_response["reason"] == "Supported"
+    assert criterion_response["model_assessment"] == {
+        "state": "supported",
+        "reason": "The supplied Evidence supports the capability.",
+        "reason_truncated": True,
+    }
+    assert criterion_response["validation_override"] == {
+        "original_state": "supported",
+        "validated_state": "unknown",
+        "reason": "No cited Evidence was admissible for this criterion.",
+    }
 
 
 def test_list_research_runs_returns_compact_run_summaries() -> None:

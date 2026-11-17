@@ -28,6 +28,9 @@ from virtual_company.workflows.research.models import (
     QualificationFactsCacheEntry,
     QualificationFactsCacheStatus,
 )
+from virtual_company.workflows.research.observability.qualification import (
+    QualificationObservability,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -115,7 +118,10 @@ async def test_different_wording_reaches_the_same_semantic_schema(
     output = QualificationFacts(
         categorical=[
             CategoricalEvidenceFact(
-                criterion_id=criterion_id, state="supported", evidence_ids=[item.id]
+                criterion_id=criterion_id,
+                state="supported",
+                evidence_ids=[item.id],
+                reason="Supplied Evidence directly supports the criterion.",
             )
         ]
     )
@@ -169,7 +175,10 @@ async def test_related_technology_subjects_remain_independent(
     output = QualificationFacts(
         categorical=[
             CategoricalEvidenceFact(
-                criterion_id="criterion_2", state="supported", evidence_ids=[item.id]
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[item.id],
+                reason="Supplied Evidence directly supports the criterion.",
             )
         ]
     )
@@ -198,6 +207,7 @@ async def test_extraction_records_correlated_fact_and_prompt_provenance(
                     criterion_id="criterion_2",
                     state="supported",
                     evidence_ids=[item.id],
+                    reason="The company page directly establishes this capability.",
                 )
             ]
         )
@@ -219,11 +229,21 @@ async def test_extraction_records_correlated_fact_and_prompt_provenance(
 
     assert result.provenance_by_criterion["criterion_2"] == {
         "prompt_name": "extract_qualification_facts",
-        "prompt_version": "v6",
+        "prompt_version": "v8",
         "model": "test-model",
         "evaluation_stage": "intermediate",
         "investigation_round": "1",
         "input_evidence_ids": [str(item.id)],
+        "model_assessment": {
+            "state": "supported",
+            "reason": "The company page directly establishes this capability.",
+            "evidence_ids": [str(item.id)],
+        },
+        "validated_assessment": {
+            "state": "supported",
+            "evidence_ids": [str(item.id)],
+        },
+        "validator_override": None,
     }
     record = next(
         item
@@ -235,19 +255,22 @@ async def test_extraction_records_correlated_fact_and_prompt_provenance(
     assert record.context["criterion_id"] == "criterion_2"
     assert record.context["fact_state"] == "supported"
     assert record.context["evidence_ids"] == [str(item.id)]
-    assert record.context["prompt_version"] == "v6"
+    assert record.context["prompt_version"] == "v8"
     assert record.context["model"] == "test-model"
     assert "api_key" not in caplog.text.casefold()
 
 
-def test_v5_prompt_requires_excerpt_entailment_and_preserves_job_evidence() -> None:
+def test_v8_prompt_requires_explanations_and_preserves_strict_evidence_semantics() -> None:
     from virtual_company.workflows.research.prompts import (
         EXTRACT_QUALIFICATION_FACTS_PROMPT,
         extract_qualification_facts_system_prompt,
     )
 
     prompt = extract_qualification_facts_system_prompt()
-    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v6"
+    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v8"
+    assert "one to three sentences" in prompt
+    assert "approximately 200–500 characters" in prompt
+    assert "under 1,000 characters when possible" in prompt
     for instruction in (
         "satisfies the property requested by THIS CRITERION",
         "business category, market segment, or principal business activities",
@@ -260,6 +283,13 @@ def test_v5_prompt_requires_excerpt_entailment_and_preserves_job_evidence() -> N
         "materially ambiguous or unproven, return unknown",
         "This semantic treatment is specific to industry",
         "For keywords, keep the requested concept exact",
+        "semantically equivalent wording may support it only",
+        "concise user-facing reason",
+        "one to three sentences",
+        "This is an evidence summary, not hidden reasoning",
+        "essential requirement remains unproven",
+        "positively contradicts the property",
+        "never invent an explanation, source, or Evidence ID",
         "infer unsupported company activity, business models, or qualifiers",
         "Normalize spelling, not meaning",
         "evidence_text",
@@ -494,7 +524,10 @@ async def test_wrong_technology_evidence_is_downgraded_to_unknown() -> None:
     output = QualificationFacts(
         categorical=[
             CategoricalEvidenceFact(
-                criterion_id="criterion_2", state="supported", evidence_ids=[java.id]
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[java.id],
+                reason="Supplied Evidence directly establishes Java use.",
             )
         ]
     )
@@ -513,7 +546,10 @@ async def test_technology_evidence_requires_the_exact_normalized_subject() -> No
     output = QualificationFacts(
         categorical=[
             CategoricalEvidenceFact(
-                criterion_id="criterion_2", state="supported", evidence_ids=[spring.id]
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[spring.id],
+                reason="Supplied Evidence directly establishes Spring use.",
             )
         ]
     )
@@ -528,6 +564,7 @@ async def test_technology_evidence_requires_the_exact_normalized_subject() -> No
                 criterion_id="criterion_2",
                 state="supported",
                 evidence_ids=[spring_boot.id],
+                reason="Supplied Evidence establishes Spring Boot, not Spring.",
             )
         ]
     )
@@ -545,6 +582,7 @@ async def test_technology_evidence_requires_the_exact_normalized_subject() -> No
                 criterion_id="criterion_2",
                 state="supported",
                 evidence_ids=[spring_only.id],
+                reason="Supplied Evidence establishes Spring only.",
             )
         ]
     )
@@ -566,12 +604,16 @@ async def test_shared_multi_technology_excerpt_can_support_both_criteria() -> No
     output = QualificationFacts(
         categorical=[
             CategoricalEvidenceFact(
-                criterion_id="criterion_2", state="supported", evidence_ids=[java.id]
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[java.id],
+                reason="Supplied Evidence establishes Java use.",
             ),
             CategoricalEvidenceFact(
                 criterion_id="criterion_3",
                 state="supported",
                 evidence_ids=[spring_boot.id],
+                reason="Supplied Evidence establishes Spring Boot use.",
             ),
         ]
     )
@@ -609,10 +651,16 @@ async def test_invalid_fact_does_not_discard_a_valid_fact() -> None:
     output = QualificationFacts(
         categorical=[
             CategoricalEvidenceFact(
-                criterion_id="criterion_2", state="supported", evidence_ids=[java.id]
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[java.id],
+                reason="Supplied Evidence establishes Java use.",
             ),
             CategoricalEvidenceFact(
-                criterion_id="criterion_3", state="supported", evidence_ids=[java.id]
+                criterion_id="criterion_3",
+                state="supported",
+                evidence_ids=[java.id],
+                reason="Supplied Evidence establishes Java use.",
             ),
         ]
     )
@@ -630,7 +678,10 @@ async def test_operational_extraction_failure_retries_once_for_same_evidence() -
     output = QualificationFacts(
         categorical=[
             CategoricalEvidenceFact(
-                criterion_id="criterion_2", state="supported", evidence_ids=[item.id]
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[item.id],
+                reason="Supplied Evidence supports the criterion.",
             )
         ]
     )
@@ -677,6 +728,7 @@ async def test_failed_incremental_refresh_retains_previous_successful_facts() ->
                 criterion_id="criterion_2",
                 state="supported",
                 evidence_ids=[original.id],
+                reason="Supplied Evidence supports the criterion.",
             )
         ]
     )
@@ -708,6 +760,7 @@ async def test_successful_semantic_unknown_and_task1_downgrade_are_cached_as_suc
                 criterion_id="criterion_2",
                 state="supported",
                 evidence_ids=[java.id],
+                reason="Supplied Evidence supports the criterion.",
             )
         ]
     )
@@ -721,6 +774,24 @@ async def test_successful_semantic_unknown_and_task1_downgrade_are_cached_as_suc
     assert downgraded.status is QualificationFactsCacheStatus.SUCCESS
     assert downgraded.facts is not None
     assert downgraded.facts.categorical[0].state == "unknown"
+    provenance = downgraded.provenance_by_criterion["criterion_2"]
+    assert provenance["model_assessment"] == {
+        "state": "supported",
+        "reason": "Supplied Evidence supports the criterion.",
+        "evidence_ids": [str(java.id)],
+    }
+    assert provenance["validated_assessment"] == {
+        "state": "unknown",
+        "evidence_ids": [],
+    }
+    assert provenance["validator_override"] == {
+        "original_state": "supported",
+        "validated_state": "unknown",
+        "reason": (
+            "The validator changed the model assessment to unknown because none of "
+            "its Evidence references were admissible for this criterion."
+        ),
+    }
     assert provider.calls == 2
 
 
@@ -735,6 +806,7 @@ async def test_successful_semantic_unknown_and_task1_downgrade_are_cached_as_suc
                     "criterion_id": "criterion_99",
                     "state": "supported",
                     "evidence_ids": [],
+                    "reason": "The supplied evidence supports this criterion.",
                 }
             ]
         },
@@ -781,6 +853,116 @@ def test_schema_rejects_decisions_and_invalid_employee_values() -> None:
                 ]
             }
         )
+
+
+def test_categorical_reason_is_required_normalized_and_schema_compatible() -> (
+    None
+):
+    base = {
+        "criterion_id": "criterion_1",
+        "state": "unknown",
+        "evidence_ids": [],
+    }
+    with pytest.raises(ValidationError):
+        CategoricalEvidenceFact.model_validate(base)
+    with pytest.raises(ValidationError):
+        CategoricalEvidenceFact.model_validate({**base, "reason": ""})
+    with pytest.raises(ValidationError):
+        CategoricalEvidenceFact.model_validate({**base, "reason": " \n\t "})
+    fact = CategoricalEvidenceFact.model_validate(
+        {**base, "reason": "  Evidence\n does not establish this.  "}
+    )
+    assert fact.reason == "Evidence does not establish this."
+    for reason_length in (499, 501, 1000, 1001, 5000):
+        long_fact = CategoricalEvidenceFact.model_validate(
+            {**base, "reason": "x" * reason_length}
+        )
+        assert len(long_fact.reason) == reason_length
+    with pytest.raises(TypeError):
+        CategoricalEvidenceFact.model_validate({**base, "reason": 17})
+
+    schema = CategoricalEvidenceFact.model_json_schema()
+    reason_schema = schema["properties"]["reason"]
+    assert reason_schema == {"title": "Reason", "type": "string"}
+    assert "reason" in schema["required"]
+
+
+@pytest.mark.asyncio
+async def test_overlong_model_reason_is_preserved_in_provenance_without_extra_calls() -> None:
+    item = evidence("The company uses Kafka for event streaming.", subject="Kafka")
+    original_reason = "The company directly uses Kafka. " * 60
+    normalized_reason = " ".join(original_reason.split())
+    provider = ProviderStub(
+        QualificationFacts(
+            categorical=[
+                CategoricalEvidenceFact(
+                    criterion_id="criterion_2",
+                    state="supported",
+                    evidence_ids=[item.id],
+                    reason=original_reason,
+                )
+            ]
+        )
+    )
+
+    result = await QualificationEvidenceExtractor(provider).extract(
+        campaign(), [item]
+    )
+
+    assert len(provider.calls) == 1
+    assert result.facts is not None
+    assert result.facts.categorical[0].state == "supported"
+    assert result.facts.categorical[0].evidence_ids == [item.id]
+    assert result.facts.categorical[0].reason == normalized_reason
+    assert (
+        result.provenance_by_criterion["criterion_2"]["model_assessment"]["reason"]
+        == normalized_reason
+    )
+
+
+def test_final_provenance_keeps_model_reason_separate_from_validated_facts() -> None:
+    evidence_id = uuid4()
+    facts = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_1",
+                state="unknown",
+                evidence_ids=[],
+                reason="The evidence does not establish the SaaS requirement.",
+            )
+        ]
+    )
+    entry = QualificationFactsCacheEntry(
+        evidence_ids=[evidence_id],
+        facts=facts,
+        provenance_by_criterion={
+            "criterion_1": {
+                "model_assessment": {
+                    "state": "unknown",
+                    "reason": "The evidence does not establish the SaaS requirement.",
+                    "evidence_ids": [],
+                },
+                "validated_assessment": {"state": "unknown", "evidence_ids": []},
+                "validator_override": None,
+            }
+        },
+    )
+
+    provenance = QualificationObservability.final_provenance(entry, {})
+
+    assert provenance["qualification_facts"] == {
+        "categorical": [
+            {
+                "criterion_id": "criterion_1",
+                "state": "unknown",
+                "evidence_ids": [],
+            }
+        ],
+        "employee_counts": [],
+    }
+    assert provenance["fact_extraction_by_criterion"]["criterion_1"][
+        "model_assessment"
+    ]["reason"] == "The evidence does not establish the SaaS requirement."
 
 
 def test_prompt_contains_only_compact_evidence_and_criteria() -> None:
