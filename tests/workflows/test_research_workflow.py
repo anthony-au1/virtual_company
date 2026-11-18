@@ -1099,7 +1099,7 @@ def test_evidence_extraction_prompt_requires_company_specific_keyword_support() 
     prompt = extract_company_evidence_system_prompt().lower()
 
     assert EXTRACT_COMPANY_EVIDENCE_PROMPT.version == "v6"
-    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v8"
+    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v9"
     assert "company meaningfully engages with the requested concept" in prompt
     assert "a topical mention alone is not enough" in prompt
     assert "an unrelated article containing the keyword does not qualify" in prompt
@@ -3767,10 +3767,9 @@ async def test_qualification_reads_current_run_evidence_without_external_calls()
         "spring",
         "spring boot",
     ]
-    nodes = make_nodes(ExtractionFake({}), ResearchFake([]), model)
     company_id = uuid4()
     run_id = uuid4()
-    old = SimpleNamespace(
+    current_run_evidence = SimpleNamespace(
         id=uuid4(),
         company_id=company_id,
         research_run_id=run_id,
@@ -3779,7 +3778,55 @@ async def test_qualification_reads_current_run_evidence_without_external_calls()
         claim="Uses Spring Boot.",
         evidence_text="Uses Spring Boot.",
     )
-    nodes._research.evidence = [old]
+
+    class ExplicitQualificationFake(ExtractionFake):
+        async def generate_structured(self, **kwargs: object) -> object:
+            prompt = str(kwargs["user_prompt"])
+            if kwargs["response_model"] is QualificationFacts:
+                self.prompts.append(prompt)
+                payload = json.loads(prompt)
+                return QualificationFacts(
+                    categorical=[
+                        CategoricalEvidenceFact(
+                            criterion_id=criterion["criterion_id"],
+                            state="supported",
+                            evidence_ids=[current_run_evidence.id],
+                            reason=(
+                                "The mock Luna assessment explicitly supports "
+                                "this criterion using the supplied Evidence."
+                            ),
+                        )
+                        for criterion in payload["categorical_criteria"]
+                    ]
+                )
+            return await super().generate_structured(**kwargs)
+
+    extraction_provider = ExplicitQualificationFake({})
+    research_provider = ResearchFake([])
+    nodes = make_nodes(extraction_provider, research_provider, model)
+    same_run_other_company_evidence = SimpleNamespace(
+        id=uuid4(),
+        company_id=uuid4(),
+        research_run_id=run_id,
+        criterion="keyword",
+        subject="Spring Boot",
+        claim="Uses Spring Boot.",
+        evidence_text="Uses Spring Boot.",
+    )
+    other_run_same_company_evidence = SimpleNamespace(
+        id=uuid4(),
+        company_id=company_id,
+        research_run_id=uuid4(),
+        criterion="keyword",
+        subject="Spring Boot",
+        claim="Uses Spring Boot.",
+        evidence_text="Uses Spring Boot.",
+    )
+    nodes._research.evidence = [
+        current_run_evidence,
+        same_run_other_company_evidence,
+        other_run_same_company_evidence,
+    ]
     state = {
         "campaign": CampaignCriteria.model_validate(model),
         "research_companies": [ResearchCompany(id=company_id, name="Acme")],
@@ -3793,13 +3840,46 @@ async def test_qualification_reads_current_run_evidence_without_external_calls()
     qualification_result = await nodes.qualify_companies(state)
     state.update(qualification_result)
     result = qualification_result["research_company_qualifications"][company_id]
-    assert result.status is ResearchCompanyQualificationStatus.INSUFFICIENT_EVIDENCE
+    assert result.status is ResearchCompanyQualificationStatus.QUALIFIED
     assert [item.status for item in result.criteria] == [
-        QualificationStatus.UNKNOWN,
+        QualificationStatus.MATCH,
         QualificationStatus.MATCH,
     ]
-    assert [item.evidence_ids for item in result.criteria] == [[], [old.id]]
-    assert not nodes._research_llm.prompts
+    assert [item.evidence_ids for item in result.criteria] == [
+        [current_run_evidence.id],
+        [current_run_evidence.id],
+    ]
+    assert len(extraction_provider.prompts) == 1
+    prompt_payload = json.loads(extraction_provider.prompts[0])
+    assert [item["id"] for item in prompt_payload["evidence"]] == [
+        str(current_run_evidence.id)
+    ]
+    assert prompt_payload["evidence"][0]["subject"] == "Spring Boot"
+    assert [item["subject"] for item in prompt_payload["categorical_criteria"]] == [
+        "spring",
+        "spring boot",
+    ]
+    assert result.provenance["available_evidence_ids"] == [str(current_run_evidence.id)]
+    assert [
+        item["state"]
+        for item in result.provenance["qualification_facts"]["categorical"]
+    ] == ["supported", "supported"]
+    fact_provenance = result.provenance["fact_extraction_by_criterion"]
+    for criterion_id in ("criterion_0", "criterion_1"):
+        assessment = fact_provenance[criterion_id]
+        assert assessment["model_assessment"]["state"] == "supported"
+        assert assessment["model_assessment"]["reason"] == (
+            "The mock Luna assessment explicitly supports this criterion using the "
+            "supplied Evidence."
+        )
+        assert assessment["model_assessment"]["evidence_ids"] == [
+            str(current_run_evidence.id)
+        ]
+        assert assessment["validated_assessment"]["evidence_ids"] == [
+            str(current_run_evidence.id)
+        ]
+        assert assessment["validator_override"] is None
+    assert not research_provider.prompts
     state["investigations"][company_id].stopped = False
     with pytest.raises(ValueError, match="terminal"):
         await nodes.qualify_companies(state)
@@ -4207,9 +4287,7 @@ async def test_overlong_query_is_rejected_before_downstream_search(
         async def generate_structured(self, **kwargs: object) -> object:
             response_model = kwargs["response_model"]
             self.models.append(response_model)  # type: ignore[arg-type]
-            return GeneratedCompanySearchQueries.model_construct(
-                queries=["q" * 257]
-            )
+            return GeneratedCompanySearchQueries.model_construct(queries=["q" * 257])
 
     model = campaign()
     research = InvalidResearchFake([])

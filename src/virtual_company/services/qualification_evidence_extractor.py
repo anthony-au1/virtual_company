@@ -321,14 +321,7 @@ class QualificationEvidenceExtractor:
             references = set(fact.evidence_ids)
             if not references <= allowed_evidence_ids:
                 raise ValueError("Employee facts reference unknown Evidence")
-            admissible = sorted(
-                (
-                    evidence_id
-                    for evidence_id in references
-                    if evidence_by_id[evidence_id].criterion == "company_size"
-                ),
-                key=str,
-            )
+            admissible = sorted(references, key=str)
             if admissible:
                 employee_counts.append(
                     fact.model_copy(update={"evidence_ids": admissible})

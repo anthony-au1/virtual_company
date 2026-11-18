@@ -273,7 +273,7 @@ async def test_extraction_records_correlated_fact_and_prompt_provenance(
 
     assert result.provenance_by_criterion["criterion_2"] == {
         "prompt_name": "extract_qualification_facts",
-        "prompt_version": "v8",
+        "prompt_version": "v9",
         "model": "test-model",
         "evaluation_stage": "intermediate",
         "investigation_round": "1",
@@ -299,12 +299,12 @@ async def test_extraction_records_correlated_fact_and_prompt_provenance(
     assert record.context["criterion_id"] == "criterion_2"
     assert record.context["fact_state"] == "supported"
     assert record.context["evidence_ids"] == [str(item.id)]
-    assert record.context["prompt_version"] == "v8"
+    assert record.context["prompt_version"] == "v9"
     assert record.context["model"] == "test-model"
     assert "api_key" not in caplog.text.casefold()
 
 
-def test_v8_prompt_requires_explanations_and_preserves_strict_evidence_semantics() -> (
+def test_v9_prompt_requires_explanations_and_preserves_strict_evidence_semantics() -> (
     None
 ):
     from virtual_company.workflows.research.prompts import (
@@ -313,7 +313,7 @@ def test_v8_prompt_requires_explanations_and_preserves_strict_evidence_semantics
     )
 
     prompt = extract_qualification_facts_system_prompt()
-    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v8"
+    assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v9"
     assert "one to three sentences" in prompt
     assert "approximately 200–500 characters" in prompt
     assert "under 1,000 characters when possible" in prompt
@@ -361,6 +361,16 @@ def test_v8_prompt_requires_explanations_and_preserves_strict_evidence_semantics
         assert instruction in prompt
     assert "direct company origin or operations in the requested place" in prompt
     assert "exact relation, year, and global/regional scope" in prompt
+    assert "when supplied Evidence states a closed employee-count range" in prompt
+    assert "greater_than_or_equal for its lower boundary" in prompt
+    assert "less_than_or_equal for its upper boundary" in prompt
+    assert "Both facts must cite the same supporting Evidence ID or IDs" in prompt
+    assert "preserve the same applicable year and scope" in prompt
+    assert "Do not convert the range to a midpoint or exact count" in prompt
+    assert "do not combine boundaries from unrelated statements into a range" in prompt
+    assert "Preserve exact counts and open-ended bounds as stated" in prompt
+    assert "do not reinterpret an open-ended bound as a closed range" in prompt
+    assert "keep approximations approximate" in prompt
 
 
 def test_keyword_qualification_prompt_is_concept_neutral() -> None:
@@ -793,6 +803,31 @@ async def test_targeted_request_rejects_evidence_excluded_from_its_prompt() -> N
 
 
 @pytest.mark.asyncio
+async def test_employee_fact_cannot_cite_size_evidence_excluded_from_prompt() -> None:
+    company_size = evidence("Company has 150 employees", criterion="company_size")
+    output = QualificationFacts(
+        employee_counts=[
+            EmployeeCountEvidenceFact(
+                value=150,
+                relation="exact",
+                evidence_ids=[company_size.id],
+            )
+        ]
+    )
+    provider = ProviderStub(output)
+    result = await QualificationEvidenceExtractor(provider).extract(
+        campaign(["SMB automation"]),
+        [company_size],
+        target_criterion_ids={"criterion_2"},
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
+
+    assert result.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
+    assert "Company has 150 employees" not in str(provider.calls[0]["user"])
+
+
+@pytest.mark.asyncio
 async def test_unknown_categorical_evidence_id_is_rejected() -> None:
     item = evidence("Supplied evidence")
     output = QualificationFacts(
@@ -892,28 +927,133 @@ async def test_shared_multi_technology_excerpt_can_support_both_criteria() -> No
 
 
 @pytest.mark.asyncio
-async def test_technology_evidence_cannot_support_employee_count() -> None:
-    technology = evidence("Uses Kafka", subject="Kafka")
+async def test_employee_count_preserves_non_size_evidence_references() -> None:
+    size_evidence = evidence("Acme employs 1,500 people.", criterion="company_size")
+    keyword_evidence = evidence(
+        "Acme employs 1,500 people.", criterion="keyword", subject="AI agents"
+    )
     output = QualificationFacts(
         employee_counts=[
             EmployeeCountEvidenceFact(
-                value=1500, relation="exact", evidence_ids=[technology.id]
+                value=1500,
+                relation="exact",
+                evidence_ids=[keyword_evidence.id, size_evidence.id],
             )
         ]
     )
-    result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
+    provider = ProviderStub(output)
+    result = await QualificationEvidenceExtractor(provider).extract(
         campaign(),
-        [technology],
+        [size_evidence, keyword_evidence],
         research_run_id=TEST_RUN_ID,
         company_id=TEST_COMPANY_ID,
     )
-    assert result.facts == QualificationFacts()
+    assert len(provider.calls) == 1
+    assert result.facts is not None
+    assert result.facts.employee_counts[0].evidence_ids == sorted(
+        [size_evidence.id, keyword_evidence.id], key=str
+    )
+    assert size_evidence.criterion == "company_size"
+    assert keyword_evidence.criterion == "keyword"
+    assert keyword_evidence.subject == "AI agents"
     size_campaign = campaign()
     size_campaign.company_size = CompanySizeCriteria(min=1000)
     assert (
         qualify_company(size_campaign, result.facts)[-1].status
-        is QualificationStatus.UNKNOWN
+        is QualificationStatus.MATCH
     )
+
+
+@pytest.mark.asyncio
+async def test_zapier_style_exact_count_from_keyword_evidence_reaches_evaluator() -> (
+    None
+):
+    evidence_item = evidence(
+        "Zapier has 800 employees.", criterion="keyword", subject="AI agents"
+    )
+    output = QualificationFacts(
+        employee_counts=[
+            EmployeeCountEvidenceFact(
+                value=800,
+                relation="exact",
+                scope="global",
+                evidence_ids=[evidence_item.id],
+            )
+        ]
+    )
+    provider = ProviderStub(output)
+    size_campaign = campaign()
+    size_campaign.company_size = CompanySizeCriteria(min=10, max=500)
+
+    result = await QualificationEvidenceExtractor(provider).extract(
+        size_campaign,
+        [evidence_item],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
+
+    assert len(provider.calls) == 1
+    assert result.facts == output
+    assert [
+        item.status for item in qualify_company(size_campaign, result.facts)[-2:]
+    ] == [
+        QualificationStatus.MATCH,
+        QualificationStatus.MISMATCH,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_activepieces_style_closed_range_reaches_both_size_predicates() -> None:
+    range_evidence = evidence(
+        "Activepieces has 11–50 employees.",
+        criterion="company_size",
+        subject="11–50 employees",
+    )
+    output = QualificationFacts(
+        employee_counts=[
+            EmployeeCountEvidenceFact(
+                value=11,
+                relation="greater_than_or_equal",
+                year=None,
+                scope="unknown",
+                evidence_ids=[range_evidence.id],
+            ),
+            EmployeeCountEvidenceFact(
+                value=50,
+                relation="less_than_or_equal",
+                year=None,
+                scope="unknown",
+                evidence_ids=[range_evidence.id],
+            ),
+        ]
+    )
+    provider = ProviderStub(output)
+    size_campaign = campaign()
+    size_campaign.company_size = CompanySizeCriteria(min=10, max=500)
+
+    result = await QualificationEvidenceExtractor(provider).extract(
+        size_campaign,
+        [range_evidence],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
+
+    assert len(provider.calls) == 1
+    assert result.facts == output
+    lower, upper = result.facts.employee_counts
+    assert lower.value == 11
+    assert lower.relation == "greater_than_or_equal"
+    assert upper.value == 50
+    assert upper.relation == "less_than_or_equal"
+    assert lower.evidence_ids == upper.evidence_ids == [range_evidence.id]
+    assert lower.year == upper.year is None
+    assert lower.scope == upper.scope == "unknown"
+    assert [
+        item.status for item in qualify_company(size_campaign, result.facts)[-2:]
+    ] == [
+        QualificationStatus.MATCH,
+        QualificationStatus.MATCH,
+    ]
 
 
 @pytest.mark.asyncio
@@ -1172,6 +1312,12 @@ def test_schema_rejects_decisions_and_invalid_employee_values() -> None:
                     {"value": -1, "relation": "exact", "evidence_ids": [str(uuid4())]}
                 ]
             }
+        )
+    with pytest.raises(ValidationError):
+        EmployeeCountEvidenceFact(
+            value=150,
+            relation="exact",
+            evidence_ids=[],
         )
 
 

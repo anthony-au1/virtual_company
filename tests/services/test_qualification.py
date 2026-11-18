@@ -133,6 +133,65 @@ def test_employee_facts_use_deterministic_bounds(
     )
 
 
+@pytest.mark.parametrize(
+    "observations,minimum_expected,maximum_expected",
+    [
+        (
+            [(11, "greater_than_or_equal"), (50, "less_than_or_equal")],
+            Status.MATCH,
+            Status.MATCH,
+        ),
+        (
+            [(51, "greater_than_or_equal"), (200, "less_than_or_equal")],
+            Status.MATCH,
+            Status.MATCH,
+        ),
+        (
+            [(201, "greater_than_or_equal"), (500, "less_than_or_equal")],
+            Status.MATCH,
+            Status.MATCH,
+        ),
+        (
+            [(501, "greater_than_or_equal"), (1000, "less_than_or_equal")],
+            Status.MATCH,
+            Status.MISMATCH,
+        ),
+        ([(800, "exact")], Status.MATCH, Status.MISMATCH),
+        (
+            [(400, "greater_than_or_equal"), (800, "less_than_or_equal")],
+            Status.MATCH,
+            Status.UNKNOWN,
+        ),
+        (
+            [(1, "greater_than_or_equal"), (20, "less_than_or_equal")],
+            Status.UNKNOWN,
+            Status.MATCH,
+        ),
+        ([(500, "greater_than_or_equal")], Status.MATCH, Status.UNKNOWN),
+        ([(500, "greater_than")], Status.MATCH, Status.MISMATCH),
+    ],
+)
+def test_closed_and_open_employee_ranges_keep_exact_boundary_semantics(
+    observations: list[tuple[int, str]],
+    minimum_expected: Status,
+    maximum_expected: Status,
+) -> None:
+    evidence_id = uuid4()
+    facts = QualificationFacts(
+        employee_counts=[
+            count(value, evidence_id, relation=relation)
+            for value, relation in observations
+        ]
+    )
+
+    results = qualify_company(campaign(minimum=10, maximum=500), facts)[-2:]
+
+    assert [item.status for item in results] == [
+        minimum_expected,
+        maximum_expected,
+    ]
+
+
 def test_minimum_uses_any_observation_that_proves_the_predicate() -> None:
     low_ids = [uuid4(), uuid4()]
     match_id = uuid4()
