@@ -36,6 +36,8 @@ RUN_IDS = (
     "a7fee166-ca56-4bf0-885f-8e96bd97446c",
 )
 _NAMESPACE = UUID(RUN_IDS[1])
+EVALUATION_RUN_ID = UUID("52fbd6dc-7166-40e0-b207-585e3614f371")
+EVALUATION_COMPANY_ID = UUID("2f64ebc6-df8e-4b3f-8e92-0ad1074d5994")
 
 
 @dataclass(frozen=True)
@@ -257,6 +259,8 @@ def _criterion_id(case: EvaluationCase) -> str:
 def _evidence(case: EvaluationCase) -> ResearchEvidenceForExtraction:
     return SimpleNamespace(
         id=uuid5(_NAMESPACE, f"{case.company}/{case.subject}/{case.evidence}"),
+        company_id=EVALUATION_COMPANY_ID,
+        research_run_id=EVALUATION_RUN_ID,
         criterion=case.criterion,
         subject=case.subject,
         claim=case.claim or case.evidence,

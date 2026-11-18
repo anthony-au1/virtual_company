@@ -13,7 +13,6 @@ from virtual_company.domain.research.criteria import (
     CampaignCriterion,
     CampaignForQualification,
     campaign_criteria,
-    normalize_subject,
 )
 from virtual_company.domain.research.facts import QualificationFacts
 from virtual_company.llm.base import LLMProvider
@@ -32,6 +31,8 @@ from virtual_company.workflows.research.prompts import (
 
 class ResearchEvidenceForExtraction(Protocol):
     id: UUID
+    company_id: UUID
+    research_run_id: UUID | None
     criterion: str | None
     subject: str | None
     claim: str
@@ -67,6 +68,16 @@ class QualificationEvidenceExtractor:
         evaluation_stage: str = "intermediate",
         investigation_round: int | None = None,
     ) -> QualificationFactsCacheEntry:
+        if evidence and (company_id is None or research_run_id is None):
+            raise ValueError(
+                "Evidence extraction requires a company and research run scope"
+            )
+        if any(
+            item.company_id != company_id or item.research_run_id != research_run_id
+            for item in evidence
+        ):
+            raise ValueError("Evidence does not belong to the active company and run")
+
         evidence_ids = sorted({item.id for item in evidence}, key=str)
         same_evidence = (
             previous_entry is not None and previous_entry.evidence_ids == evidence_ids
@@ -151,8 +162,8 @@ class QualificationEvidenceExtractor:
         criterion_by_id = {
             f"criterion_{index}": criterion for index, criterion in extractable_criteria
         }
-        allowed_evidence_ids = set(evidence_ids)
-        evidence_by_id = {item.id: item for item in evidence}
+        allowed_evidence_ids = {item.id for item in prompt_evidence}
+        evidence_by_id = {item.id: item for item in prompt_evidence}
         criterion_ids = [
             f"criterion_{index}"
             for index, criterion in enumerate(configured_criteria)
@@ -270,18 +281,12 @@ class QualificationEvidenceExtractor:
             references = set(fact.evidence_ids)
             if not references <= allowed_evidence_ids:
                 raise ValueError("Qualification facts reference unknown Evidence")
-            admissible = {
-                evidence_id
-                for evidence_id in references
-                if QualificationEvidenceExtractor._evidence_supports_criterion(
-                    evidence_by_id[evidence_id], criterion
-                )
-            }
+            admissible = references
             validator_override = None
             if fact.state != "unknown" and not admissible:
                 validator_reason = (
                     "The validator changed the model assessment to unknown because "
-                    "none of its Evidence references were admissible for this criterion."
+                    "the assessment had no supplied Evidence references."
                 )
                 categorical.append(
                     fact.model_copy(update={"state": "unknown", "evidence_ids": []})
@@ -334,17 +339,3 @@ class QualificationEvidenceExtractor:
             ),
             decision_provenance,
         )
-
-    @staticmethod
-    def _evidence_supports_criterion(
-        evidence: ResearchEvidenceForExtraction, criterion: CampaignCriterion
-    ) -> bool:
-        if evidence.criterion != criterion.criterion:
-            return False
-        if criterion.criterion != "keyword":
-            return normalize_subject(criterion.criterion, criterion.subject) == (
-                normalize_subject(criterion.criterion, evidence.subject)
-            )
-        expected = normalize_subject("keyword", criterion.subject)
-        observed = normalize_subject("keyword", evidence.subject)
-        return expected == observed

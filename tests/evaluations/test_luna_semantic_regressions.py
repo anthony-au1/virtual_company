@@ -5,6 +5,8 @@ import json
 import pytest
 from luna_semantic_regressions import (
     CASES,
+    EVALUATION_COMPANY_ID,
+    EVALUATION_RUN_ID,
     EvaluationCase,
     _campaign,
     _criterion_id,
@@ -78,7 +80,10 @@ async def test_cases_preserve_exact_criteria_excerpts_and_expected_fact_processi
             return facts
 
     entry = await QualificationEvidenceExtractor(Provider()).extract(
-        _campaign(case), [item]
+        _campaign(case),
+        [item],
+        research_run_id=EVALUATION_RUN_ID,
+        company_id=EVALUATION_COMPANY_ID,
     )
     assert actual_result(case, entry) == case.expected
 

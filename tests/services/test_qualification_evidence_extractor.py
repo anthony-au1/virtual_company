@@ -4,7 +4,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 from typing import TypeVar, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -33,6 +33,8 @@ from virtual_company.workflows.research.observability.qualification import (
 )
 
 T = TypeVar("T", bound=BaseModel)
+TEST_RUN_ID = uuid4()
+TEST_COMPANY_ID = uuid4()
 
 
 class ProviderStub:
@@ -89,9 +91,14 @@ def evidence(
     text: str,
     criterion: str = "keyword",
     subject: str | None = None,
+    *,
+    company_id=TEST_COMPANY_ID,
+    research_run_id=TEST_RUN_ID,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid4(),
+        company_id=company_id,
+        research_run_id=research_run_id,
         criterion=criterion,
         subject=subject,
         claim=text,
@@ -126,7 +133,9 @@ async def test_different_wording_reaches_the_same_semantic_schema(
         ]
     )
     provider = ProviderStub(output)
-    result = await QualificationEvidenceExtractor(provider).extract(campaign(), [item])
+    result = await QualificationEvidenceExtractor(provider).extract(
+        campaign(), [item], research_run_id=TEST_RUN_ID, company_id=TEST_COMPANY_ID
+    )
     assert result.facts == output
     assert wording in str(provider.calls[0]["user"])
     assert provider.calls[0]["model"] is QualificationFacts
@@ -165,7 +174,7 @@ def test_normalization_only_canonicalizes_safe_formatting_variants(
         (".NET", ".NET Core"),
     ],
 )
-async def test_related_technology_subjects_remain_independent(
+async def test_categorical_evidence_subject_does_not_filter_references(
     requested: str, related: str
 ) -> None:
     assert normalize_subject("keyword", requested) != normalize_subject(
@@ -183,11 +192,41 @@ async def test_related_technology_subjects_remain_independent(
         ]
     )
     result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
-        campaign([requested]), [item]
+        campaign([requested]),
+        [item],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
     )
     assert result.facts is not None
-    assert result.facts.categorical[0].state == "unknown"
-    assert result.facts.categorical[0].evidence_ids == []
+    assert result.facts.categorical[0].state == "supported"
+    assert result.facts.categorical[0].evidence_ids == [item.id]
+
+
+@pytest.mark.asyncio
+async def test_unknown_fact_preserves_valid_cross_criterion_references() -> None:
+    item = evidence(
+        "The supplied text is relevant context but does not establish support.",
+        criterion="industry",
+        subject="AI workflow automation / B2B SaaS",
+    )
+    output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2",
+                state="unknown",
+                evidence_ids=[item.id],
+                reason="The evidence is relevant but incomplete.",
+            )
+        ]
+    )
+    result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
+        campaign(["SMB automation"]),
+        [item],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
+
+    assert result.facts == output
 
 
 @pytest.mark.asyncio
@@ -199,7 +238,12 @@ async def test_extraction_records_correlated_fact_and_prompt_provenance(
     from virtual_company.observability import get_observability
 
     run_id, company_id = uuid4(), uuid4()
-    item = evidence("The company uses Kafka.", subject="Kafka")
+    item = evidence(
+        "The company uses Kafka.",
+        subject="Kafka",
+        company_id=company_id,
+        research_run_id=run_id,
+    )
     provider = ProviderStub(
         QualificationFacts(
             categorical=[
@@ -260,7 +304,9 @@ async def test_extraction_records_correlated_fact_and_prompt_provenance(
     assert "api_key" not in caplog.text.casefold()
 
 
-def test_v8_prompt_requires_explanations_and_preserves_strict_evidence_semantics() -> None:
+def test_v8_prompt_requires_explanations_and_preserves_strict_evidence_semantics() -> (
+    None
+):
     from virtual_company.workflows.research.prompts import (
         EXTRACT_QUALIFICATION_FACTS_PROMPT,
         extract_qualification_facts_system_prompt,
@@ -490,7 +536,9 @@ async def test_extractor_passes_campaign_description_as_prompt_context() -> None
     provider = ProviderStub(QualificationFacts())
     item = evidence("A company service page excerpt.", criterion="industry")
 
-    result = await QualificationEvidenceExtractor(provider).extract(model, [item])
+    result = await QualificationEvidenceExtractor(provider).extract(
+        model, [item], research_run_id=TEST_RUN_ID, company_id=TEST_COMPANY_ID
+    )
 
     assert result.status is QualificationFactsCacheStatus.SUCCESS
     prompt_payload = json.loads(provider.calls[0]["user"])
@@ -512,14 +560,17 @@ async def test_explicit_and_vague_size_are_not_strengthened() -> None:
         ]
     )
     result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
-        campaign(), [explicit, vague]
+        campaign(),
+        [explicit, vague],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
     )
     assert result.facts == output
     assert not any(vague.id in fact.evidence_ids for fact in output.employee_counts)
 
 
 @pytest.mark.asyncio
-async def test_wrong_technology_evidence_is_downgraded_to_unknown() -> None:
+async def test_different_criterion_and_subject_preserve_categorical_reference() -> None:
     java = evidence("Our backend uses Java", subject="Java")
     output = QualificationFacts(
         categorical=[
@@ -532,15 +583,18 @@ async def test_wrong_technology_evidence_is_downgraded_to_unknown() -> None:
         ]
     )
     result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
-        campaign(["Spring"]), [java]
+        campaign(["Spring"]),
+        [java],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
     )
     assert result.facts is not None
-    assert result.facts.categorical[0].state == "unknown"
-    assert result.facts.categorical[0].evidence_ids == []
+    assert result.facts.categorical[0].state == "supported"
+    assert result.facts.categorical[0].evidence_ids == [java.id]
 
 
 @pytest.mark.asyncio
-async def test_technology_evidence_requires_the_exact_normalized_subject() -> None:
+async def test_cross_subject_evidence_is_preserved_without_retagging() -> None:
     spring = evidence("Spring services", subject="Spring")
     spring_boot = evidence("Spring Boot services", subject="Spring Boot")
     output = QualificationFacts(
@@ -554,7 +608,10 @@ async def test_technology_evidence_requires_the_exact_normalized_subject() -> No
         ]
     )
     result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
-        campaign(["Spring"]), [spring]
+        campaign(["Spring"]),
+        [spring],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
     )
     assert result.facts == output
 
@@ -570,10 +627,17 @@ async def test_technology_evidence_requires_the_exact_normalized_subject() -> No
     )
     boot_result = await QualificationEvidenceExtractor(
         ProviderStub(boot_output)
-    ).extract(campaign(["Spring"]), [spring_boot])
+    ).extract(
+        campaign(["Spring"]),
+        [spring_boot],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
     assert boot_result.facts is not None
-    assert boot_result.facts.categorical[0].state == "unknown"
-    assert boot_result.facts.categorical[0].evidence_ids == []
+    assert boot_result.facts.categorical[0].state == "supported"
+    assert boot_result.facts.categorical[0].evidence_ids == [spring_boot.id]
+    assert spring_boot.criterion == "keyword"
+    assert spring_boot.subject == "Spring Boot"
 
     spring_only = evidence("Spring framework", subject="Spring")
     reverse_output = QualificationFacts(
@@ -588,9 +652,210 @@ async def test_technology_evidence_requires_the_exact_normalized_subject() -> No
     )
     reverse = await QualificationEvidenceExtractor(
         ProviderStub(reverse_output)
-    ).extract(campaign(["Spring Boot"]), [spring_only])
+    ).extract(
+        campaign(["Spring Boot"]),
+        [spring_only],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
     assert reverse.facts is not None
-    assert reverse.facts.categorical[0].state == "unknown"
+    assert reverse.facts.categorical[0].state == "supported"
+    assert reverse.facts.categorical[0].evidence_ids == [spring_only.id]
+
+
+@pytest.mark.asyncio
+async def test_workload_smb_automation_keeps_both_cross_tagged_references() -> None:
+    automation_id = UUID("f44202f8-8a19-41a3-9e51-ba1333536a99")
+    audience_id = UUID("f800e36a-0bf1-4ce9-8c15-a5adb7b28662")
+    automation = evidence(
+        "Workload does work between software apps and fixes failures.",
+        criterion="keyword",
+        subject="business process automation",
+    )
+    audience = evidence(
+        "Workload targets owners and office managers at small businesses.",
+        criterion="keyword",
+        subject="SMB automation",
+    )
+    automation.id = automation_id
+    audience.id = audience_id
+    model_reason = (
+        "Workload names owners and office managers at small businesses as intended "
+        "users, and describes doing work across the software apps those teams already "
+        "use. This supports automation directed at small and medium-sized business users."
+    )
+    output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[audience_id, automation_id],
+                reason=model_reason,
+            )
+        ]
+    )
+    provider = ProviderStub(output)
+    result = await QualificationEvidenceExtractor(provider).extract(
+        campaign(["SMB automation"]),
+        [automation, audience],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
+
+    fact = result.facts.categorical[0]
+    assert fact.state == "supported"
+    assert fact.evidence_ids == sorted([automation_id, audience_id], key=str)
+    assert fact.reason == model_reason
+    assert automation.criterion == "keyword"
+    assert automation.subject == "business process automation"
+    provenance = result.provenance_by_criterion["criterion_2"]
+    assert provenance["model_assessment"]["evidence_ids"] == sorted(
+        [str(automation_id), str(audience_id)]
+    )
+    assert provenance["validated_assessment"]["evidence_ids"] == sorted(
+        [str(automation_id), str(audience_id)]
+    )
+    assert provenance["validator_override"] is None
+    assert qualify_company(campaign(["SMB automation"]), result.facts)[-1].status is (
+        QualificationStatus.MATCH
+    )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_evidence_references_are_normalized() -> None:
+    item = evidence("Evidence cited twice")
+    output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[item.id, item.id],
+                reason="Supplied Evidence supports the criterion.",
+            )
+        ]
+    )
+    result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
+        campaign(),
+        [item],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
+
+    assert result.facts.categorical[0].evidence_ids == [item.id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("wrong_company", "wrong_run"), [(True, False), (False, True)])
+async def test_foreign_company_or_run_evidence_is_rejected_before_model_call(
+    wrong_company: bool, wrong_run: bool
+) -> None:
+    item = evidence(
+        "Company evidence",
+        company_id=uuid4() if wrong_company else TEST_COMPANY_ID,
+        research_run_id=uuid4() if wrong_run else TEST_RUN_ID,
+    )
+    provider = ProviderStub(QualificationFacts())
+
+    with pytest.raises(ValueError, match="active company and run"):
+        await QualificationEvidenceExtractor(provider).extract(
+            campaign(),
+            [item],
+            research_run_id=TEST_RUN_ID,
+            company_id=TEST_COMPANY_ID,
+        )
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_targeted_request_rejects_evidence_excluded_from_its_prompt() -> None:
+    company_size = evidence("Company has 150 employees", criterion="company_size")
+    output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[company_size.id],
+                reason="Model cites an ID excluded from the request.",
+            )
+        ]
+    )
+    provider = ProviderStub(output)
+    result = await QualificationEvidenceExtractor(provider).extract(
+        campaign(["SMB automation"]),
+        [company_size],
+        target_criterion_ids={"criterion_2"},
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
+
+    assert result.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
+    assert "Company has 150 employees" not in str(provider.calls[0]["user"])
+
+
+@pytest.mark.asyncio
+async def test_unknown_categorical_evidence_id_is_rejected() -> None:
+    item = evidence("Supplied evidence")
+    output = QualificationFacts(
+        categorical=[
+            CategoricalEvidenceFact(
+                criterion_id="criterion_2",
+                state="supported",
+                evidence_ids=[uuid4()],
+                reason="Model cites an unknown ID.",
+            )
+        ]
+    )
+    result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
+        campaign(),
+        [item],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
+    assert result.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
+    assert result.facts is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "facts",
+    [
+        QualificationFacts(
+            categorical=[
+                CategoricalEvidenceFact(
+                    criterion_id="criterion_99",
+                    state="unknown",
+                    reason="Unknown criterion.",
+                )
+            ]
+        ),
+        QualificationFacts(
+            categorical=[
+                CategoricalEvidenceFact(
+                    criterion_id="criterion_2",
+                    state="unknown",
+                    reason="First fact.",
+                ),
+                CategoricalEvidenceFact(
+                    criterion_id="criterion_2",
+                    state="unknown",
+                    reason="Duplicate fact.",
+                ),
+            ]
+        ),
+    ],
+)
+async def test_unknown_or_duplicate_criterion_facts_are_rejected(
+    facts: QualificationFacts,
+) -> None:
+    item = evidence("Supplied evidence")
+    result = await QualificationEvidenceExtractor(ProviderStub(facts)).extract(
+        campaign(),
+        [item],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
+    assert result.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
+    assert result.facts is None
 
 
 @pytest.mark.asyncio
@@ -618,7 +883,10 @@ async def test_shared_multi_technology_excerpt_can_support_both_criteria() -> No
         ]
     )
     result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
-        campaign(["Java", "Spring Boot"]), [java, spring_boot]
+        campaign(["Java", "Spring Boot"]),
+        [java, spring_boot],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
     )
     assert result.facts == output
 
@@ -634,7 +902,10 @@ async def test_technology_evidence_cannot_support_employee_count() -> None:
         ]
     )
     result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
-        campaign(), [technology]
+        campaign(),
+        [technology],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
     )
     assert result.facts == QualificationFacts()
     size_campaign = campaign()
@@ -646,7 +917,7 @@ async def test_technology_evidence_cannot_support_employee_count() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_fact_does_not_discard_a_valid_fact() -> None:
+async def test_cross_subject_references_in_multiple_valid_facts_are_preserved() -> None:
     java = evidence("Our backend uses Java", subject="Java")
     output = QualificationFacts(
         categorical=[
@@ -665,11 +936,15 @@ async def test_invalid_fact_does_not_discard_a_valid_fact() -> None:
         ]
     )
     result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
-        campaign(["Java", "Spring"]), [java]
+        campaign(["Java", "Spring"]),
+        [java],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
     )
     assert result.facts is not None
     assert result.facts.categorical[0].state == "supported"
-    assert result.facts.categorical[1].state == "unknown"
+    assert result.facts.categorical[1].state == "supported"
+    assert result.facts.categorical[1].evidence_ids == [java.id]
 
 
 @pytest.mark.asyncio
@@ -687,11 +962,19 @@ async def test_operational_extraction_failure_retries_once_for_same_evidence() -
     )
     provider = ProviderSequence([RuntimeError("temporary provider error"), output])
     extractor = QualificationEvidenceExtractor(provider)
-    first = await extractor.extract(campaign(), [item])
+    first = await extractor.extract(
+        campaign(), [item], research_run_id=TEST_RUN_ID, company_id=TEST_COMPANY_ID
+    )
     assert first.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
     assert first.attempt_count == 1 and first.facts is None
 
-    second = await extractor.extract(campaign(), [item], previous_entry=first)
+    second = await extractor.extract(
+        campaign(),
+        [item],
+        previous_entry=first,
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
     assert second.status is QualificationFactsCacheStatus.SUCCESS
     assert second.attempt_count == 2 and second.facts == output
     assert provider.calls == 2
@@ -708,9 +991,23 @@ async def test_operational_extraction_failure_exhausts_after_one_retry() -> None
         ]
     )
     extractor = QualificationEvidenceExtractor(provider)
-    first = await extractor.extract(campaign(), [item])
-    second = await extractor.extract(campaign(), [item], previous_entry=first)
-    third = await extractor.extract(campaign(), [item], previous_entry=second)
+    first = await extractor.extract(
+        campaign(), [item], research_run_id=TEST_RUN_ID, company_id=TEST_COMPANY_ID
+    )
+    second = await extractor.extract(
+        campaign(),
+        [item],
+        previous_entry=first,
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
+    third = await extractor.extract(
+        campaign(),
+        [item],
+        previous_entry=second,
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
     assert first.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
     assert second.status is QualificationFactsCacheStatus.FAILED_EXHAUSTED
     assert second.attempt_count == 2 and second.facts is None
@@ -742,6 +1039,8 @@ async def test_failed_incremental_refresh_retains_previous_successful_facts() ->
         [original, added],
         previous_entry=previous,
         target_criterion_ids={"criterion_2"},
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
     )
 
     assert result.status is QualificationFactsCacheStatus.FAILED_RETRYABLE
@@ -750,27 +1049,35 @@ async def test_failed_incremental_refresh_retains_previous_successful_facts() ->
 
 
 @pytest.mark.asyncio
-async def test_successful_semantic_unknown_and_task1_downgrade_are_cached_as_success() -> (
-    None
-):
+async def test_empty_supported_references_still_downgrade_to_unknown() -> None:
     java = evidence("Our backend uses Java", subject="Java")
     unsupported_spring = QualificationFacts(
         categorical=[
             CategoricalEvidenceFact(
                 criterion_id="criterion_2",
                 state="supported",
-                evidence_ids=[java.id],
+                evidence_ids=[],
                 reason="Supplied Evidence supports the criterion.",
             )
         ]
     )
     provider = ProviderSequence([QualificationFacts(), unsupported_spring])
     extractor = QualificationEvidenceExtractor(provider)
-    unknown = await extractor.extract(campaign(["Kafka"]), [java])
+    unknown = await extractor.extract(
+        campaign(["Kafka"]),
+        [java],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
     assert unknown.status is QualificationFactsCacheStatus.SUCCESS
     assert unknown.facts == QualificationFacts()
 
-    downgraded = await extractor.extract(campaign(["Spring"]), [java])
+    downgraded = await extractor.extract(
+        campaign(["Spring"]),
+        [java],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
+    )
     assert downgraded.status is QualificationFactsCacheStatus.SUCCESS
     assert downgraded.facts is not None
     assert downgraded.facts.categorical[0].state == "unknown"
@@ -778,7 +1085,7 @@ async def test_successful_semantic_unknown_and_task1_downgrade_are_cached_as_suc
     assert provenance["model_assessment"] == {
         "state": "supported",
         "reason": "Supplied Evidence supports the criterion.",
-        "evidence_ids": [str(java.id)],
+        "evidence_ids": [],
     }
     assert provenance["validated_assessment"] == {
         "state": "unknown",
@@ -788,8 +1095,8 @@ async def test_successful_semantic_unknown_and_task1_downgrade_are_cached_as_suc
         "original_state": "supported",
         "validated_state": "unknown",
         "reason": (
-            "The validator changed the model assessment to unknown because none of "
-            "its Evidence references were admissible for this criterion."
+            "The validator changed the model assessment to unknown because the "
+            "assessment had no supplied Evidence references."
         ),
     }
     assert provider.calls == 2
@@ -821,7 +1128,10 @@ async def test_successful_semantic_unknown_and_task1_downgrade_are_cached_as_suc
 async def test_failures_and_invalid_references_become_unknown(output: object) -> None:
     item = evidence("some evidence")
     result = await QualificationEvidenceExtractor(ProviderStub(output)).extract(
-        campaign(), [item]
+        campaign(),
+        [item],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
     )
     assert result.facts is None
     assert result.evidence_ids == [item.id]
@@ -831,11 +1141,21 @@ async def test_failures_and_invalid_references_become_unknown(output: object) ->
 async def test_empty_evidence_skips_provider_and_concurrency_is_bounded() -> None:
     provider = ProviderStub(QualificationFacts(), delay=0.001)
     extractor = QualificationEvidenceExtractor(provider, concurrency=2)
-    empty = await extractor.extract(campaign(), [])
+    empty = await extractor.extract(
+        campaign(), [], research_run_id=TEST_RUN_ID, company_id=TEST_COMPANY_ID
+    )
     assert empty.facts == QualificationFacts()
     assert not provider.calls
     await asyncio.gather(
-        *(extractor.extract(campaign(), [evidence(str(index))]) for index in range(5))
+        *(
+            extractor.extract(
+                campaign(),
+                [evidence(str(index))],
+                research_run_id=TEST_RUN_ID,
+                company_id=TEST_COMPANY_ID,
+            )
+            for index in range(5)
+        )
     )
     assert provider.max_active == 2
 
@@ -855,9 +1175,7 @@ def test_schema_rejects_decisions_and_invalid_employee_values() -> None:
         )
 
 
-def test_categorical_reason_is_required_normalized_and_schema_compatible() -> (
-    None
-):
+def test_categorical_reason_is_required_normalized_and_schema_compatible() -> None:
     base = {
         "criterion_id": "criterion_1",
         "state": "unknown",
@@ -888,7 +1206,9 @@ def test_categorical_reason_is_required_normalized_and_schema_compatible() -> (
 
 
 @pytest.mark.asyncio
-async def test_overlong_model_reason_is_preserved_in_provenance_without_extra_calls() -> None:
+async def test_overlong_model_reason_is_preserved_in_provenance_without_extra_calls() -> (
+    None
+):
     item = evidence("The company uses Kafka for event streaming.", subject="Kafka")
     original_reason = "The company directly uses Kafka. " * 60
     normalized_reason = " ".join(original_reason.split())
@@ -906,7 +1226,10 @@ async def test_overlong_model_reason_is_preserved_in_provenance_without_extra_ca
     )
 
     result = await QualificationEvidenceExtractor(provider).extract(
-        campaign(), [item]
+        campaign(),
+        [item],
+        research_run_id=TEST_RUN_ID,
+        company_id=TEST_COMPANY_ID,
     )
 
     assert len(provider.calls) == 1
@@ -960,9 +1283,12 @@ def test_final_provenance_keeps_model_reason_separate_from_validated_facts() -> 
         ],
         "employee_counts": [],
     }
-    assert provenance["fact_extraction_by_criterion"]["criterion_1"][
-        "model_assessment"
-    ]["reason"] == "The evidence does not establish the SaaS requirement."
+    assert (
+        provenance["fact_extraction_by_criterion"]["criterion_1"]["model_assessment"][
+            "reason"
+        ]
+        == "The evidence does not establish the SaaS requirement."
+    )
 
 
 def test_prompt_contains_only_compact_evidence_and_criteria() -> None:
