@@ -1098,10 +1098,22 @@ def test_ranking_payload_keeps_same_url_records_with_different_content_distinct(
 def test_evidence_extraction_prompt_requires_company_specific_keyword_support() -> None:
     prompt = extract_company_evidence_system_prompt().lower()
 
-    assert EXTRACT_COMPANY_EVIDENCE_PROMPT.version == "v7"
+    assert EXTRACT_COMPANY_EVIDENCE_PROMPT.version == "v8"
     assert EXTRACT_QUALIFICATION_FACTS_PROMPT.version == "v10"
     assert (
         "extract concrete, company-specific functionality, use cases, and customer"
+        in prompt
+    )
+    assert "extract factual, company-specific information relevant" in prompt
+    assert "relevant partial facts may be extracted" in prompt
+    assert "do not independently establish a complete criterion" in prompt
+    assert (
+        "empty evidence list only when no relevant, source-grounded company facts"
+        in prompt
+    )
+    assert "excerpt that directly supports that factual claim" in prompt
+    assert (
+        "qualification determines whether the accumulated evidence establishes a criterion"
         in prompt
     )
     assert "even when the source uses different terminology" in prompt
@@ -1118,7 +1130,7 @@ def test_evidence_extraction_prompt_requires_company_specific_keyword_support() 
     assert "apache kafka alone does not establish kafka" in prompt
     assert "review the page exhaustively" in prompt
     assert (
-        "emit a separate evidence item for every requested criterion or subject"
+        "emit a separate evidence item for every requested criterion or subject for which the page contains relevant"
         in prompt
     )
     assert "reusing the same exact excerpt is allowed" in prompt

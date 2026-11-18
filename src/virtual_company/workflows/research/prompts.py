@@ -33,7 +33,7 @@ SEARCH_QUERY_PROMPT = PromptIdentity("generate_search_queries", "v3")
 EXTRACT_COMPANY_CANDIDATES_PROMPT = PromptIdentity("extract_company_candidates", "v2")
 RANK_COMPANY_CANDIDATES_PROMPT = PromptIdentity("rank_company_candidates", "v6")
 COMPANY_QUERY_PROMPT = PromptIdentity("generate_company_queries", "v8")
-EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v7")
+EXTRACT_COMPANY_EVIDENCE_PROMPT = PromptIdentity("extract_company_evidence", "v8")
 FOLLOWUP_COMPANY_QUERY_PROMPT = PromptIdentity(
     "generate_followup_company_queries", "v8"
 )
@@ -314,9 +314,11 @@ def extract_company_evidence_system_prompt() -> str:
     return (
         "You are extracting factual evidence from ONE supplied web page for ONE company "
         "and ONE research campaign. Use ONLY the supplied page content; do not use prior "
-        "knowledge and do not infer facts that are merely plausible. Extract only positive, "
-        "campaign-relevant evidence for target market/geography, industry, keywords, or "
-        "company size. Return an empty evidence list when there is no supported evidence. "
+        "knowledge and do not infer facts that are merely plausible. Extract factual, "
+        "company-specific information relevant to the campaign's target market/geography, "
+        "industry, keywords, or company size. Relevant partial facts may be extracted even "
+        "when they do not independently establish a complete criterion. Return an empty "
+        "evidence list only when no relevant, source-grounded company facts are available. "
         f"{_CAMPAIGN_DESCRIPTION_TRUST_BOUNDARY}"
         "For industry, treat the configured subject as a description of the company's business "
         "category, market segment, or principal activities. Do not require the literal industry "
@@ -328,15 +330,18 @@ def extract_company_evidence_system_prompt() -> str:
         "or other separator means AND or OR, and do not ignore material qualifiers. If the intended "
         "category remains materially ambiguous, emit no industry evidence. Evidence must still "
         "describe this company's own business activity. "
-        "Review the page exhaustively against every requested campaign criterion. For every "
-        "supported item, select the constrained criterion, provide a concise factual claim, "
-        "and copy the smallest useful supporting excerpt exactly from the page. The excerpt "
-        "MUST occur in the supplied page content. Do not treat a missing keyword as negative "
+        "Review the page exhaustively against every requested campaign criterion. For each "
+        "relevant factual item, select the constrained criterion, provide a concise factual "
+        "claim, and copy the smallest useful excerpt that directly supports that factual claim "
+        "exactly from the page. The excerpt MUST occur in the supplied page content. Qualification "
+        "determines whether the accumulated Evidence establishes a criterion. Do not treat a "
+        "missing keyword as negative "
         "evidence. Do not invent URLs, employee counts, headquarters, or unsupported keyword support. "
         "A single grounded excerpt may independently support multiple requested criteria or "
         "keyword subjects. Emit a separate Evidence item for every requested criterion or "
-        "subject that the text supports; for industry, semantic evidence may support membership "
-        "without repeating the exact label. Reusing the same exact excerpt is allowed. "
+        "subject for which the page contains relevant, source-grounded company facts; for "
+        "industry, semantic evidence may support membership without repeating the exact label. "
+        "Reusing the same exact excerpt is allowed. "
         "Do not omit an explicitly supported subject just because the excerpt already supports "
         "another one. Do not treat a page fact as proof of a keyword merely because a related "
         "term appears. Extract concrete, company-specific functionality, use cases, and customer "
