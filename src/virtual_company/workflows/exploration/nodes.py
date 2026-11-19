@@ -560,9 +560,23 @@ class ExplorationNodes:
     async def finalize_run(
         self, state: ExplorationWorkflowState
     ) -> dict[str, object]:
+        failure_categories = tuple(state["failure_categories"])
+        source_fetch_failure_count = sum(
+            category.startswith("fetch:") for category in failure_categories
+        )
+        processing_failure_count = (
+            len(failure_categories) - source_fetch_failure_count
+        )
+        expected_company_obligation_count = (
+            len(state["companies"]) * len(state["obligations"])
+        )
+        all_company_obligations_completed = (
+            state["completed_company_obligation_count"]
+            == expected_company_obligation_count
+        )
         status = (
             ExplorationRunStatus.PARTIAL
-            if state["recoverable_failure_count"]
+            if processing_failure_count or not all_company_obligations_completed
             else ExplorationRunStatus.COMPLETED
         )
         self._observability.event(
@@ -578,6 +592,9 @@ class ExplorationNodes:
             facts_persisted_count=state["facts_persisted_count"],
             hypotheses_persisted_count=state["hypotheses_persisted_count"],
             recoverable_failure_count=state["recoverable_failure_count"],
+            source_fetch_failure_count=source_fetch_failure_count,
+            processing_failure_count=processing_failure_count,
+            expected_company_obligation_count=expected_company_obligation_count,
         )
         return {"final_status": status}
 

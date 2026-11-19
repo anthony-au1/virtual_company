@@ -21,11 +21,13 @@ from virtual_company.services.exploration_evidence_extractor import (
 )
 from virtual_company.services.exploration_fetch import (
     ExplorationFetchBatchResult,
+    ExplorationFetchFailureCategory,
     ExplorationFetchedPage,
     ExplorationFetchOutcome,
     ExplorationFetchResult,
 )
 from virtual_company.services.exploration_hypothesis_generator import (
+    ExplorationHypothesisGenerationFailureCategory,
     ExplorationHypothesisGenerationResult,
 )
 from virtual_company.services.exploration_query_generator import (
@@ -389,13 +391,26 @@ async def test_cancellation_propagates_without_owning_lifecycle(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_complete_pipeline_aggregates_cross_obligation_evidence(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "page_fetch_failure",
+    [False, True],
+    ids=["all-fetches-succeed", "fetch-failures"],
+)
+@pytest.mark.parametrize(
+    "hypothesis_mode",
+    ["generated", "empty", "failed"],
+    ids=["hypotheses", "zero-hypotheses", "hypothesis-failure"],
+)
+async def test_final_status_tracks_processing_completeness_not_fetch_outcomes(
+    monkeypatch, page_fetch_failure: bool, hypothesis_mode: str
+) -> None:
     tracker = SessionTracker()
     run, companies, obligations = make_inputs(obligation_count=2)
     store = {"evidence": [], "facts": []}
     install_repository_fakes(monkeypatch, run, companies, obligations, tracker, store)
     evidence_ids = []
     generation_inputs = {}
+    observability = ObservabilityStub()
 
     class QueryGenerator:
         async def generate(self, *_args):
@@ -427,20 +442,32 @@ async def test_complete_pipeline_aggregates_cross_obligation_evidence(monkeypatc
     class FetchService:
         async def fetch(self, search_batch):
             assert tracker.active == 0
-            return ExplorationFetchBatchResult(
-                provider="test",
-                results=[
+            results = []
+            for query_result in search_batch.query_results:
+                source = query_result.results[0]
+                results.append(
                     ExplorationFetchResult(
-                        query=item.query,
-                        search_result=item.results[0],
+                        query=query_result.query,
+                        search_result=source,
                         outcome=ExplorationFetchOutcome.SUCCEEDED,
                         page=ExplorationFetchedPage(
-                            url=item.results[0].url,
+                            url=source.url,
                             content="Company product details.",
                         ),
                     )
-                    for item in search_batch.query_results
-                ],
+                )
+                if page_fetch_failure:
+                    results.append(
+                        ExplorationFetchResult(
+                            query=query_result.query,
+                            search_result=source,
+                            outcome=ExplorationFetchOutcome.FAILED,
+                            failure_category=ExplorationFetchFailureCategory.HTTP_ERROR,
+                        )
+                    )
+            return ExplorationFetchBatchResult(
+                provider="test",
+                results=results,
             )
 
     class EvidenceExtractor:
@@ -545,6 +572,18 @@ async def test_complete_pipeline_aggregates_cross_obligation_evidence(monkeypatc
             assert tracker.active == 0
             generation_inputs["context"] = context
             generation_inputs["facts"] = facts
+            if hypothesis_mode == "failed":
+                return ExplorationHypothesisGenerationResult(
+                    outcome=ExplorationHypothesisGenerationOutcome.FAILED,
+                    failure_category=(
+                        ExplorationHypothesisGenerationFailureCategory.PROVIDER_ERROR
+                    ),
+                )
+            if hypothesis_mode == "empty":
+                return ExplorationHypothesisGenerationResult(
+                    outcome=ExplorationHypothesisGenerationOutcome.SUCCEEDED,
+                    hypotheses=(),
+                )
             return ExplorationHypothesisGenerationResult(
                 outcome=ExplorationHypothesisGenerationOutcome.SUCCEEDED,
                 hypotheses=(
@@ -584,13 +623,45 @@ async def test_complete_pipeline_aggregates_cross_obligation_evidence(monkeypatc
         evidence_extractor=EvidenceExtractor(),
         fact_extractor=FactExtractor(),
         hypothesis_generator=HypothesisGenerator(),
+        observability=observability,
     ).run(run.id, uuid4())
 
-    assert result.status is ExplorationRunStatus.COMPLETED
+    expected_status = (
+        ExplorationRunStatus.PARTIAL
+        if hypothesis_mode == "failed"
+        else ExplorationRunStatus.COMPLETED
+    )
+    assert result.status is expected_status
     assert result.completed_company_obligation_count == 2
     assert result.evidence_persisted_count == 2
     assert result.facts_persisted_count == 1
-    assert result.hypotheses_persisted_count == 1
+    assert result.hypotheses_persisted_count == (
+        1 if hypothesis_mode == "generated" else 0
+    )
+    assert result.recoverable_failure_count == (
+        (2 if page_fetch_failure else 0) + (1 if hypothesis_mode == "failed" else 0)
+    )
+    expected_failures = (
+        (("fetch:http_error",) * 2 if page_fetch_failure else ())
+        + (
+            ("hypothesis_generation:provider_error",)
+            if hypothesis_mode == "failed"
+            else ()
+        )
+    )
+    assert result.failure_categories == expected_failures
+    finalized = next(
+        metadata
+        for name, metadata in observability.events
+        if name == "exploration_workflow_finalized"
+    )
+    assert finalized["source_fetch_failure_count"] == (
+        2 if page_fetch_failure else 0
+    )
+    assert finalized["processing_failure_count"] == (
+        1 if hypothesis_mode == "failed" else 0
+    )
+    assert finalized["expected_company_obligation_count"] == 2
     assert generation_inputs["context"] == "Assess strategic fit"
     assert len(generation_inputs["facts"]) == 1
     assert generation_inputs["facts"][0].statement == "Company has relevant products."
@@ -598,6 +669,90 @@ async def test_complete_pipeline_aggregates_cross_obligation_evidence(monkeypatc
     assert tuple(evidence_ids) == tuple(item.id for item in obligations) if False else True
     assert run.status == "RUNNING"
     assert tracker.active == 0
+
+
+@pytest.mark.asyncio
+async def test_all_page_fetches_failed_can_complete_with_no_findings(monkeypatch) -> None:
+    tracker = SessionTracker()
+    run, companies, obligations = make_inputs()
+    store = {"evidence": [], "facts": []}
+    install_repository_fakes(monkeypatch, run, companies, obligations, tracker, store)
+
+    class QueryGenerator:
+        async def generate(self, *_args):
+            return ExplorationQueryGenerationResult(
+                queries=[GeneratedExplorationQuery(query="company product")]
+            )
+
+    class SearchService:
+        async def search(self, queries):
+            query = queries[0].query
+            result = ExplorationSearchResultItem(
+                url="https://source.test/page", title="Source", snippet="Snippet"
+            )
+            return ExplorationSearchBatchResult(
+                provider="test",
+                query_results=[
+                    ExplorationQuerySearchResult(
+                        query=query,
+                        outcome=ExplorationSearchOutcome.SUCCEEDED,
+                        results=[result],
+                    )
+                ],
+            )
+
+    class FetchService:
+        async def fetch(self, search_batch):
+            query_result = search_batch.query_results[0]
+            return ExplorationFetchBatchResult(
+                provider="test",
+                results=[
+                    ExplorationFetchResult(
+                        query=query_result.query,
+                        search_result=query_result.results[0],
+                        outcome=ExplorationFetchOutcome.FAILED,
+                        failure_category=ExplorationFetchFailureCategory.HTTP_ERROR,
+                    )
+                ],
+            )
+
+    result = await make_workflow(
+        tracker,
+        QueryGenerator(),
+        search_service=SearchService(),
+        fetch_service=FetchService(),
+    ).run(run.id, uuid4())
+
+    assert result.status is ExplorationRunStatus.COMPLETED
+    assert result.completed_company_obligation_count == 1
+    assert result.evidence_persisted_count == 0
+    assert result.facts_persisted_count == 0
+    assert result.hypotheses_persisted_count == 0
+    assert result.recoverable_failure_count == 1
+    assert result.failure_categories == ("fetch:http_error",)
+
+
+@pytest.mark.asyncio
+async def test_incomplete_company_obligation_count_remains_partial(monkeypatch) -> None:
+    tracker = SessionTracker()
+    workflow = make_workflow(tracker, SimpleNamespace())
+    run_id = uuid4()
+
+    result = await workflow._nodes.finalize_run(
+        {
+            "exploration_run_id": run_id,
+            "companies": (SimpleNamespace(),),
+            "obligations": (SimpleNamespace(), SimpleNamespace()),
+            "completed_company_obligation_count": 1,
+            "recoverable_failure_count": 0,
+            "failure_categories": (),
+            "evidence_persisted_count": 0,
+            "facts_persisted_count": 0,
+            "hypotheses_persisted_count": 0,
+        }
+    )
+
+    assert result["final_status"] is ExplorationRunStatus.PARTIAL
 
 
 @pytest.mark.asyncio
