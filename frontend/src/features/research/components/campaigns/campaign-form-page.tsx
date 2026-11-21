@@ -197,7 +197,7 @@ export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
     <section aria-labelledby="page-title" className="mx-auto max-w-3xl">
       <Link
         className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm"
-        href="/campaigns"
+          href="/research"
       >
         <ArrowLeft aria-hidden="true" className="size-4" />
         Campaigns
@@ -379,7 +379,7 @@ export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
         <div className="flex justify-end gap-2 pb-4">
           <Button
             disabled={disabled}
-            onClick={() => router.push("/campaigns")}
+            onClick={() => router.push("/research")}
             type="button"
             variant="outline"
           >

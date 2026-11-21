@@ -9,11 +9,25 @@ import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { cn } from "@/lib/utils";
 
 const navigation = [
-  { label: "Campaigns", icon: BriefcaseBusiness, href: "/campaigns" },
   { label: "Research", icon: Search, href: "/research" },
   { label: "Explorations", icon: Compass, href: "/explorations" },
   { label: "Leads", icon: Users },
 ];
+
+function isNavigationItemActive(
+  pathname: string,
+  href: string,
+  label: string,
+): boolean {
+  if (label === "Research") {
+    return (
+      pathname === href ||
+      pathname.startsWith(`${href}/`) ||
+      pathname.startsWith("/campaigns/")
+    );
+  }
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
 export function AppShell({ children }: React.PropsWithChildren) {
   const pathname = usePathname();
@@ -37,43 +51,46 @@ export function AppShell({ children }: React.PropsWithChildren) {
       <aside className="bg-sidebar border-b md:border-r md:border-b-0">
         <nav aria-label="Primary" className="p-2 md:p-3">
           <ul className="flex gap-1 overflow-x-auto md:flex-col">
-            {navigation.map(({ label, icon: Icon, href }) => (
-              <li key={label}>
-                {href ? (
-                  <Link
-                    aria-current={
-                      pathname.startsWith(href) ? "page" : undefined
-                    }
-                    className={cn(
-                      "text-sidebar-foreground flex h-8 min-w-max items-center gap-2 rounded-md px-2.5 text-sm",
-                      pathname.startsWith(href)
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                        : "text-muted-foreground hover:bg-sidebar-accent/70",
-                    )}
-                    href={href}
-                  >
-                    <Icon aria-hidden="true" className="size-4" />
-                    {label}
-                  </Link>
-                ) : (
-                  <span
-                    aria-disabled="true"
-                    className={cn(
-                      "text-sidebar-foreground flex h-8 min-w-max cursor-default items-center gap-2 rounded-md px-2.5 text-sm",
-                      "text-muted-foreground",
-                    )}
-                  >
-                    <Icon aria-hidden="true" className="size-4" />
-                    {label}
-                  </span>
-                )}
-              </li>
-            ))}
+            {navigation.map(({ label, icon: Icon, href }) => {
+              const active = href
+                ? isNavigationItemActive(pathname, href, label)
+                : false;
+              return (
+                <li key={label}>
+                  {href ? (
+                    <Link
+                      aria-current={active ? "page" : undefined}
+                      className={cn(
+                        "text-sidebar-foreground flex h-8 min-w-max items-center gap-2 rounded-md px-2.5 text-sm",
+                        active
+                          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                          : "text-muted-foreground hover:bg-sidebar-accent/70",
+                      )}
+                      href={href}
+                    >
+                      <Icon aria-hidden="true" className="size-4" />
+                      {label}
+                    </Link>
+                  ) : (
+                    <span
+                      aria-disabled="true"
+                      className={cn(
+                        "text-sidebar-foreground flex h-8 min-w-max cursor-default items-center gap-2 rounded-md px-2.5 text-sm",
+                        "text-muted-foreground",
+                      )}
+                    >
+                      <Icon aria-hidden="true" className="size-4" />
+                      {label}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </nav>
         <Separator className="hidden md:block" />
         <p className="text-muted-foreground hidden px-5 py-4 text-xs leading-relaxed md:block">
-          Campaign setup, Explorations, and research qualification runs.
+          Research campaigns and qualification runs.
         </p>
       </aside>
 

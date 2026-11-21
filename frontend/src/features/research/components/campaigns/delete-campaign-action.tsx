@@ -8,7 +8,10 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ApiError, apiErrorMessages } from "@/lib/api/client";
 import { deleteCampaign } from "@/features/research/api/campaigns";
-import { campaignQueryKey, campaignsQueryKey } from "@/features/research/query-keys";
+import {
+  campaignQueryKey,
+  campaignsQueryKey,
+} from "@/features/research/query-keys";
 
 const LIFECYCLE_MESSAGE =
   "This Campaign cannot be deleted because it has already been used for research.";
@@ -16,9 +19,13 @@ const LIFECYCLE_MESSAGE =
 export function DeleteCampaignAction({
   campaignId,
   navigateOnSuccess = true,
+  disabled = false,
+  disabledReason,
 }: {
   campaignId: string;
   navigateOnSuccess?: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -29,7 +36,7 @@ export function DeleteCampaignAction({
       setConfirming(false);
       queryClient.removeQueries({ queryKey: campaignQueryKey(campaignId) });
       await queryClient.invalidateQueries({ queryKey: campaignsQueryKey });
-      if (navigateOnSuccess) router.push("/campaigns");
+      if (navigateOnSuccess) router.push("/research");
     },
     onError: async (error) => {
       if (error instanceof ApiError && error.status === 404) {
@@ -50,20 +57,35 @@ export function DeleteCampaignAction({
 
   return (
     <>
-      <Button
-        aria-label={`Delete Campaign ${campaignId}`}
-        disabled={mutation.isPending}
-        onClick={(event) => {
-          event.stopPropagation();
-          mutation.reset();
-          setConfirming(true);
-        }}
-        size="sm"
-        variant="destructive"
-      >
-        <Trash2 aria-hidden="true" data-icon="inline-start" />
-        Delete Campaign
-      </Button>
+      <span className="inline-flex flex-col items-end">
+        <Button
+          aria-label={`Delete Campaign ${campaignId}`}
+          aria-describedby={
+            disabled && disabledReason
+              ? `delete-campaign-disabled-${campaignId}`
+              : undefined
+          }
+          disabled={mutation.isPending || disabled}
+          onClick={(event) => {
+            event.stopPropagation();
+            mutation.reset();
+            setConfirming(true);
+          }}
+          size="sm"
+          variant="destructive"
+        >
+          <Trash2 aria-hidden="true" data-icon="inline-start" />
+          Delete Campaign
+        </Button>
+        {disabled && disabledReason ? (
+          <span
+            className="text-muted-foreground mt-1 max-w-36 text-right text-[10px]"
+            id={`delete-campaign-disabled-${campaignId}`}
+          >
+            {disabledReason}
+          </span>
+        ) : null}
+      </span>
       {confirming ? (
         <div
           className="bg-background/70 fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm"

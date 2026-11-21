@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -35,7 +35,8 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
     queryKey,
     queryFn: () => getResearchRunResults(runId),
     refetchInterval: (current) =>
-      current.state.data && isTerminalRunStatus(current.state.data.research_run.status)
+      current.state.data &&
+      isTerminalRunStatus(current.state.data.research_run.status)
         ? false
         : 2000,
   });
@@ -50,6 +51,9 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
       return statusMatch && searchMatch;
     });
   }, [filter, query.data?.companies, search]);
+  const campaignHref = query.data?.campaign.id.trim()
+    ? `/campaigns/${encodeURIComponent(query.data.campaign.id)}`
+    : "/research/runs";
 
   if (query.isPending) {
     return (
@@ -65,7 +69,7 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
     const notFound = "status" in query.error && query.error.status === 404;
     return (
       <section aria-labelledby="page-title" className="mx-auto max-w-6xl">
-        <BackToRuns />
+        <ResearchBreadcrumbs />
         <div
           role="alert"
           className="border-destructive/30 mt-5 rounded-lg border p-6"
@@ -97,12 +101,15 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
 
   return (
     <section aria-labelledby="page-title" className="mx-auto max-w-6xl">
-      <BackToRuns />
+      <ResearchBreadcrumbs
+        campaignHref={campaignHref}
+        campaignName={results.campaign.name}
+      />
       <header className="mt-4 border-b pb-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">
-              Research Run
+              Research Run results
             </p>
             <h1
               id="page-title"
@@ -110,8 +117,11 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
             >
               {results.campaign.name}
             </h1>
-            <p className="text-muted-foreground mt-1 font-mono text-xs">
-              {results.research_run.id}
+            <p className="text-muted-foreground mt-1 text-sm">
+              Execution started{" "}
+              {formatOptionalDate(results.research_run.started_at) ??
+                formatOptionalDate(results.research_run.created_at) ??
+                "Unavailable"}
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -119,40 +129,84 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
             {isTerminalRunStatus(results.research_run.status) ? (
               <DeleteRunAction
                 runId={runId}
-                onDeleted={() => router.push("/research")}
+                onDeleted={() => router.push(campaignHref)}
               />
             ) : null}
           </div>
         </div>
-        {results.research_run.status === "RUNNING" || results.research_run.status === "QUEUED" ? (
-          <p className="mt-3 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+        {results.research_run.status === "RUNNING" ||
+        results.research_run.status === "QUEUED" ? (
+          <p
+            role="status"
+            className="mt-3 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300"
+          >
             {results.research_run.status === "QUEUED"
               ? "This run is queued. Results will appear here as research progresses."
               : "This run is still in progress. Showing the results currently available."}
           </p>
         ) : null}
         {results.research_run.error ? (
-          <p className="text-destructive mt-3 text-sm">
+          <p role="alert" className="text-destructive mt-3 text-sm">
             {results.research_run.error}
           </p>
         ) : null}
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-          <Metric label="Target" value={results.campaign.target_count} />
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          <Metric
+            label="Campaign target"
+            value={formatMetric(results.campaign.target_count)}
+          />
           <Metric
             label="Research cap"
-            value={results.campaign.max_companies_to_research}
+            value={formatMetric(results.campaign.max_companies_to_research)}
           />
-          <Metric label="Researched" value={results.summary.researched} />
-          <Metric label="Qualified" value={results.summary.qualified} />
-          <Metric label="Not qualified" value={results.summary.not_qualified} />
           <Metric
-            label="Insufficient"
-            value={results.summary.insufficient_evidence}
+            label={resultMetricLabel(
+              results.research_run.status,
+              "Companies researched",
+              "Researched so far",
+            )}
+            value={formatMetric(results.summary.researched)}
+          />
+          <Metric
+            label={resultMetricLabel(
+              results.research_run.status,
+              "Qualified",
+              "Qualified so far",
+            )}
+            value={formatMetric(results.summary.qualified)}
+          />
+          <Metric
+            label={resultMetricLabel(
+              results.research_run.status,
+              "Not qualified",
+              "Not qualified so far",
+            )}
+            value={formatMetric(results.summary.not_qualified)}
+          />
+          <Metric
+            label={resultMetricLabel(
+              results.research_run.status,
+              "Insufficient evidence",
+              "Insufficient so far",
+            )}
+            value={formatMetric(results.summary.insufficient_evidence)}
+          />
+          <Metric
+            label="Run duration"
+            value={formatRunDuration(
+              results.research_run.started_at,
+              results.research_run.completed_at,
+              results.research_run.status,
+            )}
           />
         </div>
-        <p className="text-muted-foreground mt-2 text-xs">
-          Started {formatDate(results.research_run.started_at)}
-        </p>
+        {results.research_run.completed_at ? (
+          <p className="text-muted-foreground mt-2 text-xs">
+            Completed{" "}
+            {formatOptionalDate(results.research_run.completed_at) ??
+              "Unavailable"}
+          </p>
+        ) : null}
       </header>
 
       <CampaignCriteria results={results} />
@@ -179,21 +233,42 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
             />
           </label>
         </div>
-        <div
-          aria-label="Filter companies"
-          className="mb-4 flex flex-wrap gap-1.5"
-        >
-          {filters.map((value) => (
-            <Button
-              aria-pressed={filter === value}
-              key={value}
-              onClick={() => setFilter(value)}
-              size="sm"
-              variant={filter === value ? "secondary" : "ghost"}
-            >
-              {filterLabel(value)}
-            </Button>
-          ))}
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div
+            aria-label="Filter companies"
+            className="flex flex-wrap gap-1.5"
+            role="group"
+          >
+            {filters.map((value) => (
+              <Button
+                aria-pressed={filter === value}
+                key={value}
+                onClick={() => setFilter(value)}
+                size="sm"
+                variant={filter === value ? "secondary" : "ghost"}
+              >
+                {filterLabel(value)}
+              </Button>
+            ))}
+          </div>
+          <div className="flex items-center gap-3">
+            <p aria-live="polite" className="text-muted-foreground text-xs">
+              Showing {visibleCompanies.length} of {results.companies.length}{" "}
+              companies
+            </p>
+            {filter !== "ALL" || search ? (
+              <Button
+                onClick={() => {
+                  setFilter("ALL");
+                  setSearch("");
+                }}
+                size="sm"
+                variant="outline"
+              >
+                Clear filters
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         {results.companies.length === 0 ? (
@@ -219,25 +294,99 @@ export function ResearchResultsPage({ runId }: { runId: string }) {
   );
 }
 
-function BackToRuns() {
+function ResearchBreadcrumbs({
+  campaignHref,
+  campaignName,
+}: {
+  campaignHref?: string;
+  campaignName?: string;
+}) {
   return (
-    <Link
-      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm"
-      href="/research"
-    >
-      <ArrowLeft aria-hidden="true" className="size-4" />
-      Research Runs
-    </Link>
+    <nav aria-label="Research breadcrumbs" className="text-sm">
+      <ol className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
+        <li>
+          <Link
+            className="hover:text-foreground hover:underline"
+            href="/research"
+          >
+            Research
+          </Link>
+        </li>
+        {campaignName && campaignHref ? (
+          <>
+            <li aria-hidden="true">/</li>
+            <li>
+              <Link
+                className="hover:text-foreground max-w-64 truncate hover:underline"
+                href={campaignHref}
+              >
+                {campaignName}
+              </Link>
+            </li>
+            <li aria-hidden="true">/</li>
+            <li aria-current="page" className="text-foreground">
+              Research Run
+            </li>
+          </>
+        ) : null}
+      </ol>
+    </nav>
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function Metric({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="bg-muted/40 rounded-md px-3 py-2">
       <div className="text-muted-foreground text-xs">{label}</div>
       <div className="mt-0.5 text-lg font-semibold tabular-nums">{value}</div>
     </div>
   );
+}
+
+function formatMetric(value: number | null | undefined): number | string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : "Unavailable";
+}
+
+function resultMetricLabel(
+  status: string,
+  completedLabel: string,
+  progressLabel: string,
+): string {
+  if (status === "COMPLETED") return completedLabel;
+  if (status === "FAILED" || status === "CANCELLED") {
+    return `${completedLabel} before run ended`;
+  }
+  return progressLabel;
+}
+
+function formatOptionalDate(value: string | null | undefined): string | null {
+  if (!value || !Number.isFinite(Date.parse(value))) return null;
+  return formatDate(value);
+}
+
+function formatRunDuration(
+  startedAt: string | null | undefined,
+  completedAt: string | null | undefined,
+  status: string,
+): string {
+  if (status === "QUEUED" && !completedAt) return "Queued";
+  if (!startedAt || !Number.isFinite(Date.parse(startedAt))) {
+    return "Unavailable";
+  }
+  if (!completedAt) {
+    return isTerminalRunStatus(status) ? "Unavailable" : "In progress";
+  }
+  const elapsedMs = Date.parse(completedAt) - Date.parse(startedAt);
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return "Unavailable";
+  const totalSeconds = Math.floor(elapsedMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
 }
 
 function CampaignCriteria({ results }: { results: ResearchResults }) {

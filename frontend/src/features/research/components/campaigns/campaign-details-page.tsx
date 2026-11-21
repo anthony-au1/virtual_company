@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Pencil, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { CampaignStatusBadge } from "@/features/research/components/campaigns/campaign-status-badge";
 import { RunStatus } from "@/features/research/components/runs/run-status-badge";
@@ -15,13 +15,19 @@ import { DeleteRunAction } from "@/features/research/components/runs/delete-run-
 import { DeleteCampaignAction } from "@/features/research/components/campaigns/delete-campaign-action";
 import { getCampaign, type Campaign } from "@/features/research/api/campaigns";
 import { apiErrorMessages } from "@/lib/api/client";
-import { listResearchRuns, startResearch } from "@/features/research/api/research";
+import {
+  listResearchRuns,
+  startResearch,
+} from "@/features/research/api/research";
 import {
   campaignQueryKey,
   researchRunsQueryKey,
 } from "@/features/research/query-keys";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/format-date";
+
+const CAMPAIGN_DELETE_DISABLED_REASON =
+  "Campaigns with Research history cannot be deleted.";
 
 export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
   const router = useRouter();
@@ -34,6 +40,10 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
   const runsQuery = useQuery({
     queryKey: researchRunsQueryKey,
     queryFn: listResearchRuns,
+    refetchInterval: (current) =>
+      current.state.data?.some((run) => !isTerminalRunStatus(run.status))
+        ? 2000
+        : false,
   });
   const startMutation = useMutation({
     mutationKey: ["start-research", campaignId],
@@ -47,6 +57,25 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
       router.push(`/research/${result.research_run_id}`);
     },
   });
+  const campaignRuns = useMemo(
+    () =>
+      (runsQuery.data ?? [])
+        .filter((run) => run.campaign.id === campaignId)
+        .sort((a, b) =>
+          (b.started_at ?? b.created_at).localeCompare(
+            a.started_at ?? a.created_at,
+          ),
+        ),
+    [campaignId, runsQuery.data],
+  );
+  const activeRun = campaignRuns.find(
+    (run) => !isTerminalRunStatus(run.status),
+  );
+  const locallyActive =
+    startedRunId !== null &&
+    !campaignRuns.some(
+      (run) => run.run_id === startedRunId && isTerminalRunStatus(run.status),
+    );
 
   if (campaignQuery.isPending) {
     return (
@@ -91,53 +120,99 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
   }
 
   const campaign = campaignQuery.data;
-  const campaignRuns = (runsQuery.data ?? []).filter(
-    (run) => run.campaign.id === campaignId,
-  );
-  const activeRun = campaignRuns.find((run) => !isTerminalRunStatus(run.status));
-  const locallyActive = startedRunId !== null &&
-    !campaignRuns.some((run) => run.run_id === startedRunId && isTerminalRunStatus(run.status));
+  const cannotDelete =
+    campaign.sealed_at !== null ||
+    (runsQuery.isSuccess && campaignRuns.length > 0);
+  const startDisabled =
+    startMutation.isPending ||
+    runsQuery.isPending ||
+    runsQuery.isError ||
+    Boolean(activeRun) ||
+    locallyActive;
 
   return (
-    <section aria-labelledby="page-title" className="mx-auto max-w-5xl">
+    <section aria-labelledby="page-title" className="mx-auto max-w-6xl">
       <BackToCampaigns />
-      <header className="mt-4 flex flex-wrap items-start justify-between gap-4 border-b pb-5">
-        <div>
+      <header className="mt-4 flex flex-col gap-5 border-b pb-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
           <p className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">
-            Campaign
+            Campaign workspace
           </p>
           <h1 id="page-title" className="text-2xl font-semibold tracking-tight">
             {campaign.name}
           </h1>
-          <p className="text-muted-foreground mt-1 font-mono text-xs">
-            {campaign.id}
+          {campaign.description ? (
+            <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
+              {campaign.description}
+            </p>
+          ) : null}
+          <p className="text-muted-foreground mt-2 text-sm">
+            {[campaign.target_market, campaign.industry]
+              .filter(Boolean)
+              .join(" · ") || "No market or industry specified"}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <CampaignStatusBadge status={campaign.status} />
-          <DeleteCampaignAction campaignId={campaignId} />
-          {campaign.sealed_at === null ? (
-            <Link
-              className={cn(buttonVariants({ variant: "outline" }))}
-              href={`/campaigns/${campaignId}/edit`}
-            >
-              <Pencil aria-hidden="true" data-icon="inline-start" />
-              Edit Campaign
-            </Link>
-          ) : null}
-          <Button
-            disabled={startMutation.isPending || Boolean(activeRun) || locallyActive}
-            onClick={() => startMutation.mutate()}
-          >
-            {startMutation.isPending
-              ? "Starting research…"
-              : activeRun || locallyActive
-                ? "Research in progress"
-                : "Start Research"}
-            {!startMutation.isPending && !activeRun ? (
-              <ArrowRight aria-hidden="true" data-icon="inline-end" />
+        <div className="flex flex-wrap items-start gap-2 lg:justify-end">
+          <div className="flex flex-col gap-1">
+            <span className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+              Campaign status
+            </span>
+            <CampaignStatusBadge status={campaign.status} />
+          </div>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex flex-wrap justify-end gap-2">
+              {campaign.sealed_at === null ? (
+                <Link
+                  className={cn(buttonVariants({ variant: "outline" }))}
+                  href={`/campaigns/${campaignId}/edit`}
+                >
+                  <Pencil aria-hidden="true" data-icon="inline-start" />
+                  Edit Campaign
+                </Link>
+              ) : null}
+              <DeleteCampaignAction
+                campaignId={campaignId}
+                disabled={cannotDelete}
+                disabledReason={
+                  cannotDelete ? CAMPAIGN_DELETE_DISABLED_REASON : undefined
+                }
+              />
+              <Button
+                disabled={startDisabled}
+                onClick={() => startMutation.mutate()}
+              >
+                {startMutation.isPending
+                  ? "Starting research…"
+                  : activeRun || locallyActive
+                    ? "Research in progress"
+                    : runsQuery.isPending
+                      ? "Checking run history…"
+                      : runsQuery.isError
+                        ? "Run status unavailable"
+                        : "Start Research"}
+                {!startMutation.isPending &&
+                !activeRun &&
+                !runsQuery.isPending &&
+                !runsQuery.isError ? (
+                  <ArrowRight aria-hidden="true" data-icon="inline-end" />
+                ) : null}
+              </Button>
+            </div>
+            {campaign.sealed_at !== null ? (
+              <p className="text-muted-foreground max-w-sm text-right text-xs">
+                Research criteria are locked after the first execution.
+              </p>
             ) : null}
-          </Button>
+            {runsQuery.isPending ? (
+              <p className="text-muted-foreground max-w-sm text-right text-xs">
+                Checking for an active Research Run before allowing a new one.
+              </p>
+            ) : runsQuery.isError ? (
+              <p className="text-destructive max-w-sm text-right text-xs">
+                Retry Run history to verify that no Research is active.
+              </p>
+            ) : null}
+          </div>
         </div>
       </header>
 
@@ -157,73 +232,109 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
         </div>
       ) : null}
 
-      <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(17rem,0.8fr)]">
-        <div className="space-y-5">
-          <section className="rounded-lg border p-4 sm:p-5">
-            <h2 className="text-sm font-semibold">Basic information</h2>
-            <dl className="mt-3 grid gap-4 sm:grid-cols-2">
-              <Detail
-                label="Target qualified companies"
-                value={`${campaign.target_count}`}
-              />
-              <Detail
-                label="Maximum companies researched"
-                value={`${campaign.max_companies_to_research}`}
-              />
-              <Detail label="Created" value={formatDate(campaign.created_at)} />
-              <Detail
-                label="Description"
-                value={campaign.description || "—"}
-                wide
-              />
-            </dl>
-          </section>
-
-          <section className="rounded-lg border p-4 sm:p-5">
-            <h2 className="text-sm font-semibold">Campaign criteria</h2>
-            <div className="mt-4 grid gap-5 sm:grid-cols-2">
-              <CriteriaList title="Campaign criteria">
-                {campaign.target_market ? (
-                  <CriteriaRow label="Market" value={campaign.target_market} />
-                ) : null}
-                {campaign.industry ? (
-                  <CriteriaRow label="Industry" value={campaign.industry} />
-                ) : null}
-                {campaign.keywords.map((keyword) => (
-                  <CriteriaRow key={keyword} label="Keyword" value={keyword} />
-                ))}
-                {sizeRows(campaign)}
-                {!hasCriteria(campaign) ? <EmptyCriteria /> : null}
-              </CriteriaList>
-            </div>
-          </section>
-        </div>
+      <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
+        <section
+          aria-labelledby="configuration-title"
+          className="rounded-lg border p-4 sm:p-5"
+        >
+          <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+            <h2 id="configuration-title" className="text-base font-semibold">
+              Research configuration
+            </h2>
+            <p className="text-muted-foreground text-xs">
+              Created {formatDate(campaign.created_at)}
+            </p>
+          </div>
+          <dl className="mb-5 grid gap-3 sm:grid-cols-2">
+            <Detail
+              label="Target qualified companies"
+              value={`${campaign.target_count}`}
+            />
+            <Detail
+              label="Maximum companies to research"
+              value={`${campaign.max_companies_to_research}`}
+            />
+          </dl>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <CriteriaList title="Market and industry">
+              {campaign.target_market ? (
+                <CriteriaRow label="Market" value={campaign.target_market} />
+              ) : null}
+              {campaign.industry ? (
+                <CriteriaRow label="Industry" value={campaign.industry} />
+              ) : null}
+              {!campaign.target_market && !campaign.industry ? (
+                <EmptyCriteria />
+              ) : null}
+            </CriteriaList>
+            <CriteriaList title="Keywords and company size">
+              {campaign.keywords.map((keyword) => (
+                <CriteriaRow key={keyword} label="Keyword" value={keyword} />
+              ))}
+              {sizeRows(campaign)}
+              {campaign.keywords.length === 0 &&
+              campaign.company_size?.min == null &&
+              campaign.company_size?.max == null ? (
+                <EmptyCriteria />
+              ) : null}
+            </CriteriaList>
+          </div>
+        </section>
 
         <section
           aria-labelledby="history-title"
-          className="h-fit rounded-lg border p-4 sm:p-5"
+          className="rounded-lg border p-4 sm:p-5"
         >
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <h2 id="history-title" className="text-sm font-semibold">
-                Research history
+              <h2 id="history-title" className="text-base font-semibold">
+                Research Run history
               </h2>
               <p className="text-muted-foreground mt-1 text-xs">
-                Each start creates a separate run.
+                Each execution is saved separately under this Campaign.
               </p>
             </div>
-            {campaignRuns.length ? (
-              <Badge variant="secondary">{campaignRuns.length} runs</Badge>
+            {runsQuery.isSuccess ? (
+              <Badge variant="secondary">
+                {campaignRuns.length}{" "}
+                {campaignRuns.length === 1 ? "run" : "runs"}
+              </Badge>
             ) : null}
           </div>
+
+          {activeRun ? (
+            <div
+              className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3"
+              role="status"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium">Active Run</span>
+                <RunStatus status={activeRun.status} />
+                <span className="text-muted-foreground text-xs">
+                  Started{" "}
+                  {formatDate(activeRun.started_at ?? activeRun.created_at)}
+                </span>
+              </div>
+              <Link
+                className={cn(
+                  buttonVariants({ size: "sm", variant: "outline" }),
+                )}
+                href={`/research/${activeRun.run_id}`}
+              >
+                Open active Run
+                <ArrowRight aria-hidden="true" data-icon="inline-end" />
+              </Link>
+            </div>
+          ) : null}
+
           {runsQuery.isPending ? (
             <p role="status" className="text-muted-foreground mt-4 text-sm">
-              Loading history…
+              Loading Research Run history…
             </p>
           ) : runsQuery.isError ? (
             <div role="alert" className="mt-4">
               <p className="text-destructive text-sm">
-                Research history could not be loaded.
+                Research Run history could not be loaded.
               </p>
               <Button
                 className="mt-2"
@@ -231,57 +342,106 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
                 size="sm"
                 variant="outline"
               >
-                Try again
+                <RefreshCw aria-hidden="true" data-icon="inline-start" />
+                Retry history
               </Button>
             </div>
           ) : campaignRuns.length === 0 ? (
             <p className="text-muted-foreground mt-4 text-sm">
-              No runs yet. Start research to create the first run.
+              No Research Runs yet. Start Research to create the first
+              execution.
             </p>
           ) : (
-            <ul className="mt-4 divide-y">
-              {[...campaignRuns]
-                .sort((a, b) =>
-                  (b.started_at || b.created_at).localeCompare(
-                    a.started_at || a.created_at,
-                  ),
-                )
-                .map((run) => (
-                  <li
-                    className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
-                    key={run.run_id}
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-mono text-xs">{run.run_id}</p>
-                      <p className="text-muted-foreground mt-1 text-xs">
-                        Started {formatDate(run.started_at || run.created_at)}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <RunStatus status={run.status} />
-                      <Link
-                        aria-label={`Open research run ${run.run_id}`}
-                        className={cn(
-                          buttonVariants({ size: "icon-sm", variant: "ghost" }),
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[700px] text-left text-sm">
+                <thead className="text-muted-foreground border-b text-xs">
+                  <tr>
+                    <th className="px-3 py-2 font-medium" scope="col">
+                      Run date and time
+                    </th>
+                    <th className="px-3 py-2 font-medium" scope="col">
+                      Run status
+                    </th>
+                    <th className="px-3 py-2 font-medium" scope="col">
+                      Outcomes
+                    </th>
+                    <th className="px-3 py-2 font-medium" scope="col">
+                      Duration
+                    </th>
+                    <th className="px-3 py-2" scope="col">
+                      Results
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {campaignRuns.map((run) => (
+                    <tr key={run.run_id}>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        {formatDate(run.started_at ?? run.created_at)}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="space-y-1">
+                          <span className="text-muted-foreground block text-[10px] tracking-wide uppercase">
+                            Run
+                          </span>
+                          <RunStatus status={run.status} />
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        {run.summary.researched === 0 &&
+                        !isTerminalRunStatus(run.status) ? (
+                          <span className="text-muted-foreground text-xs">
+                            Awaiting results
+                          </span>
+                        ) : (
+                          <div className="tabular-nums">
+                            <p>{run.summary.researched} researched</p>
+                            <p className="text-muted-foreground mt-1 text-xs">
+                              {run.summary.qualified} qualified ·{" "}
+                              {run.summary.not_qualified} not qualified ·{" "}
+                              {run.summary.insufficient_evidence} insufficient
+                            </p>
+                          </div>
                         )}
-                        href={`/research/${run.run_id}`}
-                      >
-                        <ArrowRight aria-hidden="true" />
-                      </Link>
-                      {isTerminalRunStatus(run.status) ? (
-                        <DeleteRunAction runId={run.run_id} />
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-            </ul>
+                      </td>
+                      <td className="text-muted-foreground px-3 py-3 whitespace-nowrap">
+                        {formatRunDuration(
+                          run.started_at,
+                          run.completed_at,
+                          run.status,
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          <Link
+                            aria-label={`Open results for run started ${formatDate(
+                              run.started_at ?? run.created_at,
+                            )}`}
+                            className={cn(
+                              buttonVariants({
+                                size: "sm",
+                                variant: "ghost",
+                              }),
+                            )}
+                            href={`/research/${run.run_id}`}
+                          >
+                            Open results
+                            <ArrowRight
+                              aria-hidden="true"
+                              data-icon="inline-end"
+                            />
+                          </Link>
+                          {isTerminalRunStatus(run.status) ? (
+                            <DeleteRunAction runId={run.run_id} />
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
-          <Link
-            className="text-primary mt-4 inline-flex text-xs underline-offset-2 hover:underline"
-            href="/research"
-          >
-            View all Research Runs
-          </Link>
         </section>
       </div>
     </section>
@@ -292,7 +452,7 @@ function BackToCampaigns() {
   return (
     <Link
       className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm"
-      href="/campaigns"
+      href="/research"
     >
       <ArrowLeft aria-hidden="true" className="size-4" />
       Campaigns
@@ -367,12 +527,24 @@ function sizeRows(campaign: Campaign) {
   return rows;
 }
 
-function hasCriteria(campaign: Campaign) {
-  return Boolean(
-    campaign.target_market ||
-    campaign.industry ||
-    campaign.keywords.length ||
-    campaign.company_size?.min != null ||
-    campaign.company_size?.max != null,
-  );
+function formatRunDuration(
+  startedAt: string | null,
+  completedAt: string | null,
+  status: string,
+): string {
+  if (!completedAt) {
+    return isTerminalRunStatus(status) ? "Unavailable" : "In progress";
+  }
+  if (!startedAt) return "Unavailable";
+
+  const durationMs = Date.parse(completedAt) - Date.parse(startedAt);
+  if (!Number.isFinite(durationMs) || durationMs < 0) return "Unavailable";
+
+  const totalSeconds = Math.round(durationMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
 }

@@ -1,5 +1,5 @@
-import { ResearchRunsPage } from "@/features/research/components/runs/research-runs-page";
+import { CampaignsPage } from "@/features/research/components/campaigns/campaigns-page";
 
 export default function ResearchPage() {
-  return <ResearchRunsPage />;
+  return <CampaignsPage />;
 }

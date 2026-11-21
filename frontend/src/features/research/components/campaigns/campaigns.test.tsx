@@ -15,6 +15,7 @@ import { CampaignsPage } from "@/features/research/components/campaigns/campaign
 import type { Campaign } from "@/features/research/api/campaigns";
 import { ApiError } from "@/lib/api/client";
 import { campaignsQueryKey } from "@/features/research/query-keys";
+import { formatDate } from "@/lib/format-date";
 import type { ResearchRunListItem } from "@/features/research/api/research";
 
 const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
@@ -65,7 +66,11 @@ function renderWithQuery(ui: React.ReactNode) {
   };
 }
 
-function campaign(id: string, name: string): Campaign {
+function campaign(
+  id: string,
+  name: string,
+  overrides: Partial<Campaign> = {},
+): Campaign {
   return {
     id,
     name,
@@ -83,6 +88,7 @@ function campaign(id: string, name: string): Campaign {
     created_at: "2026-10-05T00:00:00Z",
     updated_at: "2026-10-05T00:00:00Z",
     sealed_at: null,
+    ...overrides,
   };
 }
 
@@ -90,6 +96,7 @@ function run(
   runId: string,
   campaignId: string,
   status: string = "COMPLETED",
+  overrides: Partial<ResearchRunListItem> = {},
 ): ResearchRunListItem {
   return {
     run_id: runId,
@@ -97,22 +104,28 @@ function run(
     created_at: "2026-10-05T01:00:00Z",
     started_at: "2026-10-05T01:00:00Z",
     completed_at: "2026-10-05T01:10:00Z",
+    ...overrides,
     campaign: {
       id: campaignId,
       name: "Fintech",
       target_count: 5,
       max_companies_to_research: 10,
+      ...overrides.campaign,
     },
     summary: {
       researched: 2,
       qualified: 1,
       not_qualified: 1,
       insufficient_evidence: 0,
+      ...overrides.summary,
     },
   };
 }
 
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  mockListRuns.mockResolvedValue([]);
+});
 afterEach(() => cleanup());
 
 describe("CampaignsPage", () => {
@@ -134,8 +147,96 @@ describe("CampaignsPage", () => {
       screen.getByRole("link", { name: "Create Campaign" }),
     ).toHaveAttribute("href", "/campaigns/new");
     expect(
+      screen.getByRole("navigation", { name: "Research sections" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Campaigns" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "All Runs" })).toHaveAttribute(
+      "href",
+      "/research/runs",
+    );
+    expect(
       screen.getByRole("button", { name: "Delete Campaign campaign-a" }),
     ).toHaveClass("text-destructive");
+  });
+
+  it("shows Campaign configuration and separate latest Run activity", async () => {
+    mockListCampaigns.mockResolvedValue([
+      campaign("campaign-a", "Australian Fintech", { status: "DRAFT" }),
+    ]);
+    mockListRuns.mockResolvedValue([
+      run("run-old", "campaign-a", "COMPLETED", {
+        started_at: "2026-10-05T01:00:00Z",
+        created_at: "2026-10-05T01:00:00Z",
+      }),
+      run("run-new", "campaign-a", "FAILED", {
+        started_at: "2026-10-06T01:00:00Z",
+        created_at: "2026-10-06T01:00:00Z",
+        summary: {
+          researched: 4,
+          qualified: 2,
+          not_qualified: 1,
+          insufficient_evidence: 1,
+        },
+      }),
+    ]);
+
+    renderWithQuery(<CampaignsPage />);
+    const row = await screen.findByRole("row", { name: /Australian Fintech/ });
+
+    expect(
+      within(row).getByText("Find Australian fintech companies."),
+    ).toBeInTheDocument();
+    expect(within(row).getByText("Australia")).toBeInTheDocument();
+    expect(within(row).getByText("Fin tech")).toBeInTheDocument();
+    expect(within(row).getByText("5 qualified target")).toBeInTheDocument();
+    expect(within(row).getByText("Up to 10 researched")).toBeInTheDocument();
+    expect(within(row).getByText("DRAFT")).toBeInTheDocument();
+    expect(within(row).getByText("FAILED")).toBeInTheDocument();
+    expect(within(row).getByText("2 runs")).toBeInTheDocument();
+    expect(
+      within(row).getByText(formatDate("2026-10-06T01:00:00Z")),
+    ).toBeInTheDocument();
+    expect(within(row).queryByText("campaign-a")).not.toBeInTheDocument();
+    expect(
+      within(row).getByRole("button", { name: "Delete Campaign campaign-a" }),
+    ).toBeDisabled();
+  });
+
+  it("keeps Campaigns visible and does not claim there are no Runs while activity loads", async () => {
+    mockListCampaigns.mockResolvedValue([
+      campaign("campaign-a", "Australian Fintech"),
+    ]);
+    mockListRuns.mockReturnValue(new Promise(() => undefined));
+
+    renderWithQuery(<CampaignsPage />);
+
+    const row = await screen.findByRole("row", { name: /Australian Fintech/ });
+    expect(row).toHaveTextContent("Loading activity…");
+    expect(row).not.toHaveTextContent("No runs yet");
+    expect(
+      screen.getByRole("heading", { name: "Campaigns" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps Campaigns usable and offers retry when Run summaries fail", async () => {
+    mockListCampaigns.mockResolvedValue([
+      campaign("campaign-a", "Australian Fintech"),
+    ]);
+    mockListRuns.mockRejectedValue(new Error("Run service unavailable"));
+
+    renderWithQuery(<CampaignsPage />);
+
+    expect(await screen.findByText("Australian Fintech")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Campaigns are still available",
+    );
+    expect(screen.getByText("Activity unavailable")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Retry activity" }),
+    ).toBeInTheDocument();
   });
 
   it("requires confirmation and cancellation sends no delete request", async () => {
@@ -420,8 +521,28 @@ describe("CampaignDetailsPage", () => {
       campaign("campaign-a", "Australian Fintech"),
     );
     mockListRuns.mockResolvedValue([
-      run("run-a1", "campaign-a"),
-      run("run-a2", "campaign-a", "RUNNING"),
+      run("run-a1", "campaign-a", "COMPLETED", {
+        started_at: "2026-10-05T01:00:00Z",
+        created_at: "2026-10-05T01:00:00Z",
+        completed_at: "2026-10-05T01:10:00Z",
+        summary: {
+          researched: 2,
+          qualified: 1,
+          not_qualified: 1,
+          insufficient_evidence: 0,
+        },
+      }),
+      run("run-a2", "campaign-a", "RUNNING", {
+        started_at: "2026-10-06T01:00:00Z",
+        created_at: "2026-10-06T01:00:00Z",
+        completed_at: null,
+        summary: {
+          researched: 3,
+          qualified: 1,
+          not_qualified: 1,
+          insufficient_evidence: 1,
+        },
+      }),
       run("run-b1", "campaign-b"),
     ]);
     renderWithQuery(<CampaignDetailsPage campaignId="campaign-a" />);
@@ -429,21 +550,35 @@ describe("CampaignDetailsPage", () => {
     expect(
       await screen.findByRole("heading", { name: "Australian Fintech" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("campaign-a")).toBeInTheDocument();
+    expect(screen.queryByText("campaign-a")).not.toBeInTheDocument();
     expect(screen.getByText("Australia")).toBeInTheDocument();
     expect(screen.getByText("Java")).toBeInTheDocument();
     expect(screen.getByText("≥ 500 employees")).toBeInTheDocument();
     expect(screen.getByText("≤ 5000 employees")).toBeInTheDocument();
-    expect(screen.getByText("run-a1")).toBeInTheDocument();
-    expect(screen.getByText("run-a2")).toBeInTheDocument();
-    expect(screen.getAllByText(/Started/)).toHaveLength(2);
-    expect(screen.queryByText("run-b1")).not.toBeInTheDocument();
+    expect(screen.queryByText("run-a1")).not.toBeInTheDocument();
+    expect(screen.queryByText("run-a2")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open active Run" }),
+    ).toHaveAttribute("href", "/research/run-a2");
+    expect(
+      screen.getByRole("button", { name: "Research in progress" }),
+    ).toBeDisabled();
+    const historyRows = screen.getAllByRole("row");
+    expect(historyRows).toHaveLength(3);
+    expect(historyRows[1]).toHaveTextContent("Oct 6");
+    expect(historyRows[1]).toHaveTextContent("3 researched");
+    expect(historyRows[1]).toHaveTextContent("1 qualified");
+    expect(historyRows[1]).toHaveTextContent("In progress");
+    expect(historyRows[2]).toHaveTextContent("Oct 5");
+    expect(historyRows[2]).toHaveTextContent("10m 0s");
     expect(screen.getByRole("link", { name: "Edit Campaign" })).toHaveAttribute(
       "href",
       "/campaigns/campaign-a/edit",
     );
     expect(
-      screen.getByRole("link", { name: "Open research run run-a1" }),
+      screen.getByRole("link", {
+        name: `Open results for run started ${formatDate("2026-10-05T01:00:00Z")}`,
+      }),
     ).toHaveAttribute("href", "/research/run-a1");
     expect(
       screen.getByRole("button", { name: "Delete run run-a1" }),
@@ -453,7 +588,7 @@ describe("CampaignDetailsPage", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Delete Campaign campaign-a" }),
-    ).toBeInTheDocument();
+    ).toBeDisabled();
   });
 
   it("requires confirmation and navigates to the list after detail deletion", async () => {
@@ -476,7 +611,7 @@ describe("CampaignDetailsPage", () => {
     await waitFor(() =>
       expect(mockDeleteCampaign).toHaveBeenCalledWith("campaign-a"),
     );
-    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/campaigns"));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/research"));
   });
 
   it("keeps Campaign detail visible and reports a lifecycle conflict", async () => {
@@ -519,6 +654,33 @@ describe("CampaignDetailsPage", () => {
     expect(
       screen.queryByRole("link", { name: "Edit Campaign" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Research criteria are locked after the first execution.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the workspace available when Run history fails and blocks unsafe starts", async () => {
+    mockGetCampaign.mockResolvedValue(campaign("campaign-a", "Fintech"));
+    mockListRuns.mockRejectedValue(new Error("Run service unavailable"));
+    renderWithQuery(<CampaignDetailsPage campaignId="campaign-a" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Fintech" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "history could not be loaded",
+    );
+    expect(
+      screen.getByRole("button", { name: "Run status unavailable" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Retry history" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Research configuration" }),
+    ).toBeInTheDocument();
   });
 
   it("prevents a duplicate start after accepting a queued run", async () => {

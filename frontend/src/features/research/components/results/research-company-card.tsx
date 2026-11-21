@@ -18,6 +18,11 @@ export function ResearchCompanyCard({
   selected?: boolean;
   onSelectedChange?: (selected: boolean) => void;
 }) {
+  const evidenceCount = company.criteria.reduce(
+    (count, criterion) => count + criterion.evidence.length,
+    0,
+  );
+  const websiteHref = safeExternalHref(company.website);
   return (
     <article className="rounded-lg border p-4 sm:p-5">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
@@ -36,15 +41,21 @@ export function ResearchCompanyCard({
             ) : null}
             <h3 className="text-base font-semibold">{company.name}</h3>
             {company.website ? (
-              <a
-                className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 truncate text-xs"
-                href={company.website}
-                rel="noreferrer"
-                target="_blank"
-              >
-                {company.website}
-                <ExternalLink aria-hidden="true" className="size-3" />
-              </a>
+              websiteHref ? (
+                <a
+                  className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 truncate text-xs"
+                  href={websiteHref}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {company.website}
+                  <ExternalLink aria-hidden="true" className="size-3" />
+                </a>
+              ) : (
+                <span className="text-muted-foreground max-w-full text-xs break-all">
+                  {company.website}
+                </span>
+              )
             ) : null}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -55,6 +66,11 @@ export function ResearchCompanyCard({
           </p>
           <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs">
             <SummaryCounts label="Criteria" counts={company.summary} />
+            <span className="text-muted-foreground">
+              {evidenceCount > 0
+                ? `${evidenceCount} evidence ${evidenceCount === 1 ? "item" : "items"}`
+                : "No linked evidence"}
+            </span>
           </div>
         </div>
       </div>
@@ -104,7 +120,7 @@ function CriterionDisclosure({ criterion }: { criterion: CriterionResult }) {
         : CircleHelp;
   return (
     <details className="group rounded-md border px-3 py-2">
-      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-sm [&::-webkit-details-marker]:hidden">
+      <summary className="focus-visible:ring-ring flex cursor-pointer list-none flex-wrap items-center gap-2 rounded-sm text-sm focus-visible:ring-2 focus-visible:outline-none [&::-webkit-details-marker]:hidden">
         <Icon
           aria-hidden="true"
           className={cn(
@@ -118,12 +134,12 @@ function CriterionDisclosure({ criterion }: { criterion: CriterionResult }) {
         />
         <span className="font-medium">{criterionLabel(criterion)}</span>
         <Badge variant="outline">{criterion.status}</Badge>
-        <span className="text-muted-foreground text-xs">
+        <span className="text-muted-foreground max-w-full text-xs">
           {criterionExplanation(criterion.status)}
         </span>
         <span className="text-muted-foreground ml-auto text-xs">Details</span>
       </summary>
-      <div className="mt-3 border-t pt-3">
+      <div className="mt-3 border-t pt-3 break-words">
         <h5 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
           Qualification reason
         </h5>
@@ -161,26 +177,42 @@ function CriterionDisclosure({ criterion }: { criterion: CriterionResult }) {
             <h5 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
               Evidence for this criterion
             </h5>
-            {criterion.evidence.map((evidence) => (
-              <div
-                className="bg-muted/40 rounded-md p-3 text-sm"
-                key={evidence.id}
-              >
-                <p className="font-medium">{evidence.claim}</p>
-                <p className="mt-1 whitespace-pre-wrap">
-                  “{evidence.evidence_text}”
-                </p>
-                <a
-                  className="text-primary mt-2 inline-flex items-center gap-1 text-xs underline underline-offset-2"
-                  href={evidence.source_url}
-                  rel="noreferrer"
-                  target="_blank"
+            {criterion.evidence.map((evidence) => {
+              const sourceHref = safeExternalHref(evidence.source_url);
+              return (
+                <div
+                  className="bg-muted/40 rounded-md p-3 text-sm"
+                  key={evidence.id}
                 >
-                  {evidence.source_title || sourceHost(evidence.source_url)}
-                  <ExternalLink aria-hidden="true" className="size-3" />
-                </a>
-              </div>
-            ))}
+                  <p className="font-medium break-words">{evidence.claim}</p>
+                  <p className="mt-1 break-words whitespace-pre-wrap">
+                    “{evidence.evidence_text}”
+                  </p>
+                  {sourceHref ? (
+                    <a
+                      className="text-primary mt-2 inline-flex max-w-full items-center gap-1 text-xs break-all underline underline-offset-2"
+                      href={sourceHref}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {evidence.source_title ||
+                        sourceHost(evidence.source_url) ||
+                        "Open source"}
+                      <ExternalLink
+                        aria-hidden="true"
+                        className="size-3 shrink-0"
+                      />
+                    </a>
+                  ) : (
+                    <span className="text-muted-foreground mt-2 block text-xs">
+                      {evidence.source_title
+                        ? `${evidence.source_title} — source link unavailable`
+                        : "Source link unavailable"}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <p className="text-muted-foreground mt-2 text-xs">
@@ -239,10 +271,24 @@ function criterionExplanation(status: CriterionResult["status"]) {
   }
 }
 
-function sourceHost(url: string) {
+function sourceHost(url: string | null | undefined): string | null {
+  const href = safeExternalHref(url);
+  if (!href) return null;
   try {
-    return new URL(url).hostname;
+    return new URL(href).hostname;
   } catch {
-    return url;
+    return null;
+  }
+}
+
+function safeExternalHref(value: string | null | undefined): string | null {
+  if (!value?.trim()) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url.href
+      : null;
+  } catch {
+    return null;
   }
 }

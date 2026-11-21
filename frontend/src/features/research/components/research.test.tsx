@@ -19,10 +19,12 @@ import {
   researchRunResultsQueryKey,
   researchRunsQueryKey,
 } from "@/features/research/query-keys";
+import { formatDate } from "@/lib/format-date";
 
 const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/research/runs",
   useRouter: () => ({ push: mockPush }),
 }));
 
@@ -178,6 +180,14 @@ describe("ResearchRunsPage", () => {
 
     renderWithQuery(<ResearchRunsPage />);
 
+    expect(screen.getByRole("link", { name: "All Runs" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "Campaigns" })).toHaveAttribute(
+      "href",
+      "/research",
+    );
     expect(
       await screen.findByText("Australian Fintech Java Research"),
     ).toBeInTheDocument();
@@ -283,6 +293,24 @@ describe("ResearchResultsPage", () => {
         name: "Australian Fintech Java Research",
       }),
     ).toBeInTheDocument();
+    const breadcrumbs = screen.getByRole("navigation", {
+      name: "Research breadcrumbs",
+    });
+    expect(
+      within(breadcrumbs).getByRole("link", { name: "Research" }),
+    ).toHaveAttribute("href", "/research");
+    expect(
+      within(breadcrumbs).getByRole("link", {
+        name: "Australian Fintech Java Research",
+      }),
+    ).toHaveAttribute("href", "/campaigns/campaign-1");
+    expect(within(breadcrumbs).getByText("Research Run")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByText("Run duration").parentElement).toHaveTextContent(
+      "10m 0s",
+    );
     expect(screen.getAllByText("Australia")).toHaveLength(2);
     expect(screen.getByText("Java")).toBeInTheDocument();
     expect(screen.getByText("≥ 500")).toBeInTheDocument();
@@ -370,7 +398,7 @@ describe("ResearchResultsPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("confirms deletion, clears results, and navigates back to Research Runs", async () => {
+  it("confirms deletion, clears results, and returns to the originating Campaign", async () => {
     mockedGetResults.mockResolvedValue(results("run-a"));
     mockedDeleteRun.mockResolvedValue(undefined);
     const { client } = renderWithQuery(<ResearchResultsPage runId="run-a" />);
@@ -393,11 +421,30 @@ describe("ResearchResultsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete run run-a" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete Run" }));
     await waitFor(() => expect(mockedDeleteRun).toHaveBeenCalledWith("run-a"));
-    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/research"));
+    await waitFor(() =>
+      expect(mockPush).toHaveBeenCalledWith("/campaigns/campaign-1"),
+    );
     expect(
       client.getQueryData(researchRunResultsQueryKey("run-a")),
     ).toBeUndefined();
     expect(invalidate).toHaveBeenCalledWith({ queryKey: researchRunsQueryKey });
+  });
+
+  it("falls back to All Runs after deletion when Campaign context is unavailable", async () => {
+    const runResults = results("run-a");
+    runResults.campaign.id = "";
+    mockedGetResults.mockResolvedValue(runResults);
+    mockedDeleteRun.mockResolvedValue(undefined);
+    renderWithQuery(<ResearchResultsPage runId="run-a" />);
+    await screen.findByRole("heading", {
+      name: "Australian Fintech Java Research",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete run run-a" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Run" }));
+    await waitFor(() =>
+      expect(mockPush).toHaveBeenCalledWith("/research/runs"),
+    );
   });
 
   it("disables detail deletion while pending and keeps the page on failure", async () => {
@@ -458,6 +505,135 @@ describe("ResearchResultsPage", () => {
     );
     expect(screen.getByText("Afterpay")).toBeInTheDocument();
     expect(screen.queryByText("Airwallex")).not.toBeInTheDocument();
+    expect(screen.getByText("Showing 1 of 3 companies")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByText("Airwallex")).toBeInTheDocument();
+    expect(screen.getByText("Showing 3 of 3 companies")).toBeInTheDocument();
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Search companies" }),
+      {
+        target: { value: "pay" },
+      },
+    );
+    expect(screen.getByText("Afterpay")).toBeInTheDocument();
+    expect(screen.queryByText("Airwallex")).not.toBeInTheDocument();
+    expect(screen.getByText("Showing 1 of 3 companies")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByText("Airwallex")).toBeInTheDocument();
+  });
+
+  it("keeps excerpts visible while marking missing and unsafe source links unavailable", async () => {
+    const runResults = results("run-a");
+    runResults.companies[0].website = "javascript:alert(1)";
+    runResults.companies[0].criteria[0].evidence[0].source_url =
+      "data:text/html,unsafe";
+    runResults.companies[0].criteria[0].evidence[0].source_title = null;
+    mockedGetResults.mockResolvedValue(runResults);
+    renderWithQuery(<ResearchResultsPage runId="run-a" />);
+
+    const summary = await screen.findByText("Australia", {
+      selector: "summary span",
+    });
+    const details = summary.closest("details");
+    details?.setAttribute("open", "");
+    expect(details).toHaveTextContent(
+      "Airwallex is an Australian-founded company.",
+    );
+    expect(
+      within(details as HTMLElement).getByText("Source link unavailable"),
+    ).toBeInTheDocument();
+    expect(
+      within(details as HTMLElement).queryByRole("link", {
+        name: /Company profile/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /javascript:/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows provisional running metrics and completion data when available", async () => {
+    const active = results("run-a");
+    active.research_run.status = "RUNNING";
+    active.research_run.completed_at = null;
+    mockedGetResults.mockResolvedValue(active);
+    renderWithQuery(<ResearchResultsPage runId="run-a" />);
+
+    await screen.findByText(
+      "This run is still in progress. Showing the results currently available.",
+    );
+    expect(
+      screen.getByText("Researched so far").parentElement,
+    ).toHaveTextContent("1");
+    expect(screen.getByText("Run duration").parentElement).toHaveTextContent(
+      "In progress",
+    );
+    expect(screen.queryByText(/Completed/)).not.toBeInTheDocument();
+  });
+
+  it("shows queued duration and preserves partial results with failure details", async () => {
+    const failed = results("run-a");
+    failed.research_run.status = "FAILED";
+    failed.research_run.error = "Provider request timed out";
+    failed.research_run.completed_at = null;
+    mockedGetResults.mockResolvedValue(failed);
+    renderWithQuery(<ResearchResultsPage runId="run-a" />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Provider request timed out",
+    );
+    expect(screen.getByText("FAILED")).toBeInTheDocument();
+    expect(screen.getByText("Airwallex")).toBeInTheDocument();
+    expect(
+      screen.getByText("Companies researched before run ended").parentElement,
+    ).toHaveTextContent("1");
+    cleanup();
+
+    const queued = results("run-a");
+    queued.research_run.status = "QUEUED";
+    queued.research_run.started_at = "";
+    queued.research_run.completed_at = null;
+    mockedGetResults.mockResolvedValue(queued);
+    renderWithQuery(<ResearchResultsPage runId="run-a" />);
+    expect(
+      (await screen.findByText("Run duration")).parentElement,
+    ).toHaveTextContent("Queued");
+    expect(screen.getByRole("status")).toHaveTextContent("This run is queued");
+  });
+
+  it("does not render unavailable API metrics as zero", async () => {
+    const partial = results("run-a");
+    partial.summary.researched = undefined as unknown as number;
+    mockedGetResults.mockResolvedValue(partial);
+    renderWithQuery(<ResearchResultsPage runId="run-a" />);
+
+    await screen.findByRole("heading", {
+      name: "Australian Fintech Java Research",
+    });
+    expect(
+      screen.getByText("Companies researched").parentElement,
+    ).toHaveTextContent("Unavailable");
+  });
+
+  it("handles missing or invalid timestamps without throwing", async () => {
+    const runResults = results("run-a");
+    runResults.research_run.started_at = "";
+    runResults.research_run.completed_at = "invalid-date";
+    mockedGetResults.mockResolvedValue(runResults);
+    renderWithQuery(<ResearchResultsPage runId="run-a" />);
+
+    await screen.findByRole("heading", {
+      name: "Australian Fintech Java Research",
+    });
+    expect(
+      screen.getByText(
+        `Execution started ${formatDate("2026-10-01T00:00:00Z")}`,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Run duration").parentElement).toHaveTextContent(
+      "Unavailable",
+    );
+    expect(screen.getByText("Completed Unavailable")).toBeInTheDocument();
   });
 
   it("explains Qualified and mixed MATCH/UNKNOWN outcomes", async () => {

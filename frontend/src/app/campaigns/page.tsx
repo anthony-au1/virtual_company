@@ -1,5 +1,5 @@
-import { CampaignsPage } from "@/features/research/components/campaigns/campaigns-page";
+import { redirect } from "next/navigation";
 
 export default function CampaignsRoute() {
-  return <CampaignsPage />;
+  redirect("/research");
 }

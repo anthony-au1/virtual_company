@@ -13,6 +13,7 @@ import { listResearchRuns } from "@/features/research/api/research";
 import { researchRunsQueryKey } from "@/features/research/query-keys";
 import { formatDate } from "@/lib/format-date";
 import { isTerminalRunStatus } from "@/features/research/status";
+import { ResearchSectionNav } from "@/features/research/components/research-section-nav";
 
 export function ResearchRunsPage() {
   const query = useQuery({
@@ -26,6 +27,7 @@ export function ResearchRunsPage() {
 
   return (
     <section aria-labelledby="page-title" className="mx-auto max-w-6xl">
+      <ResearchSectionNav />
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">
