@@ -169,6 +169,93 @@ test("Campaign workspace shows sealed criteria and links to an active Run", asyn
   );
 });
 
+test("Campaign Run History opens the selected Run and returns to its Campaign", async ({
+  page,
+}) => {
+  const olderRun = {
+    ...run,
+    run_id: "run-old",
+    started_at: "2026-09-30T00:00:00Z",
+    created_at: "2026-09-30T00:00:00Z",
+  };
+  const newerRun = {
+    ...run,
+    run_id: "run-new",
+    started_at: "2026-10-02T00:00:00Z",
+    created_at: "2026-10-02T00:00:00Z",
+    summary: {
+      researched: 4,
+      qualified: 2,
+      not_qualified: 1,
+      insufficient_evidence: 1,
+    },
+  };
+  await mockCampaignDetail(page);
+  await page.route("**/api/backend/api/v1/research-runs", (route) =>
+    route.fulfill({ json: [olderRun, newerRun] }),
+  );
+  await page.route("**/api/backend/api/v1/research-runs/*/results", (route) => {
+    const segments = new URL(route.request().url()).pathname.split("/");
+    const runId = segments.at(-2)!;
+    return route.fulfill({
+      json: {
+        ...runResults,
+        research_run: { ...runResults.research_run, id: runId },
+      },
+    });
+  });
+  await page.goto(`/campaigns/${campaign.id}`);
+
+  const runLinks = page.getByRole("link", {
+    name: /View results for Research Run started/,
+  });
+  await expect(runLinks).toHaveCount(2);
+  await expect(runLinks.nth(0)).toHaveAttribute("href", "/research/run-new");
+  await expect(runLinks.nth(1)).toHaveAttribute("href", "/research/run-old");
+
+  const newerRow = page.getByRole("row").filter({ hasText: "4 researched" });
+  await newerRow.getByText("4 researched").click();
+  await expect(page).toHaveURL(/\/research\/run-new$/);
+  await expect(
+    page.getByRole("heading", { name: "Alpine Payments" }),
+  ).toBeVisible();
+
+  const breadcrumbs = page.getByRole("navigation", {
+    name: "Research breadcrumbs",
+  });
+  const campaignLink = breadcrumbs.getByRole("link", {
+    name: campaign.name,
+    exact: true,
+  });
+  await expect(campaignLink).toHaveAttribute(
+    "href",
+    `/campaigns/${campaign.id}`,
+  );
+  await campaignLink.click();
+  await expect(page).toHaveURL(new RegExp(`/campaigns/${campaign.id}$`));
+  await expect(
+    page.getByRole("heading", { name: campaign.name }),
+  ).toBeVisible();
+});
+
+test("View Results link is keyboard accessible on a narrow viewport", async ({
+  page,
+}) => {
+  await mockCampaignDetail(page);
+  await mockRunList(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/campaigns/${campaign.id}`);
+
+  const link = page.getByRole("link", {
+    name: /View results for Research Run started/,
+  });
+  await expect(link).toBeVisible();
+  await link.focus();
+  await expect(link).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`/research/${run.run_id}$`));
+});
+
 test("Run Results preserve Campaign context, filtering, evidence disclosure, and mobile layout", async ({
   page,
 }) => {

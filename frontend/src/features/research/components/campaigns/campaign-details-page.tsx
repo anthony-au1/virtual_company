@@ -362,75 +362,83 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
                       Duration
                     </th>
                     <th className="px-3 py-2" scope="col">
-                      Results
+                      Actions
                     </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {campaignRuns.map((run) => (
-                    <tr key={run.run_id}>
-                      <td className="px-3 py-3 whitespace-nowrap">
-                        {formatDate(run.started_at ?? run.created_at)}
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="space-y-1">
-                          <span className="text-muted-foreground block text-[10px] tracking-wide uppercase">
-                            Run
-                          </span>
-                          <RunStatus status={run.status} />
-                        </div>
-                      </td>
-                      <td className="px-3 py-3">
-                        {run.summary.researched === 0 &&
-                        !isTerminalRunStatus(run.status) ? (
-                          <span className="text-muted-foreground text-xs">
-                            Awaiting results
-                          </span>
-                        ) : (
-                          <div className="tabular-nums">
-                            <p>{run.summary.researched} researched</p>
-                            <p className="text-muted-foreground mt-1 text-xs">
-                              {run.summary.qualified} qualified ·{" "}
-                              {run.summary.not_qualified} not qualified ·{" "}
-                              {run.summary.insufficient_evidence} insufficient
-                            </p>
-                          </div>
-                        )}
-                      </td>
-                      <td className="text-muted-foreground px-3 py-3 whitespace-nowrap">
-                        {formatRunDuration(
-                          run.started_at,
-                          run.completed_at,
-                          run.status,
-                        )}
-                      </td>
-                      <td className="px-3 py-3 text-right">
-                        <div className="flex justify-end gap-2">
+                  {campaignRuns.map((run) => {
+                    const runStartedAt = formatDate(
+                      run.started_at ?? run.created_at,
+                    );
+                    return (
+                      <tr
+                        className="hover:bg-muted/40 cursor-pointer transition-colors"
+                        key={run.run_id}
+                        onClick={(event) => {
+                          const target = event.target;
+                          if (
+                            target instanceof Element &&
+                            target.closest("a, button")
+                          ) {
+                            return;
+                          }
+                          router.push(`/research/${run.run_id}`);
+                        }}
+                      >
+                        <td className="px-3 py-3 whitespace-nowrap">
+                          <div>{runStartedAt}</div>
                           <Link
-                            aria-label={`Open results for run started ${formatDate(
-                              run.started_at ?? run.created_at,
-                            )}`}
-                            className={cn(
-                              buttonVariants({
-                                size: "sm",
-                                variant: "ghost",
-                              }),
-                            )}
+                            aria-label={`View results for Research Run started ${runStartedAt}`}
+                            className="text-primary focus-visible:ring-ring mt-1 inline-flex items-center gap-1 text-xs font-medium hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
                             href={`/research/${run.run_id}`}
                           >
-                            Open results
-                            <ArrowRight
-                              aria-hidden="true"
-                              data-icon="inline-end"
-                            />
+                            View Results
+                            <ArrowRight aria-hidden="true" className="size-3" />
                           </Link>
-                          {isTerminalRunStatus(run.status) ? (
-                            <DeleteRunAction runId={run.run_id} />
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="space-y-1">
+                            <span className="text-muted-foreground block text-[10px] tracking-wide uppercase">
+                              Run
+                            </span>
+                            <RunStatus status={run.status} />
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          {run.summary.researched === 0 &&
+                          !isTerminalRunStatus(run.status) ? (
+                            <span className="text-muted-foreground text-xs">
+                              Awaiting results
+                            </span>
+                          ) : (
+                            <div className="tabular-nums">
+                              <p>{run.summary.researched} researched</p>
+                              <p className="text-muted-foreground mt-1 text-xs">
+                                {run.summary.qualified} qualified ·{" "}
+                                {run.summary.not_qualified} not qualified ·{" "}
+                                {run.summary.insufficient_evidence} insufficient
+                              </p>
+                            </div>
+                          )}
+                        </td>
+                        <td className="text-muted-foreground px-3 py-3 whitespace-nowrap">
+                          {formatRunDuration(
+                            run.started_at,
+                            run.completed_at,
+                            run.status,
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          <div className="flex justify-end gap-2">
+                            {isTerminalRunStatus(run.status) ? (
+                              <DeleteRunAction runId={run.run_id} />
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

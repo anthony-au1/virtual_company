@@ -569,13 +569,18 @@ describe("CampaignDetailsPage", () => {
     expect(historyRows[1]).toHaveTextContent("In progress");
     expect(historyRows[2]).toHaveTextContent("Oct 5");
     expect(historyRows[2]).toHaveTextContent("10m 0s");
+    expect(
+      within(historyRows[1]).getByRole("link", {
+        name: `View results for Research Run started ${formatDate("2026-10-06T01:00:00Z")}`,
+      }),
+    ).toHaveAttribute("href", "/research/run-a2");
     expect(screen.getByRole("link", { name: "Edit Campaign" })).toHaveAttribute(
       "href",
       "/campaigns/campaign-a/edit",
     );
     expect(
-      screen.getByRole("link", {
-        name: `Open results for run started ${formatDate("2026-10-05T01:00:00Z")}`,
+      within(historyRows[2]).getByRole("link", {
+        name: `View results for Research Run started ${formatDate("2026-10-05T01:00:00Z")}`,
       }),
     ).toHaveAttribute("href", "/research/run-a1");
     expect(
@@ -587,6 +592,64 @@ describe("CampaignDetailsPage", () => {
     expect(
       screen.getByRole("button", { name: "Delete Campaign campaign-a" }),
     ).toBeDisabled();
+  });
+
+  it("opens the selected Run when its history row is clicked", async () => {
+    mockGetCampaign.mockResolvedValue(campaign("campaign-a", "Fintech"));
+    mockListRuns.mockResolvedValue([
+      run("run-new", "campaign-a", "COMPLETED", {
+        started_at: "2026-10-06T01:00:00Z",
+        created_at: "2026-10-06T01:00:00Z",
+      }),
+      run("run-old", "campaign-a", "COMPLETED", {
+        started_at: "2026-10-05T01:00:00Z",
+        created_at: "2026-10-05T01:00:00Z",
+      }),
+    ]);
+    renderWithQuery(<CampaignDetailsPage campaignId="campaign-a" />);
+
+    const rows = await screen.findAllByRole("row");
+    fireEvent.click(within(rows[1]!).getByText("2 researched"));
+
+    expect(mockPush).toHaveBeenCalledWith("/research/run-new");
+    expect(
+      within(rows[1]!).getByRole("link", {
+        name: `View results for Research Run started ${formatDate("2026-10-06T01:00:00Z")}`,
+      }),
+    ).toHaveAttribute("href", "/research/run-new");
+    expect(
+      within(rows[2]!).getByRole("link", {
+        name: `View results for Research Run started ${formatDate("2026-10-05T01:00:00Z")}`,
+      }),
+    ).toHaveAttribute("href", "/research/run-old");
+  });
+
+  it("keeps the visible Results link keyboard focusable and Delete independent", async () => {
+    mockGetCampaign.mockResolvedValue(campaign("campaign-a", "Fintech"));
+    mockListRuns.mockResolvedValue([run("run-a1", "campaign-a")]);
+    renderWithQuery(<CampaignDetailsPage campaignId="campaign-a" />);
+
+    const link = await screen.findByRole("link", {
+      name: `View results for Research Run started ${formatDate("2026-10-05T01:00:00Z")}`,
+    });
+    link.focus();
+    expect(link).toHaveFocus();
+    expect(link).toHaveAttribute("href", "/research/run-a1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete run run-a1" }));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("shows the empty Run History state", async () => {
+    mockGetCampaign.mockResolvedValue(campaign("campaign-a", "Fintech"));
+    mockListRuns.mockResolvedValue([]);
+    renderWithQuery(<CampaignDetailsPage campaignId="campaign-a" />);
+
+    expect(await screen.findByText(/No Research Runs yet/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /View results/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("requires confirmation and navigates to the list after detail deletion", async () => {
