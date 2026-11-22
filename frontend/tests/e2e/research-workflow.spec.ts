@@ -11,7 +11,6 @@ const campaign = {
   company_size: { min: 50, max: 5000 },
   target_count: 5,
   max_companies_to_research: 10,
-  status: "COMPLETED",
   created_at: "2026-10-01T00:00:00Z",
   updated_at: "2026-10-01T00:00:00Z",
   sealed_at: "2026-10-01T00:00:00Z",

@@ -5,6 +5,10 @@
 These tables persist entities owned by the Research workflow.
 Research-scoped table names are created directly by the project's initial schema.
 
+A Campaign is a reusable research configuration. `sealed_at` records that its
+criteria became immutable when research began. Each Research Run is an individual
+execution and owns its own lifecycle status and history.
+
 Table: campaign
 
 | Column                      | PostgreSQL type | Nullable | Description                                        |
@@ -18,18 +22,9 @@ Table: campaign
 | `company_size`              | `JSONB`         |      YES | optional direct integer min/max employee bounds    |
 | `max_companies_to_research` | `INTEGER`       |       NO | campaign research cap; at least `target_count`     |
 | `target_count`              | `INTEGER`       |       NO | desired eventual qualified-target count            |
-| `status`                    | `VARCHAR(30)`   |       NO | campaign status                                    |
 | `created_at`                | `TIMESTAMPTZ`   |       NO | created date                                       |
 | `updated_at`                | `TIMESTAMPTZ`   |       NO | last change date                                   |
 | `sealed_at`                 | `TIMESTAMPTZ`   |      YES | first run start; campaign definition is sealed     |
-
-status:
-
-- DRAFT
-- RUNNING
-- PAUSED
-- COMPLETED
-- FAILED
 
 Indexes:
 

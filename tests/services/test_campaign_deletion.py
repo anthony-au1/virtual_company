@@ -22,7 +22,6 @@ def campaign() -> Campaign:
         name="Fintech",
         target_count=2,
         max_companies_to_research=10,
-        status="DRAFT",
         keywords=["Java"],
         created_at=now,
         updated_at=now,

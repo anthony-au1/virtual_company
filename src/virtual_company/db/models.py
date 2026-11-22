@@ -101,7 +101,6 @@ class Campaign(Base):
     max_companies_to_research: Mapped[int] = mapped_column(
         Integer, nullable=False, default=15, server_default="15"
     )
-    status: Mapped[str] = mapped_column(String(30), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

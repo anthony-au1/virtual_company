@@ -28,7 +28,7 @@ async def test_create_flushes_and_refreshes_without_committing() -> None:
     repository = CampaignRepository(session)
 
     campaign = await repository.create(
-        CampaignCreate(name="APAC SaaS", target_count=25, status="DRAFT")
+        CampaignCreate(name="APAC SaaS", target_count=25)
     )
 
     assert campaign.name == "APAC SaaS"
@@ -45,7 +45,6 @@ async def test_campaign_criteria_survive_repository_and_workflow_loading() -> No
         {
             "name": "Australian Fintech Java Research",
             "target_count": 3,
-            "status": "DRAFT",
             "target_market": "Australia",
             "industry": "fin tech",
             "keywords": ["java", "kafka"],
@@ -71,7 +70,6 @@ async def test_campaign_criteria_survive_repository_and_workflow_loading() -> No
         name="Legacy size bounds",
         target_count=1,
         max_companies_to_research=1,
-        status="DRAFT",
         keywords=[],
         company_size={"min": {"value": 250}},
     )
@@ -87,7 +85,6 @@ async def test_get_list_and_partial_update() -> None:
         name="Original",
         description="Original description",
         target_count=10,
-        status="DRAFT",
     )
     campaign_id = uuid4()
     session.get.return_value = campaign
@@ -115,7 +112,7 @@ async def test_update_returns_none_when_campaign_does_not_exist() -> None:
     session.get.return_value = None
     repository = CampaignRepository(session)
 
-    updated = await repository.update(uuid4(), CampaignUpdate(status="PAUSED"))
+    updated = await repository.update(uuid4(), CampaignUpdate(name="Renamed"))
 
     assert updated is None
     session.flush.assert_not_awaited()

@@ -34,7 +34,6 @@ def upgrade() -> None:
             server_default="15",
             nullable=False,
         ),
-        sa.Column("status", sa.String(30), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

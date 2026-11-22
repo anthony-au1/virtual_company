@@ -6,7 +6,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
-import { CampaignStatusBadge } from "@/features/research/components/campaigns/campaign-status-badge";
 import { RunStatus } from "@/features/research/components/runs/run-status-badge";
 import { isTerminalRunStatus } from "@/features/research/status";
 import { Badge } from "@/components/ui/badge";
@@ -153,12 +152,6 @@ export function CampaignDetailsPage({ campaignId }: { campaignId: string }) {
           </p>
         </div>
         <div className="flex flex-wrap items-start gap-2 lg:justify-end">
-          <div className="flex flex-col gap-1">
-            <span className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
-              Campaign status
-            </span>
-            <CampaignStatusBadge status={campaign.status} />
-          </div>
           <div className="flex flex-col items-end gap-1">
             <div className="flex flex-wrap justify-end gap-2">
               {campaign.sealed_at === null ? (

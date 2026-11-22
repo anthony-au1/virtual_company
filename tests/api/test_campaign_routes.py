@@ -84,7 +84,6 @@ def campaign() -> Campaign:
         name="APAC SaaS",
         target_count=25,
         max_companies_to_research=25,
-        status="DRAFT",
         keywords=[],
         created_at=now,
         updated_at=now,
@@ -98,7 +97,7 @@ def test_create_campaign_returns_created_response() -> None:
 
     response = TestClient(app).post(
         "/api/v1/campaigns",
-        json={"name": "APAC SaaS", "target_count": 25, "status": "DRAFT"},
+        json={"name": "APAC SaaS", "target_count": 25},
     )
 
     assert response.status_code == 201
@@ -108,10 +107,9 @@ def test_create_campaign_returns_created_response() -> None:
     assert service.create_data.max_companies_to_research == 25
     assert (
         service.create_data.model_dump()
-        == CampaignCreate(
-            name="APAC SaaS", target_count=25, status="DRAFT"
-        ).model_dump()
+        == CampaignCreate(name="APAC SaaS", target_count=25).model_dump()
     )
+    assert "status" not in response.json()
 
 
 def test_create_campaign_accepts_flat_criteria() -> None:
@@ -130,7 +128,6 @@ def test_create_campaign_accepts_flat_criteria() -> None:
         json={
             "name": model.name,
             "target_count": model.target_count,
-            "status": model.status,
             "target_market": model.target_market,
             "industry": model.industry,
             "keywords": model.keywords,
@@ -153,7 +150,6 @@ def test_create_campaign_rejects_legacy_technologies_field() -> None:
         json={
             "name": "APAC SaaS",
             "target_count": 25,
-            "status": "DRAFT",
             "technologies": ["Java"],
         },
     )
@@ -170,6 +166,7 @@ def test_campaign_response_flattens_legacy_persisted_company_size() -> None:
 
     assert response.status_code == 200
     assert response.json()["company_size"] == {"min": 500, "max": None}
+    assert "status" not in response.json()
 
 
 def test_campaign_openapi_exposes_company_size_bounds_as_integers() -> None:
@@ -193,6 +190,7 @@ def test_patch_null_clears_nullable_field_and_keeps_omitted_fields_unchanged() -
     assert service.update_data is not None
     assert service.update_data.description is None
     assert service.update_data.model_fields_set == {"description"}
+    assert "status" not in response.json()
 
 
 def test_patch_maps_sealed_definition_to_conflict() -> None:
@@ -256,19 +254,18 @@ def test_campaign_delete_openapi_documents_success_not_found_and_conflict() -> N
     assert "409" in operation["responses"]
 
 
-def test_campaign_status_validation_and_missing_campaign_return_errors() -> None:
-    invalid = TestClient(app).post(
+def test_campaign_status_is_rejected_and_missing_campaign_returns_error() -> None:
+    obsolete_status = TestClient(app).post(
         "/api/v1/campaigns",
-        json={"name": "APAC SaaS", "target_count": 25, "status": "UNKNOWN"},
+        json={"name": "APAC SaaS", "target_count": 25, "status": "DRAFT"},
     )
-    assert invalid.status_code == 422
+    assert obsolete_status.status_code == 422
 
     old_size = TestClient(app).post(
         "/api/v1/campaigns",
         json={
             "name": "APAC SaaS",
             "target_count": 25,
-            "status": "DRAFT",
             "company_size_min": 100,
         },
     )

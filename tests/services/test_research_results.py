@@ -52,7 +52,6 @@ async def test_builds_complete_deterministic_results_and_scopes_evidence() -> No
         company_size={"min": 500},
         target_count=5,
         max_companies_to_research=10,
-        status="COMPLETED",
         created_at=now,
         updated_at=now,
     )
@@ -240,7 +239,6 @@ async def test_deleting_one_terminal_run_removes_only_its_owned_data(
         name="Sealed campaign",
         target_count=1,
         max_companies_to_research=10,
-        status="COMPLETED",
         keywords=[],
         sealed_at=sealed_at,
     )

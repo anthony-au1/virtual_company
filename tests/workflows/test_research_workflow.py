@@ -363,7 +363,6 @@ def campaign() -> Campaign:
         company_size=None,
         target_count=3,
         max_companies_to_research=15,
-        status="DRAFT",
     )
 
 

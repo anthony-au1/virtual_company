@@ -18,8 +18,6 @@ from virtual_company.domain.research.qualification import (
 )
 from virtual_company.repositories.dtos import CampaignCreate, CampaignUpdate
 
-CampaignStatus = Literal["DRAFT", "RUNNING", "PAUSED", "COMPLETED", "FAILED"]
-
 
 class CompanyQualificationStatus(StrEnum):
     """Stable public OpenAPI enum for Research company qualification status."""
@@ -36,7 +34,6 @@ class CampaignCreateRequest(CampaignCreate):
 
     name: str = Field(max_length=255)
     target_count: int
-    status: CampaignStatus
     description: str | None = None
     target_market: str | None = Field(default=None, max_length=255)
     industry: str | None = Field(default=None, max_length=255)
@@ -51,7 +48,6 @@ class CampaignUpdateRequest(CampaignUpdate):
 
     name: str | None = Field(default=None, max_length=255)
     target_count: int | None = None
-    status: CampaignStatus | None = None
     description: str | None = None
     target_market: str | None = Field(default=None, max_length=255)
     industry: str | None = Field(default=None, max_length=255)
@@ -65,7 +61,6 @@ class CampaignUpdateRequest(CampaignUpdate):
         for field_name in {
             "name",
             "target_count",
-            "status",
             "keywords",
         } & self.model_fields_set:
             if getattr(self, field_name) is None:
@@ -232,7 +227,6 @@ class CampaignResponse(BaseModel):
     company_size: CompanySizeCriteria | None
     target_count: int
     max_companies_to_research: int
-    status: str
     created_at: datetime
     updated_at: datetime
     sealed_at: datetime | None

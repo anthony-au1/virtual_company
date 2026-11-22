@@ -18,7 +18,6 @@ def request(**changes: object) -> CampaignCreateRequest:
         {
             "name": "Australian Fintech Java Research",
             "target_count": 3,
-            "status": "DRAFT",
             "target_market": "Australia",
             "industry": "FinTech",
             "keywords": ["Java", "Spring", "Kafka"],

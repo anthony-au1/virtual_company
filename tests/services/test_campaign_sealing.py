@@ -20,7 +20,6 @@ def campaign(*, sealed_at: datetime | None = None) -> Campaign:
         name="Fintech",
         target_count=2,
         max_companies_to_research=10,
-        status="DRAFT",
         keywords=["Java"],
         created_at=now,
         updated_at=now,
@@ -64,7 +63,7 @@ async def test_campaign_definition_is_editable_before_first_run() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sealed_campaign_rejects_definition_changes_but_allows_status() -> None:
+async def test_sealed_campaign_rejects_definition_changes() -> None:
     model = campaign(sealed_at=datetime.now(UTC))
     service = service_with(model)
 
@@ -72,6 +71,4 @@ async def test_sealed_campaign_rejects_definition_changes_but_allows_status() ->
         await service.update(model.id, CampaignUpdate(keywords=["Go"]))
     service._campaigns.update.assert_not_awaited()
 
-    result = await service.update(model.id, CampaignUpdate(status="PAUSED"))
-    assert result is model
-    service._campaigns.update.assert_awaited_once()
+    service._campaigns.update.assert_not_awaited()

@@ -16,7 +16,6 @@ class CampaignCreate(BaseModel):
     name: str
     target_count: int
     max_companies_to_research: int = Field(default=15, ge=1)
-    status: str
     description: str | None = None
     target_market: str | None = None
     industry: str | None = None
@@ -51,7 +50,6 @@ class CampaignUpdate(BaseModel):
     company_size: CompanySizeCriteria | None = None
     target_count: int | None = None
     max_companies_to_research: int | None = Field(default=None, ge=1)
-    status: str | None = None
 
 
 class ResearchCompanyCreate(BaseModel):

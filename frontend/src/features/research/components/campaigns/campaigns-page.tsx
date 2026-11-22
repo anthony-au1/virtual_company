@@ -6,7 +6,6 @@ import Link from "next/link";
 import { useMemo } from "react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
-import { CampaignStatusBadge } from "@/features/research/components/campaigns/campaign-status-badge";
 import { DeleteCampaignAction } from "@/features/research/components/campaigns/delete-campaign-action";
 import { RunStatus } from "@/features/research/components/runs/run-status-badge";
 import { ResearchSectionNav } from "@/features/research/components/research-section-nav";
@@ -135,7 +134,7 @@ export function CampaignsPage() {
           ) : (
             <div className="overflow-hidden rounded-lg border">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[900px] text-left text-sm">
+                <table className="w-full min-w-[760px] text-left text-sm">
                   <thead className="bg-muted/50 text-muted-foreground border-b text-xs">
                     <tr>
                       <th className="px-4 py-3 font-medium" scope="col">
@@ -146,9 +145,6 @@ export function CampaignsPage() {
                       </th>
                       <th className="px-4 py-3 font-medium" scope="col">
                         Research configuration
-                      </th>
-                      <th className="px-4 py-3 font-medium" scope="col">
-                        Campaign status
                       </th>
                       <th className="px-4 py-3 font-medium" scope="col">
                         Latest Research Run
@@ -202,14 +198,6 @@ export function CampaignsPage() {
                                 Up to {campaign.max_companies_to_research}{" "}
                                 researched
                               </p>
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="space-y-1">
-                                <span className="text-muted-foreground block text-[10px] tracking-wide uppercase">
-                                  Campaign
-                                </span>
-                                <CampaignStatusBadge status={campaign.status} />
-                              </div>
                             </td>
                             <td className="px-4 py-3">
                               {runsQuery.isPending ? (

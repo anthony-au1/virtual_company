@@ -84,7 +84,6 @@ function campaign(
     },
     target_count: 5,
     max_companies_to_research: 10,
-    status: "DRAFT",
     created_at: "2026-10-05T00:00:00Z",
     updated_at: "2026-10-05T00:00:00Z",
     sealed_at: null,
@@ -164,7 +163,7 @@ describe("CampaignsPage", () => {
 
   it("shows Campaign configuration and separate latest Run activity", async () => {
     mockListCampaigns.mockResolvedValue([
-      campaign("campaign-a", "Australian Fintech", { status: "DRAFT" }),
+      campaign("campaign-a", "Australian Fintech"),
     ]);
     mockListRuns.mockResolvedValue([
       run("run-old", "campaign-a", "COMPLETED", {
@@ -193,7 +192,7 @@ describe("CampaignsPage", () => {
     expect(within(row).getByText("Fin tech")).toBeInTheDocument();
     expect(within(row).getByText("5 qualified target")).toBeInTheDocument();
     expect(within(row).getByText("Up to 10 researched")).toBeInTheDocument();
-    expect(within(row).getByText("DRAFT")).toBeInTheDocument();
+    expect(within(row).queryByText("DRAFT")).not.toBeInTheDocument();
     expect(within(row).getByText("FAILED")).toBeInTheDocument();
     expect(within(row).getByText("2 runs")).toBeInTheDocument();
     expect(
@@ -481,7 +480,6 @@ describe("CampaignFormPage", () => {
         description: "",
         target_count: 7,
         max_companies_to_research: 15,
-        status: "DRAFT",
         target_market: "Australia",
         industry: "Fin tech",
         keywords: ["Java", "Kafka"],

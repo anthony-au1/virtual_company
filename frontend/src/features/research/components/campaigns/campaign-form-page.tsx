@@ -151,7 +151,6 @@ export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
         }
       : {
           ...commonPayload,
-          status: "DRAFT",
           ...(values.target_market.trim()
             ? { target_market: values.target_market.trim() }
             : {}),
@@ -197,7 +196,7 @@ export function CampaignFormPage({ campaignId }: { campaignId?: string } = {}) {
     <section aria-labelledby="page-title" className="mx-auto max-w-3xl">
       <Link
         className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-sm"
-          href="/research"
+        href="/research"
       >
         <ArrowLeft aria-hidden="true" className="size-4" />
         Campaigns

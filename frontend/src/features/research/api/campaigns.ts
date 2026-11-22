@@ -1,7 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
 
-export type CampaignStatus =
-  "DRAFT" | "RUNNING" | "PAUSED" | "COMPLETED" | "FAILED";
 export type Campaign = {
   id: string;
   name: string;
@@ -15,7 +13,6 @@ export type Campaign = {
   } | null;
   target_count: number;
   max_companies_to_research: number;
-  status: CampaignStatus;
   created_at: string;
   updated_at: string;
   sealed_at: string | null;
@@ -33,7 +30,6 @@ export type CreateCampaignPayload = {
   } | null;
   target_count: number;
   max_companies_to_research: number;
-  status: "DRAFT";
 };
 
 export type UpdateCampaignPayload = {

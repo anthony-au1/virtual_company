@@ -211,8 +211,8 @@ WEB_SEARCH_PROVIDER=exa
 EXA_API_KEY=...
 ```
 
-For a manual comparison, use equivalent campaigns such as Australian fintech companies
-(Java, Spring, Spring Boot; 100–5000 employees; target 10), then inspect search result
+For a manual comparison, use equivalent campaigns such as Australian fintech companies (Java, Spring, Spring Boot;
+100–5000 employees; target 10), then inspect search result
 quality, discovered companies, workflow latency, and provider spans in tracing.
 
 Company-specific source discovery runs after initial companies are persisted. For a manual
@@ -236,8 +236,8 @@ Research qualification has four stages:
 3. **Criterion evaluation:** application code deterministically evaluates the validated facts
    against each criterion. Company-size bounds are compared against validated employee-count
    facts; categorical facts are checked against their configured subject.
-4. **Status aggregation:** application code calculates the overall status from the individual
-   criterion results after company investigations finish.
+4. **Status aggregation:** application code calculates the overall qualification
+   status from the individual criterion results after company investigations finish.
 
 Configured campaign fields produce independent qualification criteria:
 
@@ -252,10 +252,10 @@ when evidence supports it, `MISMATCH` when evidence establishes a contradiction,
 when available evidence is insufficient to establish either outcome. `UNKNOWN` is not the same
 as `MISMATCH`.
 
-| Criterion results | Overall status |
-|---|---|
-| Every criterion is `MATCH` | `QUALIFIED` |
-| At least one criterion is `MISMATCH` | `NOT_QUALIFIED` |
+| Criterion results                         | Overall status          |
+|-------------------------------------------|-------------------------|
+| Every criterion is `MATCH`                | `QUALIFIED`             |
+| At least one criterion is `MISMATCH`      | `NOT_QUALIFIED`         |
 | No `MISMATCH`, but at least one `UNKNOWN` | `INSUFFICIENT_EVIDENCE` |
 
 For example, a company with eight matches, no mismatches, and two unknowns is

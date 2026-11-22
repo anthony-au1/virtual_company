@@ -27,7 +27,6 @@ async def test_list_with_summary_uses_one_grouped_query() -> None:
         id=run.campaign_id,
         name="Australian Fintech",
         target_count=5,
-        status="COMPLETED",
         keywords=[],
     )
     result_proxy = MagicMock()
