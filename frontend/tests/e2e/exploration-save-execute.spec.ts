@@ -179,6 +179,20 @@ test("Save & Execute creates the Run, queues it, and opens its details", async (
     "**/api/backend/api/v1/explorations/exploration-1/obligations",
     (route) => route.fulfill({ json: [] }),
   );
+  await page.route(
+    "**/api/backend/api/v1/explorations/exploration-1",
+    (route) =>
+      route.fulfill({
+        json: {
+          id: "exploration-1",
+          name: "Australian market scan",
+          business_context: "Assess the Australian market.",
+          max_obligations: 10,
+          created_at: "2026-11-01T09:00:00Z",
+          updated_at: "2026-11-01T09:00:00Z",
+        },
+      }),
+  );
 
   await page.goto("/explorations/exploration-1/runs/new");
   const runRows = page.locator("tbody tr");
@@ -203,5 +217,26 @@ test("Save & Execute creates the Run, queues it, and opens its details", async (
   await expect(
     page.getByRole("link", { name: "Source Research Run" }),
   ).toHaveAttribute("href", "/research/source-run");
+
+  await page.getByRole("link", { name: "Back to Exploration" }).click();
+  await expect(page).toHaveURL("/explorations/exploration-1");
+  const viewResults = page.getByRole("link", {
+    name: "View Results for Run 1 from Australian Fintech",
+  });
+  await expect(viewResults).toHaveAttribute(
+    "href",
+    "/explorations/exploration-1/runs/exploration-run-1",
+  );
+
+  await page.getByText("Research Run from Australian Fintech").click();
+  await expect(page).toHaveURL(
+    "/explorations/exploration-1/runs/exploration-run-1",
+  );
+  await page.getByRole("link", { name: "Back to Exploration" }).click();
+  await viewResults.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(
+    "/explorations/exploration-1/runs/exploration-run-1",
+  );
   expect(sequence).toEqual(["create", "execute"]);
 });

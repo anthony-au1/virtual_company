@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Plus, Pencil, RefreshCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, Plus, Pencil, RefreshCw } from "lucide-react";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
@@ -176,37 +176,41 @@ export function ExplorationDetailsPage({
         ) : (
           <ul className="mt-4 space-y-2">
             {runsQuery.data.map((run, index) => (
-              <li
-                className="bg-muted/40 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-md px-3 py-3"
-                key={run.id}
-              >
-                <div className="min-w-0">
-                  <Link
-                    className="font-medium hover:underline"
-                    href={`/explorations/${explorationId}/runs/${run.id}`}
-                  >
-                    Run {index + 1}
-                  </Link>
-                  <p className="text-muted-foreground mt-0.5 text-sm">
-                    Research Run from {run.campaign_name}
-                  </p>
-                  <p className="text-muted-foreground mt-1 font-mono text-xs">
-                    Research Run {run.research_run_id}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Badge variant="secondary">{run.status}</Badge>
-                  <span className="text-muted-foreground text-sm">
-                    {run.selected_company_count} selected{" "}
-                    {run.selected_company_count === 1 ? "company" : "companies"}
+              <li className="rounded-md" key={run.id}>
+                <Link
+                  aria-label={`View Results for Run ${index + 1} from ${run.campaign_name}`}
+                  className="bg-muted/40 hover:bg-muted/70 focus-visible:ring-ring flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-md px-3 py-3 transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+                  href={`/explorations/${explorationId}/runs/${run.id}`}
+                >
+                  <span className="min-w-0">
+                    <span className="block font-medium">Run {index + 1}</span>
+                    <span className="text-primary mt-1 inline-flex items-center gap-1 text-xs font-medium hover:underline">
+                      View Results
+                      <ArrowRight aria-hidden="true" className="size-3" />
+                    </span>
+                    <span className="text-muted-foreground mt-1 block text-sm">
+                      Research Run from {run.campaign_name}
+                    </span>
+                    <span className="text-muted-foreground mt-1 block font-mono text-xs">
+                      Research Run {run.research_run_id}
+                    </span>
                   </span>
-                  <span className="text-muted-foreground text-xs">
-                    {run.status === "READY" || run.status === "QUEUED"
-                      ? "Created"
-                      : "Started"}{" "}
-                    {formatDate(run.started_at)}
+                  <span className="flex flex-wrap items-center gap-3">
+                    <Badge variant="secondary">{run.status}</Badge>
+                    <span className="text-muted-foreground text-sm">
+                      {run.selected_company_count} selected{" "}
+                      {run.selected_company_count === 1
+                        ? "company"
+                        : "companies"}
+                    </span>
+                    <span className="text-muted-foreground text-xs">
+                      {run.status === "READY" || run.status === "QUEUED"
+                        ? "Created"
+                        : "Started"}{" "}
+                      {formatDate(run.started_at)}
+                    </span>
                   </span>
-                </div>
+                </Link>
               </li>
             ))}
           </ul>

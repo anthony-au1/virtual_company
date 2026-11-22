@@ -486,6 +486,59 @@ describe("ExplorationDetailsPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("provides one full-row View Results link for every Run status", async () => {
+    const statuses = [
+      "READY",
+      "QUEUED",
+      "RUNNING",
+      "COMPLETED",
+      "PARTIAL",
+      "FAILED",
+      "CANCELLED",
+    ] as const;
+    mockGet.mockResolvedValue(exploration());
+    mockObligations.mockResolvedValue([]);
+    mockRuns.mockResolvedValue(
+      statuses.map((status, index) => ({
+        id: `exploration-run-${index + 1}`,
+        research_run_id: `research-run-${index + 1}`,
+        status,
+        started_at: `2026-10-10T10:0${index}:00Z`,
+        completed_at: status === "COMPLETED" ? "2026-10-10T10:10:00Z" : null,
+        campaign_name: `Research campaign ${index + 1}`,
+        selected_company_count: index + 1,
+      })),
+    );
+
+    renderWithQuery(<ExplorationDetailsPage explorationId="exploration-1" />);
+
+    for (const [index, status] of statuses.entries()) {
+      const runNumber = index + 1;
+      const link = await screen.findByRole("link", {
+        name: `View Results for Run ${runNumber} from Research campaign ${runNumber}`,
+      });
+      const row = link.closest("li");
+      expect(link).toHaveAttribute(
+        "href",
+        `/explorations/exploration-1/runs/exploration-run-${runNumber}`,
+      );
+      expect(within(link).getByText(`Run ${runNumber}`)).toBeInTheDocument();
+      expect(within(link).getByText("View Results")).toBeInTheDocument();
+      expect(
+        within(link).getByText(`Research Run ${`research-run-${runNumber}`}`),
+      ).toBeInTheDocument();
+      expect(within(link).getByText(status)).toBeInTheDocument();
+      expect(
+        within(link).getByText(
+          `${runNumber} selected ${runNumber === 1 ? "company" : "companies"}`,
+        ),
+      ).toBeInTheDocument();
+      expect(within(link).getByText(/Created|Started/)).toBeInTheDocument();
+      expect(row).not.toBeNull();
+      expect(within(row as HTMLElement).getAllByRole("link")).toHaveLength(1);
+    }
+  });
+
   it("treats zero generated obligations as a valid empty state", async () => {
     mockGet.mockResolvedValue(exploration());
     mockObligations.mockResolvedValue([]);
