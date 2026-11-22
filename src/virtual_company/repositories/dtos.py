@@ -138,11 +138,13 @@ class ResearchCompanyQualificationUpsert(BaseModel):
 
 
 class ExplorationCreate(BaseModel):
+    name: str
     business_context: str
     max_obligations: int = 10
 
 
 class ExplorationUpdate(BaseModel):
+    name: str | None = None
     business_context: str | None = None
     max_obligations: int | None = None
 

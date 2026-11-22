@@ -25,6 +25,11 @@ import {
 } from "@/features/exploration/query-keys";
 
 const schema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Enter an Exploration name.")
+    .max(255, "Exploration name cannot exceed 255 characters."),
   business_context: z
     .string()
     .trim()
@@ -38,7 +43,11 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-const defaults: FormValues = { business_context: "", max_obligations: 10 };
+const defaults: FormValues = {
+  name: "",
+  business_context: "",
+  max_obligations: 10,
+};
 const inputClass =
   "border-input bg-background focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2";
 
@@ -63,6 +72,7 @@ export function ExplorationFormPage({
   useEffect(() => {
     if (!explorationQuery.data) return;
     form.reset({
+      name: explorationQuery.data.name,
       business_context: explorationQuery.data.business_context,
       max_obligations: explorationQuery.data.max_obligations,
     });
@@ -143,6 +153,37 @@ export function ExplorationFormPage({
       </div>
 
       <form className="space-y-4" noValidate onSubmit={onSubmit}>
+        <Card>
+          <CardHeader>
+            <CardTitle>Basic information</CardTitle>
+            <p className="text-muted-foreground text-sm">
+              Give this Exploration a short name so it is easy to identify in
+              the list and Workspace.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <label
+              className="mb-1.5 block text-sm font-medium"
+              htmlFor="exploration-name"
+            >
+              Exploration Name
+            </label>
+            <input
+              aria-invalid={Boolean(form.formState.errors.name)}
+              autoComplete="off"
+              className={inputClass}
+              id="exploration-name"
+              maxLength={255}
+              {...form.register("name")}
+            />
+            {form.formState.errors.name ? (
+              <p className="text-destructive mt-1 text-xs" role="alert">
+                {form.formState.errors.name.message}
+              </p>
+            ) : null}
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle>Business context</CardTitle>
@@ -226,8 +267,9 @@ export function ExplorationFormPage({
         {editMode ? (
           <p className="text-muted-foreground rounded-lg border p-3 text-sm">
             Changing the Business Context or Maximum obligations will regenerate
-            the complete research obligation set. Once an Exploration has been
-            run, the backend will prevent changes to these inputs.
+            the complete research obligation set. The Exploration Name can be
+            changed without regenerating obligations. After the first Run, all
+            three fields are locked by the backend.
           </p>
         ) : null}
 
@@ -265,7 +307,7 @@ export function ExplorationFormPage({
           <Button disabled={disabled} type="submit">
             {mutation.isPending
               ? editMode
-                ? "Saving and regenerating obligations…"
+                ? "Saving changes…"
                 : "Creating Exploration and generating obligations…"
               : editMode
                 ? "Save changes"

@@ -2,6 +2,7 @@ import { apiFetch } from "@/lib/api/client";
 
 export type Exploration = {
   id: string;
+  name: string;
   business_context: string;
   max_obligations: number;
   created_at: string;
@@ -99,6 +100,7 @@ export type ExplorationHypothesis = {
 };
 
 export type CreateExplorationPayload = {
+  name: string;
   business_context: string;
   max_obligations: number;
 };

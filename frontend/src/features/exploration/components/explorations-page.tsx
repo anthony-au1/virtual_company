@@ -87,7 +87,7 @@ export function ExplorationsPage() {
             <table className="w-full min-w-[600px] text-left text-sm">
               <thead className="bg-muted/50 text-muted-foreground border-b text-xs">
                 <tr>
-                  <th className="px-4 py-3 font-medium">Business context</th>
+                  <th className="px-4 py-3 font-medium">Exploration name</th>
                   <th className="px-4 py-3 font-medium">Maximum obligations</th>
                   <th className="px-4 py-3 font-medium">Updated</th>
                   <th className="px-4 py-3 text-right font-medium">Actions</th>
@@ -99,12 +99,18 @@ export function ExplorationsPage() {
                   .map((item) => (
                     <tr className="hover:bg-muted/20" key={item.id}>
                       <td className="max-w-2xl px-4 py-3">
-                        <Link
-                          className="font-medium hover:underline"
-                          href={`/explorations/${item.id}`}
-                        >
-                          {preview(item.business_context)}
-                        </Link>
+                        <div>
+                          <Link
+                            aria-label={`Exploration ${item.name}`}
+                            className="font-medium hover:underline"
+                            href={`/explorations/${item.id}`}
+                          >
+                            {preview(item.name)}
+                          </Link>
+                          <p className="text-muted-foreground mt-1 text-xs">
+                            {preview(item.business_context)}
+                          </p>
+                        </div>
                       </td>
                       <td className="px-4 py-3 tabular-nums">
                         {item.max_obligations}
@@ -115,7 +121,7 @@ export function ExplorationsPage() {
                       <td className="px-4 py-3 text-right">
                         <div className="flex justify-end gap-1">
                           <Link
-                            aria-label={`Open Exploration ${preview(item.business_context)}`}
+                            aria-label={`Open Exploration ${item.name}`}
                             className={cn(
                               buttonVariants({ size: "sm", variant: "ghost" }),
                             )}

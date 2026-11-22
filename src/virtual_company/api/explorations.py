@@ -339,7 +339,7 @@ async def create_exploration(
 ) -> ExplorationResponse:
     try:
         exploration = await service.create(
-            payload.business_context, payload.max_obligations
+            payload.name, payload.business_context, payload.max_obligations
         )
     except ExplorationObligationGenerationError as error:
         raise HTTPException(

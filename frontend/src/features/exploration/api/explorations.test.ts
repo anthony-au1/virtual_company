@@ -144,6 +144,7 @@ describe("Exploration API", () => {
     );
     await explorationApi.listExplorations();
     await explorationApi.createExploration({
+      name: "Market fit",
       business_context: "context",
       max_obligations: 10,
     });
@@ -166,6 +167,7 @@ describe("Exploration API", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
+          name: "Market fit",
           business_context: "context",
           max_obligations: 10,
         }),

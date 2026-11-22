@@ -73,6 +73,7 @@ class ExplorationCreateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    name: str = Field(max_length=255)
     business_context: str
     max_obligations: int = Field(default=10, ge=1, le=20)
 
@@ -82,11 +83,14 @@ class ExplorationUpdateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    name: str | None = Field(default=None, max_length=255)
     business_context: str | None = None
     max_obligations: int | None = Field(default=None, ge=1, le=20)
 
     @model_validator(mode="after")
     def reject_null_required_fields(self) -> ExplorationUpdateRequest:
+        if "name" in self.model_fields_set and self.name is None:
+            raise ValueError("name cannot be null")
         if (
             "business_context" in self.model_fields_set
             and self.business_context is None
@@ -112,6 +116,7 @@ class ExplorationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    name: str
     business_context: str
     max_obligations: int
     created_at: datetime

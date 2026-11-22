@@ -203,6 +203,7 @@ stores its own lifecycle status.
 | Column             | PostgreSQL type | Nullable | Description                                                 |
 |--------------------|-----------------|---------:|-------------------------------------------------------------|
 | `id`               | UUID            |       NO | Exploration ID                                              |
+| `name`             | VARCHAR(255)    |       NO | User-assigned Exploration name                              |
 | `business_context` | TEXT            |       NO | Purpose/context guiding investigation of Research companies |
 | `max_obligations`  | INTEGER         |       NO | Maximum system-derived obligation count; default `10`, 1–20 |
 | `created_at`       | TIMESTAMPTZ     |       NO | Creation time                                               |
@@ -224,11 +225,12 @@ and creates no obligation rows. If generation fails, creation fails without
 persisting an Exploration. Before the first Exploration run, changing either
 generation input regenerates and replaces the complete obligation set in the
 same transaction as the input update. A failed generation or persistence
-operation leaves the previous inputs and obligations intact. Once any run
-exists, `business_context` and `max_obligations` are immutable. Future run-start
-behavior must establish this lifecycle boundary under the parent Exploration
-row lock, shared with PATCH and DELETE, so start, input updates, and deletion
-cannot race. PATCH requests that repeat the current values are no-ops and do not regenerate
+operation leaves the previous inputs and obligations intact. The Exploration
+name identifies the definition but does not affect obligation generation. Once
+any run exists, the name, `business_context`, and `max_obligations` are immutable.
+Run-start behavior must establish this lifecycle boundary under the parent
+Exploration row lock, shared with PATCH and DELETE, so start, input updates, and
+deletion cannot race. PATCH requests that repeat the current values are no-ops and do not regenerate
 obligations. The generated obligation order is not a guaranteed domain
 property.
 

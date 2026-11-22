@@ -117,12 +117,13 @@ class ExplorationService:
         self._generator = generator or create_configured_obligation_generator()
 
     async def create(
-        self, business_context: str, max_obligations: int = 10
+        self, name: str, business_context: str, max_obligations: int = 10
     ) -> Exploration:
         result = await self._generate(business_context, max_obligations)
         async with self._session.begin():
             exploration = await self._explorations.create(
                 ExplorationCreate(
+                    name=name,
                     business_context=business_context,
                     max_obligations=max_obligations,
                 )
@@ -147,6 +148,7 @@ class ExplorationService:
             if current is None:
                 return None
 
+            name = data.name if "name" in data.model_fields_set else current.name
             business_context = (
                 data.business_context
                 if "business_context" in data.model_fields_set
@@ -157,24 +159,31 @@ class ExplorationService:
                 if "max_obligations" in data.model_fields_set
                 else current.max_obligations
             )
-            inputs_changed = (
+            generation_inputs_changed = (
                 business_context != current.business_context
                 or max_obligations != current.max_obligations
             )
+            any_fields_changed = name != current.name or generation_inputs_changed
 
-            if not inputs_changed:
+            if not any_fields_changed:
                 return await self._explorations.update(exploration_id, data)
 
             if await self._runs.exists_for_exploration(exploration_id):
                 raise ExplorationLifecycleConflictError(
-                    "Exploration business context and maximum obligations cannot "
-                    "change after the Exploration has been run"
+                    "Exploration name, business context, and maximum obligations "
+                    "cannot change after the Exploration has been run"
+                )
+
+            if not generation_inputs_changed:
+                return await self._explorations.update(
+                    exploration_id, ExplorationUpdate(name=name)
                 )
 
             result = await self._generate(business_context, max_obligations)
             updated = await self._explorations.update(
                 exploration_id,
                 ExplorationUpdate(
+                    name=name,
                     business_context=business_context,
                     max_obligations=max_obligations,
                 ),

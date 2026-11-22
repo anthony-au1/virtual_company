@@ -317,6 +317,7 @@ class Exploration(Base):
     id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
     )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     business_context: Mapped[str] = mapped_column(Text, nullable=False)
     max_obligations: Mapped[int] = mapped_column(
         Integer, nullable=False, default=10, server_default="10"

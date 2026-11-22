@@ -227,6 +227,7 @@ def upgrade() -> None:
     op.create_table(
         "exploration",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("business_context", sa.Text(), nullable=False),
         sa.Column("max_obligations", sa.Integer(), server_default="10", nullable=False),
         sa.Column(

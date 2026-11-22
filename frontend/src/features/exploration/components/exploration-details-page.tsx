@@ -95,7 +95,7 @@ export function ExplorationDetailsPage({
             Exploration
           </p>
           <h1 id="page-title" className="text-2xl font-semibold tracking-tight">
-            {contextHeading(exploration.business_context)}
+            {exploration.name}
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
             Updated {formatDate(exploration.updated_at)}
@@ -108,7 +108,7 @@ export function ExplorationDetailsPage({
               disabled
               title={
                 runsQuery.data && runsQuery.data.length > 0
-                  ? "Business Context and obligation settings are locked after the first run."
+                  ? "Exploration Name, Business Context, and obligation settings are locked after the first run."
                   : "Run status is being checked before editing."
               }
               variant="outline"
@@ -313,9 +313,4 @@ function BackToExplorations() {
       Explorations
     </Link>
   );
-}
-
-function contextHeading(value: string): string {
-  const line = value.replace(/\s+/g, " ").trim();
-  return line.length > 90 ? `${line.slice(0, 87)}…` : line;
 }

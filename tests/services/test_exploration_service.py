@@ -44,6 +44,7 @@ class ExplorationRepositoryStub:
     async def create(self, data):
         item = SimpleNamespace(
             id=uuid4(),
+            name=data.name,
             business_context=data.business_context,
             max_obligations=data.max_obligations,
         )
@@ -164,8 +165,9 @@ async def test_create_generates_with_default_and_persists_all_obligations(
     generator = GeneratorStub(result("One", "Two"))
     service, _ = service_factory(generator)
 
-    exploration = await service.create("context")
+    exploration = await service.create("Example", "context")
 
+    assert exploration.name == "Example"
     assert generator.calls == [("context", 10)]
     obligations = await service.list_obligations(exploration.id)
     assert [item.description for item in obligations] == ["One", "Two"]
@@ -176,7 +178,7 @@ async def test_create_uses_explicit_limit_and_empty_result_is_success(service_fa
     generator = GeneratorStub(result())
     service, _ = service_factory(generator)
 
-    exploration = await service.create("context", 4)
+    exploration = await service.create("Example", "context", 4)
 
     assert generator.calls == [("context", 4)]
     assert await service.list_obligations(exploration.id) == []
@@ -189,13 +191,13 @@ async def test_create_generation_or_persistence_failure_leaves_no_exploration(
     generator = GeneratorStub(RuntimeError("provider details"))
     service, session = service_factory(generator)
     with pytest.raises(ExplorationObligationGenerationError):
-        await service.create("context")
+        await service.create("Example", "context")
     assert session.store["explorations"] == {}
 
     service, session = service_factory(GeneratorStub(result("one")))
     session.fail_flush = True
     with pytest.raises(RuntimeError, match="persistence failed"):
-        await service.create("context")
+        await service.create("Example", "context")
     assert session.store["explorations"] == {}
     assert session.store["obligations"] == {}
 
@@ -214,7 +216,7 @@ async def test_changed_inputs_regenerate_once_and_replace_obligations(
 ) -> None:
     generator = GeneratorStub(result("old requirement"), result("new one", "new two"))
     service, _ = service_factory(generator)
-    exploration = await service.create("old", 10)
+    exploration = await service.create("Example", "old", 10)
     old_ids = {item.id for item in await service.list_obligations(exploration.id)}
 
     await service.update(exploration.id, ExplorationUpdate(**patch))
@@ -229,7 +231,7 @@ async def test_changed_inputs_regenerate_once_and_replace_obligations(
 async def test_noop_patch_does_not_generate_or_replace_obligations(service_factory):
     generator = GeneratorStub(result("first"))
     service, _ = service_factory(generator)
-    exploration = await service.create("same", 10)
+    exploration = await service.create("Example", "same", 10)
     before = await service.list_obligations(exploration.id)
 
     await service.update(exploration.id, ExplorationUpdate(max_obligations=10))
@@ -241,10 +243,28 @@ async def test_noop_patch_does_not_generate_or_replace_obligations(service_facto
 
 
 @pytest.mark.asyncio
+async def test_name_only_update_does_not_regenerate_obligations(service_factory):
+    generator = GeneratorStub(result("first"))
+    service, _ = service_factory(generator)
+    exploration = await service.create("Original name", "same")
+    before = await service.list_obligations(exploration.id)
+
+    updated = await service.update(
+        exploration.id, ExplorationUpdate(name="Updated name")
+    )
+
+    assert updated.name == "Updated name"
+    assert generator.calls == [("same", 10)]
+    assert [item.id for item in await service.list_obligations(exploration.id)] == [
+        item.id for item in before
+    ]
+
+
+@pytest.mark.asyncio
 async def test_update_empty_generation_removes_old_obligations(service_factory):
     generator = GeneratorStub(result("first"), result())
     service, _ = service_factory(generator)
-    exploration = await service.create("old")
+    exploration = await service.create("Example", "old")
 
     await service.update(exploration.id, ExplorationUpdate(business_context="new"))
 
@@ -257,7 +277,7 @@ async def test_update_generation_or_persistence_failure_rolls_back(service_facto
         result("old"), RuntimeError("provider details"), result("replacement")
     )
     service, session = service_factory(generator)
-    exploration = await service.create("old")
+    exploration = await service.create("Example", "old")
     old_ids = [item.id for item in await service.list_obligations(exploration.id)]
 
     with pytest.raises(ExplorationObligationGenerationError):
@@ -282,6 +302,7 @@ async def test_update_generation_or_persistence_failure_rolls_back(service_facto
 @pytest.mark.parametrize(
     "patch",
     [
+        {"name": "Changed name"},
         {"business_context": "changed"},
         {"max_obligations": 11},
         {"business_context": "changed", "max_obligations": 11},
@@ -292,7 +313,7 @@ async def test_run_makes_changed_inputs_immutable_but_allows_noop(
 ):
     generator = GeneratorStub(result("first"))
     service, session = service_factory(generator)
-    exploration = await service.create("same", 10)
+    exploration = await service.create("Example", "same", 10)
     session.store["runs"].add(exploration.id)
     original_obligations = await service.list_obligations(exploration.id)
 
@@ -302,7 +323,11 @@ async def test_run_makes_changed_inputs_immutable_but_allows_noop(
         await service.update(exploration.id, ExplorationUpdate(**patch))
     assert len(generator.calls) == 1
     current = await service.get_by_id(exploration.id)
-    assert (current.business_context, current.max_obligations) == ("same", 10)
+    assert (current.name, current.business_context, current.max_obligations) == (
+        "Example",
+        "same",
+        10,
+    )
     assert [item.id for item in await service.list_obligations(exploration.id)] == [
         item.id for item in original_obligations
     ]
@@ -311,7 +336,7 @@ async def test_run_makes_changed_inputs_immutable_but_allows_noop(
 @pytest.mark.asyncio
 async def test_delete_removes_exploration_and_owned_obligations(service_factory):
     service, session = service_factory(GeneratorStub(result("one", "two")))
-    exploration = await service.create("context")
+    exploration = await service.create("Example", "context")
 
     assert await service.delete(exploration.id) is True
     assert await service.get_by_id(exploration.id) is None
@@ -328,7 +353,7 @@ async def test_delete_missing_exploration_returns_false(service_factory):
 @pytest.mark.asyncio
 async def test_delete_after_any_run_conflicts_and_preserves_state(service_factory):
     service, session = service_factory(GeneratorStub(result("owned")))
-    exploration = await service.create("context")
+    exploration = await service.create("Example", "context")
     obligations = await service.list_obligations(exploration.id)
     session.store["runs"].add(exploration.id)
 
@@ -347,7 +372,7 @@ async def test_delete_persistence_failure_rolls_back_parent_and_obligations(
     service_factory,
 ):
     service, session = service_factory(GeneratorStub(result("owned")))
-    exploration = await service.create("context")
+    exploration = await service.create("Example", "context")
     obligations = await service.list_obligations(exploration.id)
     session.store["fail_exploration_delete"] = True
 

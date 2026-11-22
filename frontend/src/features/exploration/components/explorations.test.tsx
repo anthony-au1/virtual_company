@@ -68,9 +68,11 @@ function exploration(
   id = "exploration-1",
   context = "Assess market entry for a payments consultancy",
   max = 10,
+  name = `Exploration ${id}`,
 ): Exploration {
   return {
     id,
+    name,
     business_context: context,
     max_obligations: max,
     created_at: "2026-10-05T00:00:00Z",
@@ -96,8 +98,18 @@ afterEach(() => cleanup());
 describe("ExplorationsPage", () => {
   it("lists Explorations and links to their detail and create routes", async () => {
     mockList.mockResolvedValue([
-      exploration("e1", "Find payment companies in Australia"),
-      exploration("e2", "Understand regulation in New Zealand", 4),
+      exploration(
+        "e1",
+        "Find payment companies in Australia",
+        10,
+        "Australia market scan",
+      ),
+      exploration(
+        "e2",
+        "Understand regulation in New Zealand",
+        4,
+        "New Zealand regulations",
+      ),
     ]);
     renderWithQuery(<ExplorationsPage />);
 
@@ -112,7 +124,7 @@ describe("ExplorationsPage", () => {
     ).toHaveAttribute("href", "/explorations/new");
     expect(
       screen.getByRole("link", {
-        name: "Open Exploration Find payment companies in Australia",
+        name: "Open Exploration Australia market scan",
       }),
     ).toHaveAttribute("href", "/explorations/e1");
     expect(
@@ -124,7 +136,7 @@ describe("ExplorationsPage", () => {
       within(
         screen.getByRole("row", { name: /Understand regulation/ }),
       ).getByRole("link", {
-        name: "Open Exploration Understand regulation in New Zealand",
+        name: "Open Exploration New Zealand regulations",
       }),
     ).toHaveAttribute("href", "/explorations/e2");
     expect(
@@ -138,8 +150,18 @@ describe("ExplorationsPage", () => {
   });
 
   it("confirms row deletion, prevents duplicate submits, and refreshes the list", async () => {
-    const first = exploration("e1", "Find payment companies in Australia");
-    const second = exploration("e2", "Understand regulation in New Zealand", 4);
+    const first = exploration(
+      "e1",
+      "Find payment companies in Australia",
+      10,
+      "Australia market scan",
+    );
+    const second = exploration(
+      "e2",
+      "Understand regulation in New Zealand",
+      4,
+      "New Zealand regulations",
+    );
     mockList
       .mockResolvedValueOnce([first, second])
       .mockResolvedValueOnce([second]);
@@ -156,7 +178,7 @@ describe("ExplorationsPage", () => {
     });
     expect(
       within(row).getByRole("link", {
-        name: "Open Exploration Find payment companies in Australia",
+        name: "Open Exploration Australia market scan",
       }),
     ).toHaveAttribute("href", "/explorations/e1");
     fireEvent.click(
@@ -280,6 +302,7 @@ describe("ExplorationsPage", () => {
 describe("ExplorationFormPage create", () => {
   it("shows the fields and defaults maximum obligations to 10", () => {
     renderWithQuery(<ExplorationFormPage />);
+    expect(screen.getByLabelText("Exploration Name")).toHaveValue("");
     expect(screen.getByLabelText("Business context").tagName).toBe("TEXTAREA");
     expect(screen.getByText(/business goal or question/)).toBeInTheDocument();
     expect(
@@ -317,9 +340,24 @@ describe("ExplorationFormPage create", () => {
       target: { value: "  Investigate the proposed market entry.  " },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create Exploration" }));
+    expect(
+      await screen.findByText("Enter an Exploration name."),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Exploration Name"), {
+      target: { value: "x".repeat(256) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Exploration" }));
+    expect(
+      await screen.findByText("Exploration name cannot exceed 255 characters."),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Exploration Name"), {
+      target: { value: "  Payments market entry  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Exploration" }));
 
     await waitFor(() =>
       expect(mockCreate).toHaveBeenCalledWith({
+        name: "Payments market entry",
         business_context: "Investigate the proposed market entry.",
         max_obligations: 20,
       }),
@@ -333,6 +371,9 @@ describe("ExplorationFormPage create", () => {
     let resolve!: (value: Exploration) => void;
     mockCreate.mockReturnValue(new Promise((done) => (resolve = done)));
     renderWithQuery(<ExplorationFormPage />);
+    fireEvent.change(screen.getByLabelText("Exploration Name"), {
+      target: { value: "Market entry" },
+    });
     fireEvent.change(screen.getByLabelText("Business context"), {
       target: { value: "Investigate market entry" },
     });
@@ -352,6 +393,9 @@ describe("ExplorationFormPage create", () => {
       }),
     );
     renderWithQuery(<ExplorationFormPage />);
+    fireEvent.change(screen.getByLabelText("Exploration Name"), {
+      target: { value: "Market entry" },
+    });
     fireEvent.change(screen.getByLabelText("Business context"), {
       target: { value: "Investigate market entry" },
     });
@@ -376,8 +420,12 @@ describe("ExplorationDetailsPage", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "Assess market entry for a payments consultancy",
+        name: "Exploration exploration-1",
       }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Business context")).toBeInTheDocument();
+    expect(
+      screen.getByText("Assess market entry for a payments consultancy"),
     ).toBeInTheDocument();
     expect(
       screen.getByText("Maximum obligations").nextSibling,
@@ -460,7 +508,7 @@ describe("ExplorationDetailsPage", () => {
     mockDelete.mockResolvedValue(undefined);
 
     await screen.findByRole("heading", {
-      name: "Assess market entry for a payments consultancy",
+      name: "Exploration exploration-1",
     });
     fireEvent.click(screen.getByRole("button", { name: "Delete Exploration" }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
@@ -491,7 +539,7 @@ describe("ExplorationDetailsPage", () => {
     renderWithQuery(<ExplorationDetailsPage explorationId="exploration-1" />);
 
     await screen.findByRole("heading", {
-      name: "Assess market entry for a payments consultancy",
+      name: "Exploration exploration-1",
     });
     fireEvent.click(screen.getByRole("button", { name: "Delete Exploration" }));
     fireEvent.click(
@@ -524,7 +572,7 @@ describe("ExplorationDetailsPage", () => {
     const invalidate = vi.spyOn(client, "invalidateQueries");
 
     await screen.findByRole("heading", {
-      name: "Assess market entry for a payments consultancy",
+      name: "Exploration exploration-1",
     });
     fireEvent.click(screen.getByRole("button", { name: "Delete Exploration" }));
     const confirm = within(screen.getByRole("alertdialog")).getByRole(
@@ -550,7 +598,7 @@ describe("ExplorationDetailsPage", () => {
     renderWithQuery(<ExplorationDetailsPage explorationId="exploration-1" />);
 
     await screen.findByRole("heading", {
-      name: "Assess market entry for a payments consultancy",
+      name: "Exploration exploration-1",
     });
     fireEvent.click(screen.getByRole("button", { name: "Delete Exploration" }));
     fireEvent.click(
@@ -583,6 +631,9 @@ describe("ExplorationFormPage update", () => {
     expect(await screen.findByLabelText("Business context")).toHaveValue(
       "Assess market entry for a payments consultancy",
     );
+    fireEvent.change(screen.getByLabelText("Exploration Name"), {
+      target: { value: "Updated name" },
+    });
     fireEvent.change(screen.getByLabelText("Business context"), {
       target: { value: "Updated context" },
     });
@@ -593,6 +644,7 @@ describe("ExplorationFormPage update", () => {
 
     await waitFor(() =>
       expect(mockUpdate).toHaveBeenCalledWith("exploration-1", {
+        name: "Updated name",
         business_context: "Updated context",
         max_obligations: 12,
       }),
@@ -618,6 +670,24 @@ describe("ExplorationFormPage update", () => {
       "This Exploration can no longer be changed because it has already been run.",
     );
     expect(context).toHaveValue("Attempted change");
+  });
+
+  it("submits a name-only edit without changing Business Context", async () => {
+    mockGet.mockResolvedValue(exploration());
+    renderWithQuery(<ExplorationFormPage explorationId="exploration-1" />);
+
+    fireEvent.change(await screen.findByLabelText("Exploration Name"), {
+      target: { value: "Updated name" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith("exploration-1", {
+        name: "Updated name",
+        business_context: "Assess market entry for a payments consultancy",
+        max_obligations: 10,
+      }),
+    );
   });
 
   it("keeps prior form values and shows safe error when regeneration fails", async () => {
