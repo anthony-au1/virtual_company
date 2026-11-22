@@ -173,7 +173,20 @@ test("Save & Execute creates the Run, queues it, and opens its details", async (
   );
   await page.route(
     "**/api/backend/api/v1/explorations/exploration-1/companies/exploration-company-1/evidence",
-    (route) => route.fulfill({ json: [] }),
+    (route) =>
+      route.fulfill({
+        json: Array.from({ length: 51 }, (_, index) => ({
+          id: `evidence-${index + 1}`,
+          exploration_company_id: "exploration-company-1",
+          exploration_obligation_id: "obligation-1",
+          claim: `Evidence claim ${index + 1}`,
+          supporting_excerpt: "Evidence excerpt.",
+          source_url: "https://alpine.example/source",
+          requested_url: null,
+          source_title: "Source",
+          created_at: "2026-11-01T10:11:00Z",
+        })),
+      }),
   );
   await page.route(
     "**/api/backend/api/v1/explorations/exploration-1/obligations",
@@ -214,6 +227,10 @@ test("Save & Execute creates the Run, queues it, and opens its details", async (
   await expect(
     page.getByText("This run is queued and waiting to start."),
   ).toBeVisible();
+  await expect(page.getByText("Showing 1–50 of 51")).toBeVisible();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page.getByText("Evidence claim 51")).toBeVisible();
+  await expect(page.getByText("Showing 51–51 of 51")).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Source Research Run" }),
   ).toHaveAttribute("href", "/research/source-run");

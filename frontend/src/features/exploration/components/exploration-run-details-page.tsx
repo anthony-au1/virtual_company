@@ -6,7 +6,7 @@ import {
   useQueryClient,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
+import { ArrowLeft, ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -47,8 +47,16 @@ import {
 } from "@/features/exploration/query-keys";
 
 const POLL_INTERVAL_MS = 2_500;
+const RESULT_PAGE_SIZE = 50;
 const resultSections = ["evidence", "facts", "hypotheses"] as const;
 type ResultSection = (typeof resultSections)[number];
+type ResultPages = Record<ResultSection, number>;
+
+const firstResultPages: ResultPages = {
+  evidence: 1,
+  facts: 1,
+  hypotheses: 1,
+};
 
 export function ExplorationRunDetailsPage({
   explorationId,
@@ -59,9 +67,31 @@ export function ExplorationRunDetailsPage({
   runId: string;
   executionUnconfirmed?: boolean;
 }) {
+  return (
+    <ExplorationRunDetailsContent
+      key={runId}
+      explorationId={explorationId}
+      runId={runId}
+      executionUnconfirmed={executionUnconfirmed}
+    />
+  );
+}
+
+function ExplorationRunDetailsContent({
+  explorationId,
+  runId,
+  executionUnconfirmed,
+}: {
+  explorationId: string;
+  runId: string;
+  executionUnconfirmed: boolean;
+}) {
   const queryClient = useQueryClient();
   const router = useRouter();
   const [companyLinkId, setCompanyLinkId] = useState("");
+  const [resultPages, setResultPages] = useState<ResultPages>(firstResultPages);
+  const resultsPanelRef = useRef<HTMLDivElement>(null);
+  const scrollAfterPageChange = useRef(false);
   const [expandedHypothesisIds, setExpandedHypothesisIds] = useState<
     Set<string>
   >(new Set());
@@ -156,6 +186,15 @@ export function ExplorationRunDetailsPage({
         ((activeSection === "facts" || activeSection === "hypotheses") &&
           expandedFactIds.size > 0)),
   });
+
+  useEffect(() => {
+    if (!scrollAfterPageChange.current) return;
+    scrollAfterPageChange.current = false;
+    resultsPanelRef.current?.scrollIntoView?.({
+      block: "start",
+      behavior: "smooth",
+    });
+  }, [resultPages]);
   const runSummary = runsQuery.data?.find((run) => run.id === runId);
   const status = statusQuery.data?.status;
   const executionMutation = useMutation({
@@ -226,6 +265,11 @@ export function ExplorationRunDetailsPage({
       else next.delete(id);
       return next;
     });
+  }
+
+  function changeResultPage(section: ResultSection, page: number): void {
+    scrollAfterPageChange.current = true;
+    setResultPages((current) => ({ ...current, [section]: page }));
   }
 
   if (statusQuery.isPending) {
@@ -441,22 +485,29 @@ export function ExplorationRunDetailsPage({
               <label className="text-sm font-medium" htmlFor="selected-company">
                 Company
               </label>
-              <select
-                className="border-input bg-background mt-2 h-9 w-full rounded-md border px-3 text-sm"
-                id="selected-company"
-                onChange={(event) => {
-                  setCompanyLinkId(event.target.value);
-                  setExpandedHypothesisIds(new Set());
-                  setExpandedFactIds(new Set());
-                }}
-                value={selectedCompanyLinkId}
-              >
-                {companiesQuery.data.map((company) => (
-                  <option key={company.id} value={company.id}>
-                    {company.name}
-                  </option>
-                ))}
-              </select>
+              <div className="relative mt-2">
+                <select
+                  className="border-input bg-background h-9 w-full appearance-none rounded-md border px-3 pr-10 text-sm"
+                  id="selected-company"
+                  onChange={(event) => {
+                    setCompanyLinkId(event.target.value);
+                    setResultPages(firstResultPages);
+                    setExpandedHypothesisIds(new Set());
+                    setExpandedFactIds(new Set());
+                  }}
+                  value={selectedCompanyLinkId}
+                >
+                  {companiesQuery.data.map((company) => (
+                    <option key={company.id} value={company.id}>
+                      {company.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  aria-hidden="true"
+                  className="text-muted-foreground pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2"
+                />
+              </div>
               {selectedCompany ? (
                 <div className="mt-3 space-y-1 text-sm">
                   {selectedCompany.website ? (
@@ -504,10 +555,15 @@ export function ExplorationRunDetailsPage({
                   aria-labelledby={`results-${activeSection}-title`}
                   className="mt-3 rounded-lg border p-4 sm:p-5"
                   id="company-results-panel"
+                  ref={resultsPanelRef}
                 >
                   {activeSection === "evidence" ? (
                     <EvidenceResults
                       query={evidenceQuery}
+                      page={resultPages.evidence}
+                      onPageChange={(page) =>
+                        changeResultPage("evidence", page)
+                      }
                       obligations={obligationsQuery.data ?? []}
                       obligationsPending={obligationsQuery.isPending}
                       obligationsError={obligationsQuery.isError}
@@ -518,6 +574,8 @@ export function ExplorationRunDetailsPage({
                       title="Facts"
                       query={factsQuery}
                       kind="facts"
+                      page={resultPages.facts}
+                      onPageChange={(page) => changeResultPage("facts", page)}
                       onFactToggle={(id, expanded) =>
                         setExpanded(setExpandedFactIds, id, expanded)
                       }
@@ -530,6 +588,10 @@ export function ExplorationRunDetailsPage({
                       title="Hypotheses"
                       query={hypothesesQuery}
                       kind="hypotheses"
+                      page={resultPages.hypotheses}
+                      onPageChange={(page) =>
+                        changeResultPage("hypotheses", page)
+                      }
                       onHypothesisToggle={(id, expanded) =>
                         setExpanded(setExpandedHypothesisIds, id, expanded)
                       }
@@ -553,11 +615,15 @@ export function ExplorationRunDetailsPage({
 
 function EvidenceResults({
   query,
+  page,
+  onPageChange,
   obligations,
   obligationsPending,
   obligationsError,
 }: {
   query: UseQueryResult<ExplorationEvidence[], Error>;
+  page: number;
+  onPageChange: (page: number) => void;
   obligations: Awaited<ReturnType<typeof listExplorationObligations>>;
   obligationsPending: boolean;
   obligationsError: boolean;
@@ -571,6 +637,16 @@ function EvidenceResults({
 
   const obligationById = new Map(
     obligations.map((obligation) => [obligation.id, obligation.description]),
+  );
+  const totalPages = Math.max(
+    1,
+    Math.ceil(query.data.length / RESULT_PAGE_SIZE),
+  );
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * RESULT_PAGE_SIZE;
+  const pageEvidence = query.data.slice(
+    pageStart,
+    pageStart + RESULT_PAGE_SIZE,
   );
   return (
     <>
@@ -589,7 +665,7 @@ function EvidenceResults({
         </p>
       ) : null}
       <ul className="mt-3 space-y-3">
-        {query.data.map((evidence) => (
+        {pageEvidence.map((evidence) => (
           <li className="rounded-md border p-3" key={evidence.id}>
             <p className="font-medium">{evidence.claim}</p>
             <p className="mt-2 text-sm leading-6 whitespace-pre-wrap">
@@ -614,6 +690,13 @@ function EvidenceResults({
           </li>
         ))}
       </ul>
+      <ResultPagination
+        count={query.data.length}
+        label="Evidence"
+        onPageChange={onPageChange}
+        page={currentPage}
+        totalPages={totalPages}
+      />
     </>
   );
 }
@@ -622,6 +705,8 @@ function StatementResults({
   title,
   query,
   kind,
+  page,
+  onPageChange,
   onHypothesisToggle,
   factsQuery,
   expandedFactIds = new Set(),
@@ -633,6 +718,8 @@ function StatementResults({
     | UseQueryResult<ExplorationFact[], Error>
     | UseQueryResult<ExplorationHypothesis[], Error>;
   kind: "facts" | "hypotheses";
+  page: number;
+  onPageChange: (page: number) => void;
   onHypothesisToggle?: (id: string, expanded: boolean) => void;
   factsQuery?: UseQueryResult<ExplorationFact[], Error>;
   expandedFactIds?: Set<string>;
@@ -645,6 +732,14 @@ function StatementResults({
   if (!query.data) return <LoadingResults label={title} />;
   if (query.data.length === 0) return <EmptyResults label={title} />;
 
+  const totalPages = Math.max(
+    1,
+    Math.ceil(query.data.length / RESULT_PAGE_SIZE),
+  );
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * RESULT_PAGE_SIZE;
+  const pageRecords = query.data.slice(pageStart, pageStart + RESULT_PAGE_SIZE);
+
   return (
     <>
       <h3 id={`results-${kind}-title`} className="text-sm font-semibold">
@@ -653,7 +748,7 @@ function StatementResults({
       </h3>
       <ul className="mt-3 space-y-2">
         {kind === "facts"
-          ? (query.data as ExplorationFact[]).map((fact) => (
+          ? (pageRecords as ExplorationFact[]).map((fact) => (
               <li className="rounded-md border p-3" key={fact.id}>
                 <p className="text-sm leading-6">{fact.statement}</p>
                 <AddedAt date={fact.created_at} />
@@ -667,7 +762,7 @@ function StatementResults({
                 ) : null}
               </li>
             ))
-          : (query.data as ExplorationHypothesis[]).map((hypothesis) => (
+          : (pageRecords as ExplorationHypothesis[]).map((hypothesis) => (
               <li className="rounded-md border p-3" key={hypothesis.id}>
                 <p className="text-sm leading-6">{hypothesis.statement}</p>
                 <AddedAt date={hypothesis.created_at} />
@@ -728,7 +823,65 @@ function StatementResults({
               </li>
             ))}
       </ul>
+      <ResultPagination
+        count={query.data.length}
+        label={title}
+        onPageChange={onPageChange}
+        page={currentPage}
+        totalPages={totalPages}
+      />
     </>
+  );
+}
+
+function ResultPagination({
+  count,
+  label,
+  onPageChange,
+  page,
+  totalPages,
+}: {
+  count: number;
+  label: string;
+  onPageChange: (page: number) => void;
+  page: number;
+  totalPages: number;
+}) {
+  if (count <= RESULT_PAGE_SIZE) return null;
+
+  const firstRecord = (page - 1) * RESULT_PAGE_SIZE + 1;
+  const lastRecord = Math.min(page * RESULT_PAGE_SIZE, count);
+
+  return (
+    <nav
+      aria-label={`${label} pagination`}
+      className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-3"
+    >
+      <p aria-live="polite" className="text-muted-foreground text-sm">
+        Showing {firstRecord}–{lastRecord} of {count}
+      </p>
+      <div className="flex items-center gap-2">
+        <Button
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
+          size="sm"
+          variant="outline"
+        >
+          Previous
+        </Button>
+        <span className="text-muted-foreground text-sm tabular-nums">
+          Page {page} of {totalPages}
+        </span>
+        <Button
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+          size="sm"
+          variant="outline"
+        >
+          Next
+        </Button>
+      </div>
+    </nav>
   );
 }
 
