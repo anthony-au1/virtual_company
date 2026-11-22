@@ -25,6 +25,15 @@ import {
   listExplorationRuns,
 } from "@/features/exploration/api/explorations";
 
+const { mockReplace, mockRouter } = vi.hoisted(() => {
+  const replace = vi.fn();
+  return { mockReplace: replace, mockRouter: { replace } };
+});
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => mockRouter,
+}));
+
 vi.mock("@/features/exploration/api/explorations", () => ({
   executeExplorationRun: vi.fn(),
   getExplorationRun: vi.fn(),
@@ -102,7 +111,7 @@ const evidence = {
   created_at: "2026-11-08T10:05:00Z",
 };
 
-function renderPage() {
+function renderPage({ executionUnconfirmed = false } = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -111,6 +120,7 @@ function renderPage() {
     ...render(
       <QueryClientProvider client={client}>
         <ExplorationRunDetailsPage
+          executionUnconfirmed={executionUnconfirmed}
           explorationId={explorationId}
           runId={runId}
         />
@@ -121,6 +131,11 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockExecute.mockReset();
+  mockExecute.mockResolvedValue({
+    exploration_run_id: runId,
+    status: "QUEUED",
+  });
   mockGetStatus.mockResolvedValue(runStatus("READY"));
   mockRuns.mockResolvedValue([
     {
@@ -194,6 +209,31 @@ describe("ExplorationRunDetailsPage", () => {
       explorationId,
       "research-company-1",
     );
+  });
+
+  it("shows the Save & Execute handoff error from persisted READY status", async () => {
+    renderPage({ executionUnconfirmed: true });
+
+    expect(
+      await screen.findByText(
+        "The Run was saved, but execution was not confirmed. It remains READY; use Execute Exploration to try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(mockReplace).toHaveBeenCalledWith(
+      `/explorations/${explorationId}/runs/${runId}`,
+      { scroll: false },
+    );
+    expect(
+      screen.getByRole("button", { name: "Execute Exploration" }),
+    ).toBeEnabled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Execute Exploration" }),
+    );
+    await waitFor(() => expect(mockExecute).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByText(/The Run was saved, but execution was not confirmed/),
+    ).not.toBeInTheDocument();
   });
 
   it.each([

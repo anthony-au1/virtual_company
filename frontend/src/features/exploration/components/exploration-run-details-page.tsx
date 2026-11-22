@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-query";
 import { ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useEffect,
   useMemo,
@@ -52,11 +53,14 @@ type ResultSection = (typeof resultSections)[number];
 export function ExplorationRunDetailsPage({
   explorationId,
   runId,
+  executionUnconfirmed = false,
 }: {
   explorationId: string;
   runId: string;
+  executionUnconfirmed?: boolean;
 }) {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [companyLinkId, setCompanyLinkId] = useState("");
   const [expandedHypothesisIds, setExpandedHypothesisIds] = useState<
     Set<string>
@@ -66,8 +70,17 @@ export function ExplorationRunDetailsPage({
   );
   const [activeSection, setActiveSection] = useState<ResultSection>("evidence");
   const [executionNeedsRefresh, setExecutionNeedsRefresh] = useState(false);
+  const [executionHandoff, setExecutionHandoff] =
+    useState(executionUnconfirmed);
   const previousStatus = useRef<ExplorationRunStatus | undefined>(undefined);
   const statusKey = explorationRunStatusQueryKey(explorationId, runId);
+
+  useEffect(() => {
+    if (!executionUnconfirmed) return;
+    router.replace(`/explorations/${explorationId}/runs/${runId}`, {
+      scroll: false,
+    });
+  }, [executionUnconfirmed, explorationId, router, runId]);
 
   const statusQuery = useQuery({
     queryKey: statusKey,
@@ -243,6 +256,12 @@ export function ExplorationRunDetailsPage({
               ? "This run may not belong to the requested Exploration."
               : "Check the connection and refresh the run status."}
           </p>
+          {executionHandoff && !notFound ? (
+            <p className="text-destructive mt-3 text-sm">
+              The Run was saved, but execution could not be confirmed. Refresh
+              its persisted status before trying again.
+            </p>
+          ) : null}
           {!notFound ? (
             <Button
               className="mt-4"
@@ -338,6 +357,14 @@ export function ExplorationRunDetailsPage({
           {statusMessage(run.status)}
         </p>
 
+        {executionHandoff ? (
+          <p className="text-destructive mt-3 text-sm" role="alert">
+            {statusQuery.isError
+              ? "The Run was saved, but execution could not be confirmed. Refresh its persisted status before trying again."
+              : executionHandoffMessage(run.status)}
+          </p>
+        ) : null}
+
         {run.status === "READY" ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button
@@ -346,7 +373,10 @@ export function ExplorationRunDetailsPage({
                 executionNeedsRefresh ||
                 statusQuery.isError
               }
-              onClick={() => executionMutation.mutate()}
+              onClick={() => {
+                setExecutionHandoff(false);
+                executionMutation.mutate();
+              }}
             >
               {executionMutation.isPending
                 ? "Queueing run…"
@@ -886,6 +916,16 @@ function executionErrorMessage(error: unknown): string {
     }
   }
   return "The run could not be scheduled. Refresh its status before trying again.";
+}
+
+function executionHandoffMessage(status: ExplorationRunStatus): string {
+  if (status === "READY") {
+    return "The Run was saved, but execution was not confirmed. It remains READY; use Execute Exploration to try again.";
+  }
+  if (status === "QUEUED" || status === "RUNNING") {
+    return `Execution was requested, but its response was not confirmed. The persisted Run is ${status}; monitor its status below and do not submit another execution request.`;
+  }
+  return `Execution was requested, but its response was not confirmed. The persisted Run is ${status}; review any saved results below.`;
 }
 
 function ExternalUrl({

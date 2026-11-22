@@ -2,11 +2,18 @@ import { ExplorationRunDetailsPage } from "@/features/exploration/components/exp
 
 export default async function ExplorationRunRoute({
   params,
+  searchParams,
 }: {
   params: Promise<{ explorationId: string; runId: string }>;
+  searchParams: Promise<{ execution?: string }>;
 }) {
   const { explorationId, runId } = await params;
+  const { execution } = await searchParams;
   return (
-    <ExplorationRunDetailsPage explorationId={explorationId} runId={runId} />
+    <ExplorationRunDetailsPage
+      executionUnconfirmed={execution === "unconfirmed"}
+      explorationId={explorationId}
+      runId={runId}
+    />
   );
 }

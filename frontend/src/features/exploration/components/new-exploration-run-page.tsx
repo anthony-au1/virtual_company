@@ -4,15 +4,21 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { ResearchCompanyCard } from "@/features/research/components/results/research-company-card";
 import { formatDate } from "@/lib/format-date";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api/client";
-import { startExplorationRun } from "@/features/exploration/api/explorations";
-import { getResearchRunResults, listResearchRuns } from "@/features/research/api/research";
+import {
+  executeExplorationRun,
+  startExplorationRun,
+} from "@/features/exploration/api/explorations";
+import {
+  getResearchRunResults,
+  listResearchRuns,
+} from "@/features/research/api/research";
 import {
   explorationQueryKey,
   explorationRunsQueryKey,
@@ -26,6 +32,7 @@ import { cn } from "@/lib/utils";
 type StartSelection = {
   researchRunId: string;
   companyIds: string[];
+  action: "save" | "execute";
 };
 
 export function NewExplorationRunPage({
@@ -39,6 +46,7 @@ export function NewExplorationRunPage({
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const submitLock = useRef(false);
 
   const researchRunsQuery = useQuery({
     queryKey: researchRunsQueryKey,
@@ -68,12 +76,25 @@ export function NewExplorationRunPage({
     selectedRunResults?.research_run.status === "COMPLETED";
 
   const startMutation = useMutation({
-    mutationFn: ({ researchRunId, companyIds }: StartSelection) =>
-      startExplorationRun(explorationId, {
+    mutationFn: async ({
+      researchRunId,
+      companyIds,
+      action,
+    }: StartSelection) => {
+      const run = await startExplorationRun(explorationId, {
         research_run_id: researchRunId,
         company_ids: companyIds,
-      }),
-    onSuccess: async () => {
+      });
+      if (action === "save") return { run, executionUnconfirmed: false };
+
+      try {
+        await executeExplorationRun(explorationId, run.id);
+        return { run, executionUnconfirmed: false };
+      } catch {
+        return { run, executionUnconfirmed: true };
+      }
+    },
+    onSuccess: async ({ run, executionUnconfirmed }) => {
       setSelectedRunId("");
       setSelectedCompanyIds(new Set());
       await queryClient.invalidateQueries({
@@ -82,7 +103,13 @@ export function NewExplorationRunPage({
       await queryClient.invalidateQueries({
         queryKey: explorationQueryKey(explorationId),
       });
-      router.push(`/explorations/${explorationId}`);
+      const path = `/explorations/${explorationId}/runs/${run.id}`;
+      router.push(
+        executionUnconfirmed ? `${path}?execution=unconfirmed` : path,
+      );
+    },
+    onSettled: () => {
+      submitLock.current = false;
     },
   });
 
@@ -103,11 +130,20 @@ export function NewExplorationRunPage({
     startMutation.reset();
   }
 
-  function start() {
-    if (!selectedRunResults || currentSelectedCompanyIds.length === 0) return;
+  function submit(action: StartSelection["action"]) {
+    if (
+      submitLock.current ||
+      !selectedRunResults ||
+      !sourceRunCompleted ||
+      currentSelectedCompanyIds.length === 0
+    ) {
+      return;
+    }
+    submitLock.current = true;
     startMutation.mutate({
       researchRunId: selectedRunId,
       companyIds: currentSelectedCompanyIds,
+      action,
     });
   }
 
@@ -327,7 +363,7 @@ export function NewExplorationRunPage({
                 role="alert"
               >
                 <h3 className="text-sm font-semibold">
-                  Exploration Run could not be started
+                  Exploration Run could not be saved
                 </h3>
                 <p className="text-destructive mt-1 text-sm">
                   {startErrorMessage(startMutation.error)}
@@ -337,18 +373,32 @@ export function NewExplorationRunPage({
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
               <p className="text-muted-foreground text-xs">
-                Starting saves this company selection. Research execution does
-                not start here.
+                Save for Later keeps this Run ready to execute. Save & Execute
+                starts it now.
               </p>
-              <Button
-                disabled={submissionDisabled}
-                onClick={start}
-                type="button"
-              >
-                {startMutation.isPending
-                  ? "Starting Exploration Run…"
-                  : "Start Exploration Run"}
-              </Button>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  disabled={submissionDisabled}
+                  onClick={() => submit("save")}
+                  type="button"
+                  variant="outline"
+                >
+                  {startMutation.isPending &&
+                  startMutation.variables?.action === "save"
+                    ? "Saving for later…"
+                    : "Save for Later"}
+                </Button>
+                <Button
+                  disabled={submissionDisabled}
+                  onClick={() => submit("execute")}
+                  type="button"
+                >
+                  {startMutation.isPending &&
+                  startMutation.variables?.action === "execute"
+                    ? "Saving & executing…"
+                    : "Save & Execute"}
+                </Button>
+              </div>
             </div>
           </section>
         ) : null}

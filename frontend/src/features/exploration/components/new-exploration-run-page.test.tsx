@@ -15,8 +15,12 @@ import type {
   ResearchResults,
   ResearchRunListItem,
 } from "@/features/research/api/research";
-import { getResearchRunResults, listResearchRuns } from "@/features/research/api/research";
 import {
+  getResearchRunResults,
+  listResearchRuns,
+} from "@/features/research/api/research";
+import {
+  executeExplorationRun,
   startExplorationRun,
   type StartedExplorationRun,
 } from "@/features/exploration/api/explorations";
@@ -29,6 +33,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/features/exploration/api/explorations", () => ({
+  executeExplorationRun: vi.fn(),
   listExplorationRuns: vi.fn(),
   startExplorationRun: vi.fn(),
 }));
@@ -41,6 +46,7 @@ vi.mock("@/features/research/api/research", () => ({
 const mockListResearchRuns = vi.mocked(listResearchRuns);
 const mockGetResults = vi.mocked(getResearchRunResults);
 const mockStart = vi.mocked(startExplorationRun);
+const mockExecute = vi.mocked(executeExplorationRun);
 
 function renderWithQuery(ui: React.ReactNode) {
   const client = new QueryClient({
@@ -145,6 +151,7 @@ const runBCompanies = [company("b1", "Company B1", "QUALIFIED")];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockExecute.mockReset();
   mockListResearchRuns.mockResolvedValue([
     researchRun("run-a", "Campaign A"),
     researchRun("run-b", "Campaign B"),
@@ -185,11 +192,14 @@ describe("NewExplorationRunPage", () => {
     expect(screen.getAllByText("MATCH")).toHaveLength(3);
     expect(mockGetResults).toHaveBeenCalledWith("run-a");
     expect(
-      screen.getByRole("button", { name: "Start Exploration Run" }),
+      screen.getByRole("button", { name: "Save for Later" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Save & Execute" }),
     ).toBeDisabled();
   });
 
-  it("allows selection across qualification statuses and submits one selected run", async () => {
+  it("saves a selected run for later without executing it", async () => {
     const { client } = renderWithQuery(
       <NewExplorationRunPage explorationId="exploration-1" />,
     );
@@ -203,15 +213,13 @@ describe("NewExplorationRunPage", () => {
     fireEvent.click(insufficient);
 
     expect(screen.getByText("3 companies selected")).toBeInTheDocument();
-    const startButton = screen.getByRole("button", {
-      name: "Start Exploration Run",
-    });
+    const startButton = screen.getByRole("button", { name: "Save for Later" });
     expect(startButton).toBeEnabled();
     mockStart.mockResolvedValue({
       id: "exploration-run-1",
       exploration_id: "exploration-1",
       research_run_id: "run-a",
-      status: "RUNNING",
+      status: "READY",
       started_at: "2026-10-10T11:00:00Z",
       completed_at: null,
       company_ids: ["a1", "a2", "a3"],
@@ -225,13 +233,89 @@ describe("NewExplorationRunPage", () => {
       }),
     );
     await waitFor(() =>
-      expect(mockPush).toHaveBeenCalledWith("/explorations/exploration-1"),
+      expect(mockPush).toHaveBeenCalledWith(
+        "/explorations/exploration-1/runs/exploration-run-1",
+      ),
     );
+    expect(mockExecute).not.toHaveBeenCalled();
     expect(
       client.getQueryState(explorationRunsQueryKey("exploration-1"))
         ?.isInvalidated,
     ).toBe(true);
     expect(mockGetResults).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates before executing and navigates to the created Run", async () => {
+    let resolveCreate!: (value: StartedExplorationRun) => void;
+    const sequence: string[] = [];
+    mockStart.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = (value) => {
+            sequence.push("created");
+            resolve(value);
+          };
+        }),
+    );
+    mockExecute.mockImplementation(async () => {
+      sequence.push("executed");
+      return { exploration_run_id: "new-run", status: "QUEUED" };
+    });
+
+    renderWithQuery(<NewExplorationRunPage explorationId="exploration-1" />);
+    fireEvent.click(await screen.findByLabelText(/Campaign A/));
+    fireEvent.click(await screen.findByLabelText("Select Company A1"));
+    fireEvent.click(screen.getByRole("button", { name: "Save & Execute" }));
+
+    await waitFor(() => expect(mockStart).toHaveBeenCalledTimes(1));
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    resolveCreate({
+      id: "new-run",
+      exploration_id: "exploration-1",
+      research_run_id: "run-a",
+      status: "READY",
+      started_at: "2026-10-10T11:00:00Z",
+      completed_at: null,
+      company_ids: ["a1"],
+    });
+
+    await waitFor(() =>
+      expect(mockExecute).toHaveBeenCalledWith("exploration-1", "new-run"),
+    );
+    await waitFor(() =>
+      expect(mockPush).toHaveBeenCalledWith(
+        "/explorations/exploration-1/runs/new-run",
+      ),
+    );
+    expect(sequence).toEqual(["created", "executed"]);
+  });
+
+  it("preserves the created Run and navigates without retrying after execution fails", async () => {
+    mockStart.mockResolvedValue({
+      id: "saved-run",
+      exploration_id: "exploration-1",
+      research_run_id: "run-a",
+      status: "READY",
+      started_at: "2026-10-10T11:00:00Z",
+      completed_at: null,
+      company_ids: ["a1"],
+    });
+    mockExecute.mockRejectedValue(new ApiError("request timed out", 503, {}));
+
+    renderWithQuery(<NewExplorationRunPage explorationId="exploration-1" />);
+    fireEvent.click(await screen.findByLabelText(/Campaign A/));
+    fireEvent.click(await screen.findByLabelText("Select Company A1"));
+    fireEvent.click(screen.getByRole("button", { name: "Save & Execute" }));
+
+    await waitFor(() =>
+      expect(mockPush).toHaveBeenCalledWith(
+        "/explorations/exploration-1/runs/saved-run?execution=unconfirmed",
+      ),
+    );
+    expect(mockStart).toHaveBeenCalledTimes(1);
+    expect(mockExecute).toHaveBeenCalledTimes(1);
   });
 
   it("clears prior company IDs when switching ResearchRuns", async () => {
@@ -245,7 +329,7 @@ describe("NewExplorationRunPage", () => {
     expect(screen.getByText("0 companies selected")).toBeInTheDocument();
     expect(screen.getByLabelText("Select Company B1")).not.toBeChecked();
     expect(
-      screen.getByRole("button", { name: "Start Exploration Run" }),
+      screen.getByRole("button", { name: "Save for Later" }),
     ).toBeDisabled();
 
     fireEvent.click(screen.getByLabelText("Select Company B1"));
@@ -253,14 +337,12 @@ describe("NewExplorationRunPage", () => {
       id: "new-run",
       exploration_id: "exploration-1",
       research_run_id: "run-b",
-      status: "RUNNING",
+      status: "READY",
       started_at: "2026-10-10T11:00:00Z",
       completed_at: null,
       company_ids: ["b1"],
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Start Exploration Run" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Save for Later" }));
 
     await waitFor(() =>
       expect(mockStart).toHaveBeenCalledWith("exploration-1", {
@@ -270,7 +352,7 @@ describe("NewExplorationRunPage", () => {
     );
   });
 
-  it("prevents duplicate submission while the Start request is pending", async () => {
+  it("prevents duplicate Run creation and disables both actions while pending", async () => {
     let resolveStart!: (value: StartedExplorationRun) => void;
     mockStart.mockReturnValue(
       new Promise((resolve) => {
@@ -281,24 +363,25 @@ describe("NewExplorationRunPage", () => {
     fireEvent.click(await screen.findByLabelText(/Campaign A/));
     fireEvent.click(await screen.findByLabelText("Select Company A1"));
     const button = screen.getByRole("button", {
-      name: "Start Exploration Run",
+      name: "Save & Execute",
     });
     fireEvent.click(button);
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Starting Exploration Run…" }),
+        screen.getByRole("button", { name: "Saving & executing…" }),
       ).toBeDisabled(),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Starting Exploration Run…" }),
-    );
+    expect(
+      screen.getByRole("button", { name: "Save for Later" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Save for Later" }));
     expect(mockStart).toHaveBeenCalledTimes(1);
 
     resolveStart({
       id: "new-run",
       exploration_id: "exploration-1",
       research_run_id: "run-a",
-      status: "RUNNING",
+      status: "READY",
       started_at: "2026-10-10T11:00:00Z",
       completed_at: null,
       company_ids: ["a1"],
@@ -314,7 +397,7 @@ describe("NewExplorationRunPage", () => {
     expect(mockGetResults).toHaveBeenCalledTimes(1);
     expect(mockGetResults).toHaveBeenCalledWith("run-b");
     expect(
-      screen.getByRole("button", { name: "Start Exploration Run" }),
+      screen.getByRole("button", { name: "Save & Execute" }),
     ).toBeDisabled();
     expect(mockStart).not.toHaveBeenCalled();
   });
@@ -329,7 +412,7 @@ describe("NewExplorationRunPage", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Start Exploration Run" }),
+      screen.getByRole("button", { name: "Save & Execute" }),
     ).toBeDisabled();
   });
 
@@ -347,14 +430,13 @@ describe("NewExplorationRunPage", () => {
     renderWithQuery(<NewExplorationRunPage explorationId="exploration-1" />);
     fireEvent.click(await screen.findByLabelText(/Campaign A/));
     fireEvent.click(await screen.findByLabelText("Select Company A1"));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Start Exploration Run" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Save for Later" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(screen.getByRole("alert")).not.toHaveTextContent(
       "private backend detail",
     );
+    expect(mockExecute).not.toHaveBeenCalled();
     expect(mockPush).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Select Company A1")).toBeChecked();
   });
