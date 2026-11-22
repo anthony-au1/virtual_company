@@ -26,10 +26,196 @@ CHECKSUM_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 PRIMARY_DATABASE = "virtual_company"
 POSTGRES_SERVICE = "postgres"
 RECOVERY_WAIT_SECONDS = 30
-LEGACY_STATUS_COMPATIBILITY_SQL = (
-    "ALTER TABLE public.campaign DROP COLUMN IF EXISTS status; "
-    "ALTER TABLE public.exploration DROP COLUMN IF EXISTS status;"
-)
+RESTORE_SCHEMA_COMPATIBILITY_SQL = """
+BEGIN;
+DO $compatibility$
+DECLARE
+    has_name boolean;
+    has_explorations boolean;
+    unexpected_dependency text;
+BEGIN
+    IF to_regclass('public.exploration') IS NULL THEN
+        RAISE EXCEPTION 'Restore compatibility failed: public.exploration table is missing';
+    END IF;
+
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'exploration'
+          AND column_name = 'name'
+    ) INTO has_name;
+
+    IF has_name THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'exploration'
+              AND column_name = 'name'
+              AND data_type = 'character varying'
+              AND character_maximum_length = 255
+              AND is_nullable = 'NO'
+        ) THEN
+            RAISE EXCEPTION
+                'Restore compatibility failed: public.exploration.name must be VARCHAR(255) NOT NULL';
+        END IF;
+    ELSE
+        WITH RECURSIVE dependent_relations(relation_oid) AS (
+            SELECT 'public.exploration'::regclass::oid
+            UNION
+            SELECT constraint_row.conrelid
+            FROM pg_constraint AS constraint_row
+            JOIN dependent_relations AS parent
+              ON constraint_row.confrelid = parent.relation_oid
+            WHERE constraint_row.contype = 'f'
+        )
+        SELECT namespace.nspname || '.' || relation.relname
+          INTO unexpected_dependency
+        FROM dependent_relations AS dependent
+        JOIN pg_class AS relation ON relation.oid = dependent.relation_oid
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        WHERE dependent.relation_oid <> 'public.exploration'::regclass::oid
+          AND (
+              namespace.nspname <> 'public'
+              OR relation.relname NOT IN (
+                  'exploration_obligation',
+                  'exploration_run',
+                  'exploration_company',
+                  'exploration_evidence',
+                  'exploration_fact',
+                  'exploration_hypothesis',
+                  'exploration_fact_evidence',
+                  'exploration_hypothesis_fact'
+              )
+          )
+        LIMIT 1;
+
+        IF unexpected_dependency IS NOT NULL THEN
+            RAISE EXCEPTION
+                'Restore compatibility refused: unexpected foreign-key dependency % references Exploration data',
+                unexpected_dependency;
+        END IF;
+
+        SELECT EXISTS (SELECT 1 FROM public.exploration)
+          INTO has_explorations;
+        IF has_explorations THEN
+            FOREACH unexpected_dependency IN ARRAY ARRAY[
+                'public.exploration_obligation',
+                'public.exploration_run',
+                'public.exploration_company',
+                'public.exploration_evidence',
+                'public.exploration_fact',
+                'public.exploration_hypothesis',
+                'public.exploration_fact_evidence',
+                'public.exploration_hypothesis_fact',
+                'public.workflow_execution'
+            ] LOOP
+                IF to_regclass(unexpected_dependency) IS NULL THEN
+                    RAISE EXCEPTION
+                        'Restore compatibility failed: required legacy table % is missing',
+                        unexpected_dependency;
+                END IF;
+            END LOOP;
+
+            DELETE FROM public.exploration_fact_evidence AS link
+            WHERE link.exploration_fact_id IN (
+                SELECT fact.id
+                FROM public.exploration_fact AS fact
+                JOIN public.exploration_company AS company
+                  ON company.id = fact.exploration_company_id
+                JOIN public.exploration_run AS run
+                  ON run.id = company.exploration_run_id
+                JOIN public.exploration AS exploration
+                  ON exploration.id = run.exploration_id
+            ) OR link.exploration_evidence_id IN (
+                SELECT evidence.id
+                FROM public.exploration_evidence AS evidence
+                LEFT JOIN public.exploration_company AS company
+                  ON company.id = evidence.exploration_company_id
+                LEFT JOIN public.exploration_run AS run
+                  ON run.id = company.exploration_run_id
+                WHERE run.exploration_id IN (
+                    SELECT id FROM public.exploration
+                ) OR evidence.exploration_obligation_id IN (
+                    SELECT id FROM public.exploration_obligation
+                    WHERE exploration_id IN (SELECT id FROM public.exploration)
+                )
+            );
+
+            DELETE FROM public.exploration_hypothesis_fact AS link
+            WHERE link.exploration_hypothesis_id IN (
+                SELECT hypothesis.id
+                FROM public.exploration_hypothesis AS hypothesis
+                JOIN public.exploration_company AS company
+                  ON company.id = hypothesis.exploration_company_id
+                JOIN public.exploration_run AS run
+                  ON run.id = company.exploration_run_id
+                WHERE run.exploration_id IN (SELECT id FROM public.exploration)
+            ) OR link.exploration_fact_id IN (
+                SELECT fact.id
+                FROM public.exploration_fact AS fact
+                JOIN public.exploration_company AS company
+                  ON company.id = fact.exploration_company_id
+                JOIN public.exploration_run AS run
+                  ON run.id = company.exploration_run_id
+                WHERE run.exploration_id IN (SELECT id FROM public.exploration)
+            );
+
+            DELETE FROM public.exploration_evidence AS evidence
+            WHERE evidence.exploration_company_id IN (
+                SELECT company.id
+                FROM public.exploration_company AS company
+                JOIN public.exploration_run AS run
+                  ON run.id = company.exploration_run_id
+                WHERE run.exploration_id IN (SELECT id FROM public.exploration)
+            ) OR evidence.exploration_obligation_id IN (
+                SELECT id FROM public.exploration_obligation
+                WHERE exploration_id IN (SELECT id FROM public.exploration)
+            );
+
+            DELETE FROM public.exploration_fact AS fact
+            USING public.exploration_company AS company,
+                  public.exploration_run AS run
+            WHERE fact.exploration_company_id = company.id
+              AND company.exploration_run_id = run.id
+              AND run.exploration_id IN (SELECT id FROM public.exploration);
+
+            DELETE FROM public.exploration_hypothesis AS hypothesis
+            USING public.exploration_company AS company,
+                  public.exploration_run AS run
+            WHERE hypothesis.exploration_company_id = company.id
+              AND company.exploration_run_id = run.id
+              AND run.exploration_id IN (SELECT id FROM public.exploration);
+
+            DELETE FROM public.exploration_company AS company
+            USING public.exploration_run AS run
+            WHERE company.exploration_run_id = run.id
+              AND run.exploration_id IN (SELECT id FROM public.exploration);
+
+            DELETE FROM public.workflow_execution AS execution
+            WHERE execution.workflow_type = 'exploration'
+              AND execution.run_id IN (
+                  SELECT id FROM public.exploration_run
+                  WHERE exploration_id IN (SELECT id FROM public.exploration)
+              );
+
+            DELETE FROM public.exploration_obligation
+            WHERE exploration_id IN (SELECT id FROM public.exploration);
+
+            DELETE FROM public.exploration_run
+            WHERE exploration_id IN (SELECT id FROM public.exploration);
+
+            DELETE FROM public.exploration;
+        END IF;
+
+        ALTER TABLE public.exploration
+            ADD COLUMN name VARCHAR(255) NOT NULL;
+    END IF;
+END
+$compatibility$;
+ALTER TABLE public.campaign DROP COLUMN IF EXISTS status;
+ALTER TABLE public.exploration DROP COLUMN IF EXISTS status;
+COMMIT;
+"""
 
 METADATA_SQL = """
 SELECT json_build_object(
@@ -235,8 +421,8 @@ class ComposePostgres:
         )
         return result.stdout.strip()
 
-    def remove_legacy_status_columns(self, database: str) -> None:
-        """Drop obsolete Campaign and Exploration status columns after restore."""
+    def reconcile_restored_schema(self, database: str) -> None:
+        """Reconcile retired status fields and the required Exploration name."""
         _validate_database_name(database)
         _run(
             self._client(
@@ -247,7 +433,7 @@ class ComposePostgres:
                 "-d",
                 database,
                 "-c",
-                LEGACY_STATUS_COMPATIBILITY_SQL,
+                RESTORE_SCHEMA_COMPATIBILITY_SQL,
             ),
             capture_output=True,
             text=True,
@@ -763,7 +949,7 @@ def recover_primary_database(*, backup: str) -> None:
         print("Restoring backup into the verified-empty primary database")
         with archive.open("rb") as archive_stream:
             postgres.restore_primary(archive_stream)
-        postgres.remove_legacy_status_columns(PRIMARY_DATABASE)
+        postgres.reconcile_restored_schema(PRIMARY_DATABASE)
         restored_state = _validate_recovery_database(postgres, restored=True)
         print(
             "Primary database recovery verified: "
@@ -837,10 +1023,10 @@ def restore_backup(*, backup: str, target_database: str) -> None:
             f"--single-transaction prevents partial schema/data changes. Details: {error}"
         ) from error
     try:
-        postgres.remove_legacy_status_columns(target_database)
+        postgres.reconcile_restored_schema(target_database)
     except BackupError as error:
         raise RestoreError(
-            f"Restore completed, but legacy status compatibility failed for "
+            f"Restore completed, but schema compatibility failed for "
             f"{target_database}. The restored target database was left in place. "
             f"Details: {error}"
         ) from error
