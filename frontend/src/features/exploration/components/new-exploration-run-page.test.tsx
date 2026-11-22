@@ -4,6 +4,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -62,13 +63,24 @@ function researchRun(
   runId: string,
   campaignName: string,
   status = "COMPLETED",
+  times: {
+    created_at?: string;
+    started_at?: string | null;
+    completed_at?: string | null;
+  } = {},
 ): ResearchRunListItem {
   return {
     run_id: runId,
     status,
-    created_at: "2026-10-10T10:00:00Z",
-    started_at: "2026-10-10T10:00:00Z",
-    completed_at: "2026-10-10T10:10:00Z",
+    created_at: times.created_at ?? "2026-10-10T10:00:00Z",
+    started_at:
+      times.started_at === undefined
+        ? "2026-10-10T10:00:00Z"
+        : times.started_at,
+    completed_at:
+      times.completed_at === undefined
+        ? "2026-10-10T10:10:00Z"
+        : times.completed_at,
     campaign: {
       id: `campaign-${runId}`,
       name: campaignName,
@@ -176,12 +188,29 @@ describe("NewExplorationRunPage", () => {
   it("offers completed ResearchRuns and loads only the selected run's results", async () => {
     renderWithQuery(<NewExplorationRunPage explorationId="exploration-1" />);
 
-    expect(await screen.findByLabelText(/Campaign A/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Campaign B/)).toBeInTheDocument();
     expect(
-      screen.queryByLabelText(/Campaign in progress/),
+      await screen.findByRole("radio", { name: /Campaign A/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: /Campaign B/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("radio", { name: /Campaign in progress/ }),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText(/Campaign A/));
+    const row = screen.getByRole("radio", { name: /Campaign A/ }).closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("3")).toBeInTheDocument();
+    expect(
+      within(row as HTMLElement).getByText("1 qualified"),
+    ).toBeInTheDocument();
+    expect(
+      within(row as HTMLElement).getByText("1 not qualified"),
+    ).toBeInTheDocument();
+    expect(
+      within(row as HTMLElement).getByText("1 insufficient evidence"),
+    ).toBeInTheDocument();
+    fireEvent.click(row as HTMLElement);
+    expect(screen.getByRole("radio", { name: /Campaign A/ })).toBeChecked();
 
     expect(await screen.findByText("Company A1")).toBeInTheDocument();
     expect(screen.getByText("Company A2")).toBeInTheDocument();
@@ -197,6 +226,48 @@ describe("NewExplorationRunPage", () => {
     expect(
       screen.getByRole("button", { name: "Save & Execute" }),
     ).toBeDisabled();
+  });
+
+  it("keeps same-Campaign runs separate, sorts by completion time, and allows one selection", async () => {
+    mockListResearchRuns.mockResolvedValue([
+      researchRun("older-run", "PureNest — Sustainable Skincare", "COMPLETED", {
+        created_at: "2026-10-10T21:00:00Z",
+        completed_at: "2026-10-10T20:30:00Z",
+      }),
+      researchRun(
+        "newest-run",
+        "PureNest — Sustainable Skincare",
+        "COMPLETED",
+        {
+          created_at: "2026-10-10T20:00:00Z",
+          completed_at: "2026-10-10T20:59:00Z",
+        },
+      ),
+      researchRun("missing-date", "No completion timestamp", "COMPLETED", {
+        created_at: "2026-10-10T19:00:00Z",
+        completed_at: null,
+      }),
+    ]);
+    renderWithQuery(<NewExplorationRunPage explorationId="exploration-1" />);
+
+    const radios = await screen.findAllByRole("radio");
+    expect(radios).toHaveLength(3);
+    expect(radios[0]).toHaveAccessibleName(/newest-run/);
+    expect(radios[1]).toHaveAccessibleName(/older-run/);
+    expect(radios[2]).toHaveAccessibleName(/missing-date/);
+    expect(radios[0]).toHaveAccessibleName(/PureNest/);
+    expect(radios[1]).toHaveAccessibleName(/PureNest/);
+
+    const newestRow = radios[0].closest("tr");
+    const olderRow = radios[1].closest("tr");
+    expect(newestRow).not.toBeNull();
+    expect(olderRow).not.toBeNull();
+    fireEvent.click(newestRow as HTMLElement);
+    expect(radios[0]).toBeChecked();
+    expect(newestRow).toHaveClass("bg-primary/5");
+    fireEvent.click(olderRow as HTMLElement);
+    expect(radios[0]).not.toBeChecked();
+    expect(radios[1]).toBeChecked();
   });
 
   it("saves a selected run for later without executing it", async () => {

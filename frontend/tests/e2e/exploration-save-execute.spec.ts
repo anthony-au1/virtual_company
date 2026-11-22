@@ -26,6 +26,25 @@ test("Save & Execute creates the Run, queues it, and opens its details", async (
             insufficient_evidence: 0,
           },
         },
+        {
+          run_id: "source-run-older",
+          status: "COMPLETED",
+          created_at: "2026-11-01T10:30:00Z",
+          started_at: "2026-11-01T09:00:00Z",
+          completed_at: "2026-11-01T09:10:00Z",
+          campaign: {
+            id: "campaign-1",
+            name: "Australian Fintech",
+            target_count: 1,
+            max_companies_to_research: 5,
+          },
+          summary: {
+            researched: 2,
+            qualified: 1,
+            not_qualified: 1,
+            insufficient_evidence: 0,
+          },
+        },
       ],
     }),
   );
@@ -162,7 +181,16 @@ test("Save & Execute creates the Run, queues it, and opens its details", async (
   );
 
   await page.goto("/explorations/exploration-1/runs/new");
-  await page.getByRole("radio", { name: /Australian Fintech/ }).check();
+  const runRows = page.locator("tbody tr");
+  await expect(runRows).toHaveCount(2);
+  const newestRunRadio = runRows.nth(0).getByRole("radio");
+  await expect(newestRunRadio).toHaveAccessibleName(/source-run$/);
+  await expect(runRows.nth(1).getByRole("radio")).toHaveAccessibleName(
+    /source-run-older$/,
+  );
+  await newestRunRadio.focus();
+  await page.keyboard.press("Space");
+  await expect(newestRunRadio).toBeChecked();
   await page.getByRole("checkbox", { name: "Select Alpine Payments" }).check();
   await page.getByRole("button", { name: "Save & Execute" }).click();
 

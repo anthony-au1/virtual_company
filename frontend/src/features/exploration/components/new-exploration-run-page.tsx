@@ -54,9 +54,25 @@ export function NewExplorationRunPage({
   });
   const completedRuns = useMemo(
     () =>
-      (researchRunsQuery.data ?? []).filter(
-        (run) => run.status === "COMPLETED",
-      ),
+      [...(researchRunsQuery.data ?? [])]
+        .filter((run) => run.status === "COMPLETED")
+        .sort((left, right) => {
+          const leftTimestamp = Date.parse(
+            left.completed_at ?? left.started_at ?? left.created_at,
+          );
+          const rightTimestamp = Date.parse(
+            right.completed_at ?? right.started_at ?? right.created_at,
+          );
+          const leftOrder = Number.isNaN(leftTimestamp)
+            ? Number.NEGATIVE_INFINITY
+            : leftTimestamp;
+          const rightOrder = Number.isNaN(rightTimestamp)
+            ? Number.NEGATIVE_INFINITY
+            : rightTimestamp;
+
+          if (leftOrder !== rightOrder) return rightOrder - leftOrder;
+          return left.run_id.localeCompare(right.run_id);
+        }),
     [researchRunsQuery.data],
   );
   const resultsQuery = useQuery({
@@ -213,43 +229,97 @@ export function NewExplorationRunPage({
               before starting an Exploration Run.
             </p>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
-              {completedRuns.map((run) => (
-                <label
-                  className={cn(
-                    "hover:bg-muted/30 flex cursor-pointer gap-3 rounded-lg border p-4 transition-colors",
-                    selectedRunId === run.run_id &&
-                      "border-primary bg-muted/30",
-                    startMutation.isPending && "cursor-not-allowed opacity-70",
-                  )}
-                  key={run.run_id}
-                >
-                  <input
-                    aria-label={`Select Research Run from ${run.campaign.name}, completed ${formatDate(run.completed_at)}`}
-                    checked={selectedRunId === run.run_id}
-                    className="border-input accent-primary mt-1 size-4 shrink-0 rounded"
-                    disabled={startMutation.isPending}
-                    name="research-run"
-                    onChange={() => chooseResearchRun(run.run_id)}
-                    type="radio"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-medium">{run.campaign.name}</span>
-                      <Badge variant="secondary">COMPLETED</Badge>
-                    </span>
-                    <span className="text-muted-foreground mt-1 block text-sm">
-                      Completed {formatDate(run.completed_at)}
-                    </span>
-                    <span className="text-muted-foreground mt-2 block text-xs">
-                      {run.summary.researched} researched ·{" "}
-                      {run.summary.qualified} qualified ·{" "}
-                      {run.summary.not_qualified} not qualified ·{" "}
-                      {run.summary.insufficient_evidence} insufficient evidence
-                    </span>
-                  </span>
-                </label>
-              ))}
+            <div className="overflow-hidden rounded-lg border">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] text-left text-sm">
+                  <thead className="bg-muted/50 text-muted-foreground border-b text-xs">
+                    <tr>
+                      <th className="w-10 px-3 py-3" scope="col">
+                        <span className="sr-only">Select</span>
+                      </th>
+                      <th className="px-3 py-3 font-medium" scope="col">
+                        Campaign
+                      </th>
+                      <th className="px-3 py-3 font-medium" scope="col">
+                        Completed
+                      </th>
+                      <th
+                        className="px-3 py-3 text-right font-medium"
+                        scope="col"
+                      >
+                        Researched
+                      </th>
+                      <th className="px-3 py-3 font-medium" scope="col">
+                        Results
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {completedRuns.map((run) => {
+                      const completedAt = formatDate(run.completed_at);
+                      const selected = selectedRunId === run.run_id;
+                      return (
+                        <tr
+                          className={cn(
+                            "hover:bg-muted/30 focus-within:bg-muted/30 cursor-pointer transition-colors",
+                            selected && "bg-primary/5 hover:bg-primary/10",
+                            startMutation.isPending &&
+                              "cursor-not-allowed opacity-70",
+                          )}
+                          key={run.run_id}
+                          onClick={(event) => {
+                            if (
+                              event.target instanceof Element &&
+                              event.target.closest("input[type='radio']")
+                            ) {
+                              return;
+                            }
+                            chooseResearchRun(run.run_id);
+                          }}
+                        >
+                          <td className="px-3 py-3">
+                            <input
+                              aria-label={`Select ${run.campaign.name}, completed ${completedAt}, Research Run ${run.run_id}`}
+                              checked={selected}
+                              className="border-input accent-primary focus-visible:ring-ring size-4 cursor-pointer rounded-full focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+                              disabled={startMutation.isPending}
+                              name="research-run"
+                              onChange={() => chooseResearchRun(run.run_id)}
+                              type="radio"
+                            />
+                          </td>
+                          <td className="px-3 py-3 font-medium">
+                            {run.campaign.name}
+                          </td>
+                          <td className="px-3 py-3 whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <Badge variant="secondary">COMPLETED</Badge>
+                              <span>{completedAt}</span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 text-right tabular-nums">
+                            {run.summary.researched}
+                          </td>
+                          <td className="text-muted-foreground px-3 py-3 text-xs">
+                            <span className="whitespace-nowrap">
+                              {run.summary.qualified} qualified
+                            </span>
+                            <span aria-hidden="true"> · </span>
+                            <span className="whitespace-nowrap">
+                              {run.summary.not_qualified} not qualified
+                            </span>
+                            <span aria-hidden="true"> · </span>
+                            <span className="whitespace-nowrap">
+                              {run.summary.insufficient_evidence} insufficient
+                              evidence
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </fieldset>
