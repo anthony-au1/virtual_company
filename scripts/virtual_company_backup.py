@@ -26,6 +26,9 @@ CHECKSUM_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 PRIMARY_DATABASE = "virtual_company"
 POSTGRES_SERVICE = "postgres"
 RECOVERY_WAIT_SECONDS = 30
+LEGACY_CAMPAIGN_STATUS_COMPATIBILITY_SQL = (
+    "ALTER TABLE public.campaign DROP COLUMN IF EXISTS status;"
+)
 
 METADATA_SQL = """
 SELECT json_build_object(
@@ -230,6 +233,25 @@ class ComposePostgres:
             cwd=self.cwd,
         )
         return result.stdout.strip()
+
+    def remove_legacy_campaign_status(self, database: str) -> None:
+        """Drop the obsolete Campaign status column from a restored database."""
+        _validate_database_name(database)
+        _run(
+            self._client(
+                "psql",
+                "-X",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-d",
+                database,
+                "-c",
+                LEGACY_CAMPAIGN_STATUS_COMPATIBILITY_SQL,
+            ),
+            capture_output=True,
+            text=True,
+            cwd=self.cwd,
+        )
 
     def query_json(self, database: str, sql: str) -> dict[str, object]:
         try:
@@ -740,6 +762,7 @@ def recover_primary_database(*, backup: str) -> None:
         print("Restoring backup into the verified-empty primary database")
         with archive.open("rb") as archive_stream:
             postgres.restore_primary(archive_stream)
+        postgres.remove_legacy_campaign_status(PRIMARY_DATABASE)
         restored_state = _validate_recovery_database(postgres, restored=True)
         print(
             "Primary database recovery verified: "
@@ -811,6 +834,14 @@ def restore_backup(*, backup: str, target_database: str) -> None:
         raise RestoreError(
             f"Restore failed; target database {target_database} was left in place. "
             f"--single-transaction prevents partial schema/data changes. Details: {error}"
+        ) from error
+    try:
+        postgres.remove_legacy_campaign_status(target_database)
+    except BackupError as error:
+        raise RestoreError(
+            f"Restore completed, but Campaign status compatibility failed for "
+            f"{target_database}. The restored target database was left in place. "
+            f"Details: {error}"
         ) from error
     print(f"Database restored: {target_database}")
 
