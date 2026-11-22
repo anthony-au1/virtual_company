@@ -4,7 +4,6 @@ export type Exploration = {
   id: string;
   business_context: string;
   max_obligations: number;
-  status: string;
   created_at: string;
   updated_at: string;
 };

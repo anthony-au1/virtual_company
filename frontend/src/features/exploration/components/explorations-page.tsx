@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Plus, RefreshCw } from "lucide-react";
 import Link from "next/link";
 
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { DeleteExplorationAction } from "@/features/exploration/components/delete-exploration-action";
 import { listExplorations } from "@/features/exploration/api/explorations";
@@ -85,12 +84,11 @@ export function ExplorationsPage() {
       ) : (
         <div className="overflow-hidden rounded-lg border">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[700px] text-left text-sm">
+            <table className="w-full min-w-[600px] text-left text-sm">
               <thead className="bg-muted/50 text-muted-foreground border-b text-xs">
                 <tr>
                   <th className="px-4 py-3 font-medium">Business context</th>
                   <th className="px-4 py-3 font-medium">Maximum obligations</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Updated</th>
                   <th className="px-4 py-3 text-right font-medium">Actions</th>
                 </tr>
@@ -110,9 +108,6 @@ export function ExplorationsPage() {
                       </td>
                       <td className="px-4 py-3 tabular-nums">
                         {item.max_obligations}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant="secondary">{item.status}</Badge>
                       </td>
                       <td className="text-muted-foreground px-4 py-3 whitespace-nowrap">
                         {formatDate(item.updated_at)}
@@ -153,4 +148,3 @@ function preview(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length > 120 ? `${normalized.slice(0, 117)}…` : normalized;
 }
-

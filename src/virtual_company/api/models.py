@@ -114,7 +114,6 @@ class ExplorationResponse(BaseModel):
     id: UUID
     business_context: str
     max_obligations: int
-    status: str
     created_at: datetime
     updated_at: datetime
 

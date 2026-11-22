@@ -73,7 +73,6 @@ function exploration(
     id,
     business_context: context,
     max_obligations: max,
-    status: "DRAFT",
     created_at: "2026-10-05T00:00:00Z",
     updated_at: "2026-10-06T00:00:00Z",
   };
@@ -133,7 +132,9 @@ describe("ExplorationsPage", () => {
         screen.getByRole("row", { name: /Understand regulation/ }),
       ).getByRole("button", { name: "Delete Exploration" }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("DRAFT")).toHaveLength(2);
+    expect(
+      screen.queryByRole("columnheader", { name: "Status" }),
+    ).not.toBeInTheDocument();
   });
 
   it("confirms row deletion, prevents duplicate submits, and refreshes the list", async () => {

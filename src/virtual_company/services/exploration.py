@@ -125,7 +125,6 @@ class ExplorationService:
                 ExplorationCreate(
                     business_context=business_context,
                     max_obligations=max_obligations,
-                    status="DRAFT",
                 )
             )
             await self._obligations.create_many(

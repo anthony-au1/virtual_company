@@ -197,13 +197,14 @@ Evidence will support Facts, and Hypotheses will be derived from Facts.
 Table: `exploration`
 
 Represents an Exploration definition and its high-level business context.
+Exploration definitions do not have an execution status; each Exploration Run
+stores its own lifecycle status.
 
 | Column             | PostgreSQL type | Nullable | Description                                                 |
 |--------------------|-----------------|---------:|-------------------------------------------------------------|
 | `id`               | UUID            |       NO | Exploration ID                                              |
 | `business_context` | TEXT            |       NO | Purpose/context guiding investigation of Research companies |
 | `max_obligations`  | INTEGER         |       NO | Maximum system-derived obligation count; default `10`, 1–20 |
-| `status`           | VARCHAR(30)     |       NO | Exploration status                                          |
 | `created_at`       | TIMESTAMPTZ     |       NO | Creation time                                               |
 | `updated_at`       | TIMESTAMPTZ     |       NO | Last update time                                            |
 

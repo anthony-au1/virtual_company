@@ -46,7 +46,6 @@ class ExplorationRepositoryStub:
             id=uuid4(),
             business_context=data.business_context,
             max_obligations=data.max_obligations,
-            status=data.status,
         )
         self.store["explorations"][item.id] = item
         return item

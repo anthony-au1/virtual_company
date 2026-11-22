@@ -36,6 +36,7 @@ class FakePostgres:
         self.restore_error: str | None = None
         self.compatibility_error: str | None = None
         self.campaign_status_present = True
+        self.exploration_status_present = True
         self.metadata = {
             "database": "virtual_company",
             "postgresql_version": "16.4",
@@ -77,11 +78,12 @@ class FakePostgres:
         if self.restore_error:
             raise backup.BackupError(self.restore_error)
 
-    def remove_legacy_campaign_status(self, database: str) -> None:
-        self.commands.append("remove_campaign_status:" + database)
+    def remove_legacy_status_columns(self, database: str) -> None:
+        self.commands.append("remove_legacy_status_columns:" + database)
         if self.compatibility_error:
             raise backup.BackupError(self.compatibility_error)
         self.campaign_status_present = False
+        self.exploration_status_present = False
 
 
 class FakeRecoveryPostgres:
@@ -143,8 +145,8 @@ class FakeRecoveryPostgres:
             raise backup.BackupError(self.restore_error)
         self.restored = True
 
-    def remove_legacy_campaign_status(self, database: str) -> None:
-        self.commands.append("remove_campaign_status:" + database)
+    def remove_legacy_status_columns(self, database: str) -> None:
+        self.commands.append("remove_legacy_status_columns:" + database)
         if self.compatibility_error:
             raise backup.BackupError(self.compatibility_error)
 
@@ -292,18 +294,32 @@ def test_restore_accepts_legacy_revision_without_checkout_revision_gate(
 
     assert "create_database:virtual_company_restore_legacy" in postgres.commands
     assert "restore:virtual_company_restore_legacy" in postgres.commands
-    assert "remove_campaign_status:virtual_company_restore_legacy" in postgres.commands
-    assert postgres.campaign_status_present is False
-    assert postgres.commands.index("restore:virtual_company_restore_legacy") < postgres.commands.index(
-        "remove_campaign_status:virtual_company_restore_legacy"
+    assert (
+        "remove_legacy_status_columns:virtual_company_restore_legacy"
+        in postgres.commands
     )
+    assert postgres.campaign_status_present is False
+    assert postgres.exploration_status_present is False
+    restore_index = postgres.commands.index("restore:virtual_company_restore_legacy")
+    cleanup_index = postgres.commands.index(
+        "remove_legacy_status_columns:virtual_company_restore_legacy"
+    )
+    assert restore_index < cleanup_index
 
 
-def test_restore_runs_compatibility_when_legacy_column_is_already_absent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("campaign_present", "exploration_present"),
+    [(True, True), (True, False), (False, True), (False, False)],
+)
+def test_restore_compatibility_is_idempotent_for_legacy_column_combinations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    campaign_present: bool,
+    exploration_present: bool,
 ) -> None:
     postgres = FakePostgres()
-    postgres.campaign_status_present = False
+    postgres.campaign_status_present = campaign_present
+    postgres.exploration_status_present = exploration_present
     monkeypatch.setattr(backup.ComposePostgres, "connect", lambda: postgres)
     directory = _write_backup(tmp_path / "backup")
 
@@ -311,8 +327,11 @@ def test_restore_runs_compatibility_when_legacy_column_is_already_absent(
         backup=str(directory), target_database="virtual_company_restore_no_status"
     )
 
-    assert postgres.commands[-1] == "remove_campaign_status:virtual_company_restore_no_status"
+    assert postgres.commands[-1] == (
+        "remove_legacy_status_columns:virtual_company_restore_no_status"
+    )
     assert postgres.campaign_status_present is False
+    assert postgres.exploration_status_present is False
 
 
 def test_restore_compatibility_failure_propagates_and_does_not_report_success(
@@ -323,14 +342,19 @@ def test_restore_compatibility_failure_propagates_and_does_not_report_success(
     monkeypatch.setattr(backup.ComposePostgres, "connect", lambda: postgres)
     directory = _write_backup(tmp_path / "backup")
 
-    with pytest.raises(backup.RestoreError, match="Campaign status compatibility failed") as error:
+    with pytest.raises(
+        backup.RestoreError, match="legacy status compatibility failed"
+    ) as error:
         backup.restore_backup(
             backup=str(directory), target_database="virtual_company_restore_sql_error"
         )
 
     assert isinstance(error.value.__cause__, backup.BackupError)
     assert "restore:virtual_company_restore_sql_error" in postgres.commands
-    assert "remove_campaign_status:virtual_company_restore_sql_error" in postgres.commands
+    assert (
+        "remove_legacy_status_columns:virtual_company_restore_sql_error"
+        in postgres.commands
+    )
     assert "Database restored:" not in capsys.readouterr().out
 
 
@@ -347,7 +371,10 @@ def test_restore_failure_leaves_new_target_and_reports_transactional_behavior(
             backup=str(directory), target_database="virtual_company_restore_failed"
         )
     assert "virtual_company_restore_failed" in postgres.databases
-    assert not any(command.startswith("remove_campaign_status:") for command in postgres.commands)
+    assert not any(
+        command.startswith("remove_legacy_status_columns:")
+        for command in postgres.commands
+    )
 
 
 def test_verify_checks_archive_without_target_database(
@@ -447,7 +474,7 @@ def test_compatibility_uses_configured_psql_and_idempotent_sql(
     postgres = backup.ComposePostgres(
         ["docker", "compose"], "virtual_company", "virtual_company"
     )
-    postgres.remove_legacy_campaign_status("virtual_company_restore_test")
+    postgres.remove_legacy_status_columns("virtual_company_restore_test")
 
     command, kwargs = commands[0]
     assert command[:5] == ["docker", "compose", "exec", "-T", "postgres"]
@@ -461,7 +488,10 @@ def test_compatibility_uses_configured_psql_and_idempotent_sql(
         "-d",
     ]
     assert command[12:14] == ["virtual_company_restore_test", "-c"]
-    assert command[14] == "ALTER TABLE public.campaign DROP COLUMN IF EXISTS status;"
+    assert command[14] == (
+        "ALTER TABLE public.campaign DROP COLUMN IF EXISTS status; "
+        "ALTER TABLE public.exploration DROP COLUMN IF EXISTS status;"
+    )
     assert kwargs["capture_output"] is True
 
 
@@ -597,7 +627,7 @@ def test_recovery_uses_primary_database_and_stops_only_owned_postgres(
         "version:virtual_company",
         "inspect",
         "restore:virtual_company",
-        "remove_campaign_status:virtual_company",
+        "remove_legacy_status_columns:virtual_company",
         "state:virtual_company",
         "count_alembic:virtual_company",
     ]
@@ -673,7 +703,7 @@ def test_recovery_propagates_restore_failure_and_stops_owned_service(
 
     with pytest.raises(backup.RecoveryError, match="archive restore failed"):
         backup.recover_primary_database(backup=str(directory))
-    assert "remove_campaign_status:virtual_company" not in postgres.commands
+    assert "remove_legacy_status_columns:virtual_company" not in postgres.commands
     assert lifecycle[-1][-2:] == ["stop", "postgres"]
 
 
@@ -697,8 +727,8 @@ def test_recovery_compatibility_failure_propagates_and_stops_owned_service(
     with pytest.raises(backup.RecoveryError, match="column operation failed"):
         backup.recover_primary_database(backup=str(directory))
 
-    assert "remove_campaign_status:virtual_company" in postgres.commands
-    assert postgres.commands[-1] == "remove_campaign_status:virtual_company"
+    assert "remove_legacy_status_columns:virtual_company" in postgres.commands
+    assert postgres.commands[-1] == "remove_legacy_status_columns:virtual_company"
     assert lifecycle[-1][-2:] == ["stop", "postgres"]
 
 

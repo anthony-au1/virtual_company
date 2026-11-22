@@ -34,7 +34,6 @@ class ExplorationServiceStub:
             id=uuid4(),
             business_context=business_context,
             max_obligations=max_obligations,
-            status="DRAFT",
             created_at=now,
             updated_at=now,
         )
@@ -110,7 +109,7 @@ def test_exploration_lifecycle_and_restricted_fields() -> None:
     assert created.status_code == 201
     exploration = created.json()
     exploration_id = exploration["id"]
-    assert exploration["status"] == "DRAFT"
+    assert "status" not in exploration
     assert exploration["max_obligations"] == 10
     assert client.get(f"/api/v1/explorations/{exploration_id}").json() == exploration
     assert [item["id"] for item in client.get("/api/v1/explorations").json()] == [

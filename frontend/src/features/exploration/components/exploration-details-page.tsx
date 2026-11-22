@@ -102,7 +102,6 @@ export function ExplorationDetailsPage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary">{exploration.status}</Badge>
           <DeleteExplorationAction explorationId={explorationId} />
           {editLocked ? (
             <Button
@@ -320,4 +319,3 @@ function contextHeading(value: string): string {
   const line = value.replace(/\s+/g, " ").trim();
   return line.length > 90 ? `${line.slice(0, 87)}…` : line;
 }
-

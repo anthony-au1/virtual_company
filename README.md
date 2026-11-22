@@ -386,13 +386,14 @@ database remains for inspection; choose a different fresh target for the next
 attempt. The source and any existing database are never dropped, replaced, or
 cleaned.
 
-After a successful restore, the utility runs
-`ALTER TABLE public.campaign DROP COLUMN IF EXISTS status;` against the restored
-database before reporting success. This keeps older backups containing the retired
-Campaign status column compatible with the current application. New backups need no
-special handling, and no Alembic migration is required. This adjustment applies only
-to databases restored through these utilities; an existing development database
-that has not been restored may still need a one-time schema reconciliation.
+After a successful restore, the utility removes the retired Campaign and Exploration
+definition status columns from the restored database before reporting success. This
+keeps older backups compatible with the current application. Exploration definitions
+have no execution status; individual Exploration Runs retain their own lifecycle
+status. New backups need no special handling, and no Alembic migration is required.
+This adjustment applies only to databases restored through these utilities; an
+existing development database that has not been restored may still need a one-time
+schema reconciliation.
 
 ### Verify the restored data
 

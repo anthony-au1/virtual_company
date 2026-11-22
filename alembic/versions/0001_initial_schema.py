@@ -229,7 +229,6 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("business_context", sa.Text(), nullable=False),
         sa.Column("max_obligations", sa.Integer(), server_default="10", nullable=False),
-        sa.Column("status", sa.String(30), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
