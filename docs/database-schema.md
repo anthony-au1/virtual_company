@@ -52,13 +52,13 @@ Indexes:
 
 Table: `campaign_target`
 
-| Column        | Type        | Description                  |
-|---------------|-------------|------------------------------|
-| `campaign_id` | UUID        | campaign                     |
-| `company_id`  | UUID        | company                      |
-| `score`       | NUMERIC     | future qualification score   |
-| `status`      | VARCHAR     | candidate/qualified/rejected |
-| `created_at`  | TIMESTAMPTZ | created date                 |
+| Column        | PostgreSQL type | Nullable | Description |
+|---------------|-----------------|---------:|-------------|
+| `campaign_id` | UUID            |       NO | Campaign reference and primary-key component |
+| `company_id`  | UUID            |       NO | ResearchCompany reference and primary-key component |
+| `score`       | NUMERIC         |      YES | Optional score |
+| `status`      | VARCHAR         |      YES | Nullable unconstrained string; no DB enum/check defines values |
+| `created_at`  | TIMESTAMPTZ     |       NO | Creation time; server default `now()` |
 
 Constraints:
 
@@ -97,18 +97,23 @@ Table: research_run
 |-------------------|-----------------|---------:|---------------------------------------------|
 | `id`              | UUID            |       NO | ID execution                                |
 | `campaign_id`     | UUID            |       NO | campaign                                    |
-| `status`          | VARCHAR(30)     |       NO | RUNNING/COMPLETED/FAILED                    |
+| `status`          | VARCHAR(30)     |       NO | Application lifecycle string                 |
 | `started_at`      | TIMESTAMPTZ     |       NO | execution start time                        |
 | `completed_at`    | TIMESTAMPTZ     |      YES | terminal completion time, including failure |
 | `error`           | TEXT            |      YES | error text                                  |
 | `companies_found` | INTEGER         |       NO | companies found                             |
 | `created_at`      | TIMESTAMPTZ     |       NO | Run record creation time                    |
 
-status:
+Current code uses these business-run values:
 
+- QUEUED
 - RUNNING
 - COMPLETED
 - FAILED
+
+The column is a non-null `VARCHAR(30)`; the source model/migration do not
+enforce these values with a database CHECK constraint. Workflow execution has
+its own status column and CHECK constraint.
 
 Indexes:
 
@@ -147,13 +152,13 @@ criterion-level results for that run/company pair.
 
 ## Exploration entities
 
-These tables describe the Exploration domain and its provenance model.
-Implemented behavior includes Exploration CRUD, obligation generation and
-regeneration, lifecycle restrictions, and starting an ExplorationRun with a
-selected-company snapshot. Exploration research execution uses Taskiq delivery
-to invoke the existing Company × Obligation LangGraph, including query
-generation, external search, Evidence collection, Fact derivation, and
-Hypothesis derivation.
+These tables describe the implemented Exploration domain and its provenance
+model. The application supports CRUD, obligation generation/regeneration,
+lifecycle restrictions, selected-company snapshots, and queued Company ×
+Obligation LangGraph execution that collects Evidence and derives Facts and
+Hypotheses. Database constraints and application-level checks are distinguished
+below; see `src/virtual_company/workflows/exploration/` and
+`src/virtual_company/services/exploration*.py`.
 
 The API lifecycle is Exploration → choose one ResearchRun → choose one or more
 companies from that run → `POST /api/v1/explorations/{exploration_id}/runs` →
@@ -161,7 +166,8 @@ ExplorationRun plus ExplorationCompany references. Every selected company must
 have a persisted `ResearchCompanyQualification` row for the chosen ResearchRun;
 qualification status does not gate eligibility. One Exploration can have
 multiple ExplorationRuns, and each may refer to a different ResearchRun. A
-ResearchRun may be reused. Run creation does not execute Exploration research.
+ResearchRun may be reused. Run creation saves a READY run and does not execute
+Exploration research.
 The execute endpoint queues an eligible run for Taskiq and returns immediately;
 existing status and result endpoints remain the business-facing contract.
 `GET /api/v1/explorations/{exploration_id}/runs` returns compact run summaries
@@ -191,8 +197,8 @@ obligations, a valid empty obligation set may be generated.
 An Exploration Obligation is a reusable question or condition to establish about
 each selected company in order to address the Business Context. The obligation
 set is shared across the selected company set and is generated without company
-names. Obligations remain system-managed. In the planned execution workflow,
-Evidence will support Facts, and Hypotheses will be derived from Facts.
+names. Obligations remain system-managed. Exploration execution uses Evidence
+to support Facts and derives Hypotheses from Facts.
 
 Table: `exploration`
 
@@ -247,8 +253,9 @@ Table: `exploration_obligation`
 Represents a reusable question or condition to establish about each selected
 Research company to address the Exploration Business Context. Obligations are
 system-managed and are not independently user-managed resources. Current
-Exploration CRUD generates and persists them up to `max_obligations`; applying
-them to companies and collecting Evidence are planned execution behavior.
+Exploration CRUD generates and persists them up to `max_obligations`;
+Exploration execution applies them to each selected company and persists
+Evidence when usable search, fetch, and extraction outputs exist.
 
 | Column           | PostgreSQL type | Nullable | Description                                        |
 |------------------|-----------------|---------:|----------------------------------------------------|
@@ -274,16 +281,16 @@ Table: `exploration_run`
 Represents one Exploration run based on exactly one Research Run. The Research
 Run identifies the persisted qualification result set from which its selected
 companies must come. Starting the run stores that company selection as
-`ExplorationCompany` references; investigation and research execution remain
-separate future behavior.
+`ExplorationCompany` references. The run can then be queued for implemented
+company-by-obligation research execution.
 
 | Column            | PostgreSQL type | Nullable | Description                          |
 |-------------------|-----------------|---------:|--------------------------------------|
 | `id`              | UUID            |       NO | Run ID                               |
 | `exploration_id`  | UUID            |       NO | Exploration being run                |
 | `research_run_id` | UUID            |       NO | Research result set used by this run |
-| `status`          | VARCHAR(30)     |       NO | Run status                           |
-| `started_at`      | TIMESTAMPTZ     |       NO | Execution start time                 |
+| `status`          | VARCHAR(30)     |       NO | Application lifecycle string         |
+| `started_at`      | TIMESTAMPTZ     |       NO | Run row creation time (server default `now()`) |
 | `completed_at`    | TIMESTAMPTZ     |      YES | Completion time                      |
 
 Constraints:
@@ -291,6 +298,12 @@ Constraints:
 - PK (`id`)
 - FK (`exploration_id`) -> `exploration` (`id`)
 - FK (`research_run_id`) -> `research_run` (`id`)
+
+The application lifecycle values are `READY`, `QUEUED`, `RUNNING`,
+`COMPLETED`, `PARTIAL`, `FAILED`, and `CANCELLED` (see
+`src/virtual_company/domain/exploration/run.py`). `status` is a non-null
+`VARCHAR(30)`; unlike `workflow_execution.status`, this table has no database
+CHECK constraint for the values.
 
 Indexes:
 
@@ -502,18 +515,22 @@ Exploration
               ExplorationHypothesis
 ```
 
-The planned reasoning flow is Business Context → Obligation → Evidence → Fact →
-Hypothesis. In the planned execution workflow, a Hypothesis can be traced through
-Facts and Evidence to its `research_company` and the Obligation that motivated
-evidence collection.
+The implemented reasoning flow is Business Context → Obligation → Evidence →
+Fact → Hypothesis. A Hypothesis can be traced through Facts and Evidence to its
+`research_company` and the Obligation that motivated evidence collection.
 
-Future execution logic must enforce these provenance invariants: the
+The application enforces these provenance invariants in service/repository
+validation (they are not all encoded as composite database constraints): the
 `ExplorationCompany` and `ExplorationObligation` for Evidence must belong to the
 same Exploration; all Evidence supporting one Fact must belong to the same
 `ExplorationCompany`; and all Facts supporting one Hypothesis must ultimately
 resolve through their Evidence to the same `ExplorationCompany`. These rules
-are not currently enforced by an executing Exploration workflow. Company
-ownership is not duplicated on Fact or Hypothesis.
+are checked against the same selected company. Company ownership is not
+duplicated on Fact or Hypothesis. See
+`services/exploration_evidence_persistence.py`,
+`services/exploration_fact_persistence.py`,
+`services/exploration_hypothesis_persistence.py`, and
+`tests/api/test_exploration_result_provenance.py`.
 
 Run start acquires the same parent Exploration row lock used by PATCH and DELETE
 before validating the ResearchRun or creating the ExplorationRun and selected

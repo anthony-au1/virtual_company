@@ -1,7 +1,9 @@
-# Virtual Consultancy
+# Virtual Company
 
-Virtual Consultancy combines a FastAPI research backend with a Next.js frontend
-foundation for campaign, evidence, and lead workflows.
+Virtual Company combines a FastAPI research backend with a Next.js frontend for
+company discovery, evidence-backed qualification, and business-context-driven
+company exploration. The canonical agent-oriented architecture and workflow
+documentation is indexed in [docs/README.md](docs/README.md).
 
 ## Prerequisites
 
