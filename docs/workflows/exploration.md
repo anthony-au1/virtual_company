@@ -110,7 +110,10 @@ record counts alone.
 
 - Graph: `src/virtual_company/workflows/exploration/graph.py`, `nodes.py`, `state.py`, `models.py`, and `prompts.py`.
 - API: `src/virtual_company/api/explorations.py`.
-- Services: `src/virtual_company/services/exploration.py`, `obligation_generator.py`, and the `exploration_*` modules named in the workflow stages above.
-- Persistence: `src/virtual_company/repositories/{exploration,exploration_run,exploration_company,exploration_obligation,exploration_evidence,exploration_fact,exploration_hypothesis,workflow_execution}.py`.
+- Services: `src/virtual_company/services/exploration.py`, `obligation_generator.py`, and the `exploration_*` modules
+  named in the workflow stages above.
+- Persistence:
+  `src/virtual_company/repositories/{exploration,exploration_run,exploration_company,exploration_obligation,exploration_evidence,exploration_fact,exploration_hypothesis,workflow_execution}.py`.
 - Frontend: `frontend/src/features/exploration/` and App Router paths listed in [Frontend](../frontend.md).
-- Tests: `tests/workflows/`, `tests/services/`, `tests/api/`, `tests/repositories/`, `frontend/src/features/exploration/**/*.test.tsx`, and `frontend/tests/e2e/exploration-save-execute.spec.ts`.
+- Tests: `tests/workflows/`, `tests/services/`, `tests/api/`, `tests/repositories/`,
+  `frontend/src/features/exploration/**/*.test.tsx`, and `frontend/tests/e2e/exploration-save-execute.spec.ts`.

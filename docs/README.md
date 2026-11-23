@@ -57,15 +57,15 @@ a prompt, a historical task report, or a proposed feature.
 For a normal coding task, read root `AGENTS.md`, this index, [Overview](overview.md),
 and [Architecture](architecture.md), then load the following relevant documents:
 
-| Task | Additional reading |
-|---|---|
-| Research workflow | [Research](workflows/research.md), [Workflow execution](workflow-execution.md), [Database schema](database-schema.md); add [AI and integrations](ai-and-integrations.md) for prompts/providers/search/fetch. |
-| Exploration workflow | [Exploration](workflows/exploration.md), [Workflow execution](workflow-execution.md), [Database schema](database-schema.md); add [AI and integrations](ai-and-integrations.md) and [Frontend](frontend.md) as relevant. |
-| Shared execution/worker | [Workflow execution](workflow-execution.md), [Database schema](database-schema.md), and the affected workflow guide. |
-| Database/persistence | [Database schema](database-schema.md), relevant workflow guide, and [Development and operations](development-and-operations.md) for migration verification. |
-| Frontend | [Frontend](frontend.md), [`frontend/AGENTS.md`](../frontend/AGENTS.md), and the matching workflow guide/API implementation. |
-| LLM, search, or web fetching | [AI and integrations](ai-and-integrations.md) and the workflow guide using that integration. |
-| Infrastructure/configuration/operations | [Development and operations](development-and-operations.md), then the relevant README and configuration files. |
+| Task                                    | Additional reading                                                                                                                                                                                                      |
+|-----------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Research workflow                       | [Research](workflows/research.md), [Workflow execution](workflow-execution.md), [Database schema](database-schema.md); add [AI and integrations](ai-and-integrations.md) for prompts/providers/search/fetch.            |
+| Exploration workflow                    | [Exploration](workflows/exploration.md), [Workflow execution](workflow-execution.md), [Database schema](database-schema.md); add [AI and integrations](ai-and-integrations.md) and [Frontend](frontend.md) as relevant. |
+| Shared execution/worker                 | [Workflow execution](workflow-execution.md), [Database schema](database-schema.md), and the affected workflow guide.                                                                                                    |
+| Database/persistence                    | [Database schema](database-schema.md), relevant workflow guide, and [Development and operations](development-and-operations.md) for migration verification.                                                             |
+| Frontend                                | [Frontend](frontend.md), [`frontend/AGENTS.md`](../frontend/AGENTS.md), and the matching workflow guide/API implementation.                                                                                             |
+| LLM, search, or web fetching            | [AI and integrations](ai-and-integrations.md) and the workflow guide using that integration.                                                                                                                            |
+| Infrastructure/configuration/operations | [Development and operations](development-and-operations.md), then the relevant README and configuration files.                                                                                                          |
 
 Inspect referenced source and tests before implementation. When a task changes
 contracts or behavior, update the affected canonical documentation alongside

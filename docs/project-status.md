@@ -1,8 +1,7 @@
 # Project Status
 
 **Last verified:** 2026-11-23 (repository inspection; no live deployment or
-production database was queried).
-**MVP phase:** Core Research and Exploration workflows are implemented in the
+production database was queried). **MVP phase:** Core Research and Exploration workflows are implemented in the
 repository. The next workflow, Engagement, is not implemented. This is a code
 status statement, not evidence of customer adoption, product-market validation,
 or commercial readiness.

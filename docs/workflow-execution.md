@@ -2,8 +2,8 @@
 
 ## Components and dispatch
 
-Research and Exploration are the registered workflow types
-(`src/virtual_company/task_queue/workflow_types.py`). API/service code prepares
+Research and Exploration are the registered workflow types (`src/virtual_company/task_queue/workflow_types.py`).
+API/service code prepares
 the business run and a shared `workflow_execution` record, then
 `task_queue/dispatcher.py` publishes a TaskIQ task. `task_queue/broker.py`
 configures the Redis Streams-backed broker; `tasks.py` receives the task and

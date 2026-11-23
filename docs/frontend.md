@@ -14,21 +14,21 @@ consult the installed framework guide before frontend code changes.
 
 App Router files in `frontend/src/app/` are thin route entry points:
 
-| Route | Purpose |
-|---|---|
-| `/` | Application home. |
-| `/campaigns` | Research campaign list. |
-| `/campaigns/new` | Campaign creation. |
-| `/campaigns/[campaignId]` | Campaign details and Research Run history/start. |
-| `/research` | Research navigation/section. |
-| `/research/runs` | Research Run listing. |
-| `/research/[runId]` | Research results. |
-| `/explorations` | Exploration definitions and run history. |
-| `/explorations/new` | New Exploration definition. |
-| `/explorations/[explorationId]` | Exploration definition and run history. |
-| `/explorations/[explorationId]/edit` | Edit an Exploration definition. |
-| `/explorations/[explorationId]/runs/new` | Select a ResearchRun and companies for a new run. |
-| `/explorations/[explorationId]/runs/[runId]` | Run status and results. |
+| Route                                        | Purpose                                           |
+|----------------------------------------------|---------------------------------------------------|
+| `/`                                          | Application home.                                 |
+| `/campaigns`                                 | Research campaign list.                           |
+| `/campaigns/new`                             | Campaign creation.                                |
+| `/campaigns/[campaignId]`                    | Campaign details and Research Run history/start.  |
+| `/research`                                  | Research navigation/section.                      |
+| `/research/runs`                             | Research Run listing.                             |
+| `/research/[runId]`                          | Research results.                                 |
+| `/explorations`                              | Exploration definitions and run history.          |
+| `/explorations/new`                          | New Exploration definition.                       |
+| `/explorations/[explorationId]`              | Exploration definition and run history.           |
+| `/explorations/[explorationId]/edit`         | Edit an Exploration definition.                   |
+| `/explorations/[explorationId]/runs/new`     | Select a ResearchRun and companies for a new run. |
+| `/explorations/[explorationId]/runs/[runId]` | Run status and results.                           |
 
 Feature-owned code is in `frontend/src/features/research/` and
 `frontend/src/features/exploration/`, each with API clients, query keys, and

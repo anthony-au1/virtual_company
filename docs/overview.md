@@ -42,11 +42,11 @@ The product name used in current documentation is **Virtual Company**.
 Research → Exploration → Engagement
 ```
 
-| Workflow | Status | Implemented boundary |
-|---|---|---|
-| Research | Implemented | Campaign discovery and investigation, Evidence persistence, qualification evidence extraction, deterministic qualification, run results. |
-| Exploration | Implemented | Business Context and obligation generation, selected-company runs, company-by-obligation research, Evidence, Facts, Hypotheses, and results. A terminal completed status does not certify that every external fetch succeeded or that every generated claim was independently verified. |
-| Engagement | Not implemented | No Engagement workflow, API, persistence model, service, or frontend feature was found in the inspected repository. The term appears as a conceptual boundary in Exploration material only. No Engagement architecture or contract is established here. |
+| Workflow    | Status          | Implemented boundary                                                                                                                                                                                                                                                                    |
+|-------------|-----------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Research    | Implemented     | Campaign discovery and investigation, Evidence persistence, qualification evidence extraction, deterministic qualification, run results.                                                                                                                                                |
+| Exploration | Implemented     | Business Context and obligation generation, selected-company runs, company-by-obligation research, Evidence, Facts, Hypotheses, and results. A terminal completed status does not certify that every external fetch succeeded or that every generated claim was independently verified. |
+| Engagement  | Not implemented | No Engagement workflow, API, persistence model, service, or frontend feature was found in the inspected repository. The term appears as a conceptual boundary in Exploration material only. No Engagement architecture or contract is established here.                                 |
 
 Research feeds Exploration through persisted ResearchRun and qualification
 results. Exploration creates its own run-scoped company associations and
@@ -85,9 +85,9 @@ failure outcomes is described in [Exploration](workflows/exploration.md).
 
 ## Inputs and outputs at a glance
 
-| Workflow | Principal input | Principal persisted output |
-|---|---|---|
-| Research | Campaign criteria and limits | ResearchRun, ResearchCompany, ResearchEvidence, and per-run/company qualification snapshots. |
+| Workflow    | Principal input                                                                               | Principal persisted output                                                                                                       |
+|-------------|-----------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| Research    | Campaign criteria and limits                                                                  | ResearchRun, ResearchCompany, ResearchEvidence, and per-run/company qualification snapshots.                                     |
 | Exploration | Exploration Business Context/obligations plus selected companies from a completed ResearchRun | ExplorationRun and selected-company associations, Exploration Evidence, Facts, Hypotheses, and explicit supporting-record links. |
 
 For schema details, see [Database schema](database-schema.md). For background

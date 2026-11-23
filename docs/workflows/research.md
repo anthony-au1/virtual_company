@@ -93,9 +93,13 @@ failed; it does not resume a graph. See [Workflow execution](../workflow-executi
 
 ## Source map and tests
 
-- Graph and state: `src/virtual_company/workflows/research/graph.py`, `nodes.py`, `state.py`, `models.py`, and `prompts.py`.
+- Graph and state: `src/virtual_company/workflows/research/graph.py`, `nodes.py`, `state.py`, `models.py`, and
+  `prompts.py`.
 - API: `src/virtual_company/api/campaigns.py`, `research_runs.py`, and `research_companies.py`.
-- Services: `src/virtual_company/services/campaign.py`, `research.py`, `research_results.py`, `qualification.py`, `qualification_evidence_extractor.py`, and `coverage.py`.
-- Persistence: `src/virtual_company/repositories/` (campaign, company, evidence, run, qualification, workflow execution).
-- Tests: `tests/workflows/`, `tests/services/`, `tests/api/`, `tests/repositories/`, `tests/llm/`, and `tests/tools/`; exact cases are discoverable by filename and test names.
+- Services: `src/virtual_company/services/campaign.py`, `research.py`, `research_results.py`, `qualification.py`,
+  `qualification_evidence_extractor.py`, and `coverage.py`.
+- Persistence: `src/virtual_company/repositories/` (campaign, company, evidence, run, qualification, workflow
+  execution).
+- Tests: `tests/workflows/`, `tests/services/`, `tests/api/`, `tests/repositories/`, `tests/llm/`, and `tests/tools/`;
+  exact cases are discoverable by filename and test names.
 

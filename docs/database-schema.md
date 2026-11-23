@@ -52,13 +52,13 @@ Indexes:
 
 Table: `campaign_target`
 
-| Column        | PostgreSQL type | Nullable | Description |
-|---------------|-----------------|---------:|-------------|
-| `campaign_id` | UUID            |       NO | Campaign reference and primary-key component |
-| `company_id`  | UUID            |       NO | ResearchCompany reference and primary-key component |
-| `score`       | NUMERIC         |      YES | Optional score |
+| Column        | PostgreSQL type | Nullable | Description                                                    |
+|---------------|-----------------|---------:|----------------------------------------------------------------|
+| `campaign_id` | UUID            |       NO | Campaign reference and primary-key component                   |
+| `company_id`  | UUID            |       NO | ResearchCompany reference and primary-key component            |
+| `score`       | NUMERIC         |      YES | Optional score                                                 |
 | `status`      | VARCHAR         |      YES | Nullable unconstrained string; no DB enum/check defines values |
-| `created_at`  | TIMESTAMPTZ     |       NO | Creation time; server default `now()` |
+| `created_at`  | TIMESTAMPTZ     |       NO | Creation time; server default `now()`                          |
 
 Constraints:
 
@@ -97,7 +97,7 @@ Table: research_run
 |-------------------|-----------------|---------:|---------------------------------------------|
 | `id`              | UUID            |       NO | ID execution                                |
 | `campaign_id`     | UUID            |       NO | campaign                                    |
-| `status`          | VARCHAR(30)     |       NO | Application lifecycle string                 |
+| `status`          | VARCHAR(30)     |       NO | Application lifecycle string                |
 | `started_at`      | TIMESTAMPTZ     |       NO | execution start time                        |
 | `completed_at`    | TIMESTAMPTZ     |      YES | terminal completion time, including failure |
 | `error`           | TEXT            |      YES | error text                                  |
@@ -284,14 +284,14 @@ companies must come. Starting the run stores that company selection as
 `ExplorationCompany` references. The run can then be queued for implemented
 company-by-obligation research execution.
 
-| Column            | PostgreSQL type | Nullable | Description                          |
-|-------------------|-----------------|---------:|--------------------------------------|
-| `id`              | UUID            |       NO | Run ID                               |
-| `exploration_id`  | UUID            |       NO | Exploration being run                |
-| `research_run_id` | UUID            |       NO | Research result set used by this run |
-| `status`          | VARCHAR(30)     |       NO | Application lifecycle string         |
+| Column            | PostgreSQL type | Nullable | Description                                    |
+|-------------------|-----------------|---------:|------------------------------------------------|
+| `id`              | UUID            |       NO | Run ID                                         |
+| `exploration_id`  | UUID            |       NO | Exploration being run                          |
+| `research_run_id` | UUID            |       NO | Research result set used by this run           |
+| `status`          | VARCHAR(30)     |       NO | Application lifecycle string                   |
 | `started_at`      | TIMESTAMPTZ     |       NO | Run row creation time (server default `now()`) |
-| `completed_at`    | TIMESTAMPTZ     |      YES | Completion time                      |
+| `completed_at`    | TIMESTAMPTZ     |      YES | Completion time                                |
 
 Constraints:
 

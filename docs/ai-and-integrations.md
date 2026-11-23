@@ -42,7 +42,7 @@ settings. URL normalization is in `utils/url_normalization.py`. Inspect the
 current implementation/tests for redirect, scheme, address/range, and response
 handling before making security claims or changing fetch behavior.
 
-`HttpxWebFetchTool` in `tools/httpx_web_fetch.py` accepts only absolute HTTP(S)
+`HttpxWebFetchTool` in `tools/httpx_web_fetch.py` accepts only absolute HTTP (S)
 URLs without embedded credentials, resolves the host, rejects non-public/special
 IP destinations, and connects to an already approved numeric address. Redirects
 are not followed automatically: each hop is validated and limited to five

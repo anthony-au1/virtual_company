@@ -1,9 +1,11 @@
 # Project instructions
 
 ## Project
+
 This is an AI-assisted virtual company.
 
 Backend:
+
 - Python 3.12
 - FastAPI
 - SQLAlchemy 2.x
@@ -16,11 +18,11 @@ Backend:
 Use layered architecture:
 
 src/
-  api/
-  domain/
-  services/
-  repositories/
-  db/
+api/
+domain/
+services/
+repositories/
+db/
 
 Domain logic must not depend on FastAPI.
 
@@ -32,6 +34,7 @@ Database design is documented in:
 docs/database-schema.md
 
 When modifying persistence:
+
 - use SQLAlchemy declarative models
 - create Alembic migrations
 - do not use raw SQL unless necessary
@@ -59,6 +62,7 @@ uv run alembic upgrade head
 ## Working rules
 
 Before implementing a feature:
+
 1. inspect the existing code
 2. inspect relevant files under docs/
 3. explain the proposed changes
