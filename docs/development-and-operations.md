@@ -54,6 +54,21 @@ the repository convention requires an Alembic migration; do not treat editing
 models alone as a complete schema change. The database guide describes source
 schema and does not certify a deployed database's revision.
 
+The current source migration history contains only the initial schema revision,
+which creates the complete current schema including both standard timestamps
+on every application table. It is intended for a fresh, empty database.
+Historical full backups restored through the supported restore or recovery
+commands run the temporary compatibility step, which inspects and repairs
+timestamp columns regardless of the `0001_initial_schema` stamp. It preserves
+non-NULL timestamps, uses one transaction-time baseline for missing creation
+times, and derives missing update times from creation times. This is not
+historical timestamp reconstruction. Unknown or removed Alembic revisions fail
+closed with an actionable error; revision metadata is never rewritten. A
+database copied or restored outside these commands still needs physical schema
+inspection and explicit reconciliation before the current application uses it.
+The temporary restore compatibility can be removed after historical backups
+are retired and replaced with current-format backups.
+
 ## Tests, lint, and builds
 
 Root Makefile commands include `make test`, `make lint`, `make check`, and

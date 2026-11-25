@@ -14,7 +14,7 @@ from virtual_company.repositories.research_company_qualification import (
 
 
 @pytest.mark.asyncio
-async def test_upsert_updates_only_snapshot_payload() -> None:
+async def test_upsert_updates_snapshot_payload_and_updated_timestamp() -> None:
     session = MagicMock(spec=AsyncSession)
     session.scalars = AsyncMock(return_value=MagicMock())
     data = ResearchCompanyQualificationUpsert(
@@ -29,9 +29,11 @@ async def test_upsert_updates_only_snapshot_payload() -> None:
     statement = session.scalars.await_args.args[0]
     sql = str(statement.compile(dialect=postgresql.dialect()))
     assert (
-        "ON CONFLICT ON CONSTRAINT uq_research_company_qualification_run_company DO UPDATE SET status = excluded.status, criteria_results = excluded.criteria_results"
-        in sql
+        "ON CONFLICT ON CONSTRAINT uq_research_company_qualification_run_company" in sql
     )
+    assert "status = excluded.status" in sql
+    assert "criteria_results = excluded.criteria_results" in sql
+    assert "updated_at = now()" in sql
     assert "RETURNING research_company_qualification.id" in sql
     session.commit.assert_not_called()
 

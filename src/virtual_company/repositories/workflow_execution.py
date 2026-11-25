@@ -62,9 +62,7 @@ class WorkflowExecutionRepository:
     ) -> WorkflowExecution:
         model = self._run_model(workflow_type)
         if not await self._session.scalar(
-            select(
-                exists().where(model.id == run_id, model.status == "QUEUED")
-            )
+            select(exists().where(model.id == run_id, model.status == "QUEUED"))
         ):
             raise ValueError("Business workflow run does not exist or is not QUEUED")
         execution = WorkflowExecution(
@@ -96,6 +94,7 @@ class WorkflowExecutionRepository:
                 status=WorkflowExecutionStatus.RUNNING.value,
                 started_at=func.now(),
                 heartbeat_at=func.now(),
+                updated_at=func.now(),
             )
             .returning(WorkflowExecution)
         )
@@ -116,7 +115,12 @@ class WorkflowExecutionRepository:
         business = await self._session.scalar(
             update(model)
             .where(model.id == execution.run_id, model.status == "QUEUED")
-            .values(status="RUNNING", started_at=func.now(), completed_at=None)
+            .values(
+                status="RUNNING",
+                started_at=func.now(),
+                completed_at=None,
+                updated_at=func.now(),
+            )
             .returning(model.id)
         )
         if business is None:
@@ -127,6 +131,7 @@ class WorkflowExecutionRepository:
                     status=WorkflowExecutionStatus.QUEUED.value,
                     started_at=None,
                     heartbeat_at=None,
+                    updated_at=func.now(),
                 )
             )
             return WorkflowExecutionClaimResult(
@@ -139,10 +144,13 @@ class WorkflowExecutionRepository:
     async def owns(self, execution_id: UUID) -> bool:
         return bool(
             await self._session.scalar(
-                select(exists().where(
-                    WorkflowExecution.id == execution_id,
-                    WorkflowExecution.status == WorkflowExecutionStatus.RUNNING.value,
-                ))
+                select(
+                    exists().where(
+                        WorkflowExecution.id == execution_id,
+                        WorkflowExecution.status
+                        == WorkflowExecutionStatus.RUNNING.value,
+                    )
+                )
             )
         )
 
@@ -164,15 +172,18 @@ class WorkflowExecutionRepository:
             raise ExecutionOwnershipLostError("Execution ownership is no longer valid")
 
     async def heartbeat(self, execution_id: UUID) -> bool:
-        return await self._session.scalar(
-            update(WorkflowExecution)
-            .where(
-                WorkflowExecution.id == execution_id,
-                WorkflowExecution.status == WorkflowExecutionStatus.RUNNING.value,
+        return (
+            await self._session.scalar(
+                update(WorkflowExecution)
+                .where(
+                    WorkflowExecution.id == execution_id,
+                    WorkflowExecution.status == WorkflowExecutionStatus.RUNNING.value,
+                )
+                .values(heartbeat_at=func.now(), updated_at=func.now())
+                .returning(WorkflowExecution.id)
             )
-            .values(heartbeat_at=func.now())
-            .returning(WorkflowExecution.id)
-        ) is not None
+            is not None
+        )
 
     async def transition(
         self,
@@ -193,7 +204,11 @@ class WorkflowExecutionRepository:
                 WorkflowExecution.id == execution_id,
                 WorkflowExecution.status == WorkflowExecutionStatus.RUNNING.value,
             )
-            .values(status=status.value, completed_at=func.now())
+            .values(
+                status=status.value,
+                completed_at=func.now(),
+                updated_at=func.now(),
+            )
             .returning(WorkflowExecution)
         )
         if execution is None:
@@ -211,8 +226,12 @@ class WorkflowExecutionRepository:
         business_values: dict[str, object] = {
             "status": status.value,
             "completed_at": func.now(),
+            "updated_at": func.now(),
         }
-        if execution.workflow_type == "research" and status is WorkflowExecutionStatus.FAILED:
+        if (
+            execution.workflow_type == "research"
+            and status is WorkflowExecutionStatus.FAILED
+        ):
             business_values["error"] = error
         business = await self._session.scalar(
             update(model)
@@ -234,7 +253,11 @@ class WorkflowExecutionRepository:
                 WorkflowExecution.run_id == run_id,
                 WorkflowExecution.status == WorkflowExecutionStatus.QUEUED.value,
             )
-            .values(status=WorkflowExecutionStatus.FAILED.value, completed_at=func.now())
+            .values(
+                status=WorkflowExecutionStatus.FAILED.value,
+                completed_at=func.now(),
+                updated_at=func.now(),
+            )
             .returning(WorkflowExecution.id)
         )
         if execution_id is None:
@@ -242,7 +265,7 @@ class WorkflowExecutionRepository:
         run_id_updated = await self._session.scalar(
             update(model)
             .where(model.id == run_id, model.status == "QUEUED")
-            .values(status="FAILED", completed_at=func.now())
+            .values(status="FAILED", completed_at=func.now(), updated_at=func.now())
             .returning(model.id)
         )
         if run_id_updated is None:
@@ -258,7 +281,11 @@ class WorkflowExecutionRepository:
                 WorkflowExecution.status == WorkflowExecutionStatus.QUEUED.value,
                 WorkflowExecution.queued_at < queued_before,
             )
-            .values(status=WorkflowExecutionStatus.FAILED.value, completed_at=func.now())
+            .values(
+                status=WorkflowExecutionStatus.FAILED.value,
+                completed_at=func.now(),
+                updated_at=func.now(),
+            )
             .returning(WorkflowExecution.workflow_type, WorkflowExecution.run_id)
         )
         running_rows = await self._session.execute(
@@ -267,7 +294,11 @@ class WorkflowExecutionRepository:
                 WorkflowExecution.status == WorkflowExecutionStatus.RUNNING.value,
                 WorkflowExecution.heartbeat_at < running_before,
             )
-            .values(status=WorkflowExecutionStatus.FAILED.value, completed_at=func.now())
+            .values(
+                status=WorkflowExecutionStatus.FAILED.value,
+                completed_at=func.now(),
+                updated_at=func.now(),
+            )
             .returning(WorkflowExecution.workflow_type, WorkflowExecution.run_id)
         )
         queued = queued_rows.all()
@@ -278,8 +309,14 @@ class WorkflowExecutionRepository:
                 update(model)
                 .where(
                     model.id == run_id,
-                    model.status.not_in(("COMPLETED", "PARTIAL", "FAILED", "CANCELLED")),
+                    model.status.not_in(
+                        ("COMPLETED", "PARTIAL", "FAILED", "CANCELLED")
+                    ),
                 )
-                .values(status="FAILED", completed_at=func.now())
+                .values(
+                    status="FAILED",
+                    completed_at=func.now(),
+                    updated_at=func.now(),
+                )
             )
         return len(queued), len(running)

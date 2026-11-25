@@ -47,6 +47,19 @@ exploration_fact_evidence = Table(
         ),
         primary_key=True,
     ),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    ),
+    Column(
+        "updated_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    ),
     Index(
         "ix_exploration_fact_evidence_exploration_evidence_id",
         "exploration_evidence_id",
@@ -72,6 +85,19 @@ exploration_hypothesis_fact = Table(
             "exploration_fact.id", name="exploration_hypothesis_fact_fact_id_fkey"
         ),
         primary_key=True,
+    ),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    ),
+    Column(
+        "updated_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     ),
     Index("ix_exploration_hypothesis_fact_exploration_fact_id", "exploration_fact_id"),
 )
@@ -176,6 +202,12 @@ class CampaignTarget(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     campaign: Mapped[Campaign] = relationship(back_populates="targets")
     research_company: Mapped[ResearchCompany] = relationship(
@@ -217,6 +249,12 @@ class ResearchEvidence(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     research_company: Mapped[ResearchCompany] = relationship(
         back_populates="research_evidence"
@@ -246,6 +284,12 @@ class ResearchRun(Base):
     companies_found: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
     campaign: Mapped[Campaign] = relationship(back_populates="research_runs")
@@ -300,6 +344,12 @@ class ResearchCompanyQualification(Base):
     criteria_results: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
 
@@ -358,6 +408,12 @@ class ExplorationObligation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     exploration: Mapped[Exploration] = relationship(back_populates="obligations")
     evidence: Mapped[list[ExplorationEvidence]] = relationship(
@@ -392,6 +448,15 @@ class ExplorationRun(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     exploration: Mapped[Exploration] = relationship(back_populates="runs")
     research_run: Mapped[ResearchRun] = relationship(back_populates="exploration_runs")
@@ -403,7 +468,9 @@ class WorkflowExecution(Base):
 
     __tablename__ = "workflow_execution"
     __table_args__ = (
-        UniqueConstraint("workflow_type", "run_id", name="uq_workflow_execution_type_run"),
+        UniqueConstraint(
+            "workflow_type", "run_id", name="uq_workflow_execution_type_run"
+        ),
         Index("ix_workflow_execution_status_queued_at", "status", "queued_at"),
         Index("ix_workflow_execution_status_heartbeat_at", "status", "heartbeat_at"),
         CheckConstraint(
@@ -426,6 +493,15 @@ class WorkflowExecution(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
 
 class ExplorationCompany(Base):
@@ -455,6 +531,15 @@ class ExplorationCompany(Base):
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("research_company.id", name="exploration_company_company_id_fkey"),
         nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
     run: Mapped[ExplorationRun] = relationship(back_populates="companies")
@@ -512,6 +597,12 @@ class ExplorationEvidence(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     exploration_company: Mapped[ExplorationCompany] = relationship(
         back_populates="evidence"
@@ -544,6 +635,12 @@ class ExplorationFact(Base):
     statement: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
     exploration_company: Mapped[ExplorationCompany] = relationship(
@@ -582,6 +679,12 @@ class ExplorationHypothesis(Base):
     statement: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
     exploration_company: Mapped[ExplorationCompany] = relationship(

@@ -37,7 +37,9 @@ class InvalidExplorationRunTransitionError(ValueError):
     """Raised when a run cannot make the requested lifecycle transition."""
 
 
-_ALLOWED_PREVIOUS_STATUSES: dict[ExplorationRunStatus, tuple[ExplorationRunStatus, ...]] = {
+_ALLOWED_PREVIOUS_STATUSES: dict[
+    ExplorationRunStatus, tuple[ExplorationRunStatus, ...]
+] = {
     ExplorationRunStatus.RUNNING: (ExplorationRunStatus.QUEUED,),
     ExplorationRunStatus.COMPLETED: (ExplorationRunStatus.RUNNING,),
     ExplorationRunStatus.PARTIAL: (ExplorationRunStatus.RUNNING,),
@@ -103,6 +105,7 @@ class ExplorationRunRepository:
             .values(
                 status=ExplorationRunStatus.QUEUED.value,
                 completed_at=None,
+                updated_at=func.now(),
             )
             .returning(ExplorationRun)
             .execution_options(synchronize_session="fetch")
@@ -138,7 +141,10 @@ class ExplorationRunRepository:
                 f"No guarded transition is defined for {target_status.value}"
             )
 
-        values: dict[str, object] = {"status": target_status.value}
+        values: dict[str, object] = {
+            "status": target_status.value,
+            "updated_at": func.now(),
+        }
         if target_status is ExplorationRunStatus.RUNNING:
             values["started_at"] = datetime.now(UTC)
             values["completed_at"] = None

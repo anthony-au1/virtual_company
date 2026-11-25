@@ -33,7 +33,140 @@ DECLARE
     has_name boolean;
     has_explorations boolean;
     unexpected_dependency text;
+    restored_revision text;
+    application_table text;
+    timestamp_column text;
+    timestamp_type oid;
+    timestamp_default text;
+    baseline timestamptz := transaction_timestamp();
 BEGIN
+    IF to_regclass('public.alembic_version') IS NULL THEN
+        RAISE EXCEPTION
+            'Restore compatibility failed: public.alembic_version table is missing';
+    END IF;
+
+    SELECT string_agg(version_num, ', ' ORDER BY version_num)
+      INTO restored_revision
+    FROM public.alembic_version;
+    IF restored_revision IS NULL THEN
+        RAISE EXCEPTION
+            'Restore compatibility failed: public.alembic_version has no revision';
+    END IF;
+    IF restored_revision <> '0001_initial_schema' THEN
+        RAISE EXCEPTION
+            'Restore compatibility refused: Alembic revision % is not recognized by this checkout (expected 0001_initial_schema); inspect and reconcile revision metadata deliberately',
+            restored_revision;
+    END IF;
+
+    -- Validate the entire timestamp surface before changing any table. A bad
+    -- definition fails the surrounding transaction without partial repair.
+    FOREACH application_table IN ARRAY ARRAY[
+        'campaign',
+        'campaign_target',
+        'research_company',
+        'research_run',
+        'research_evidence',
+        'research_company_qualification',
+        'exploration',
+        'exploration_obligation',
+        'exploration_run',
+        'workflow_execution',
+        'exploration_company',
+        'exploration_evidence',
+        'exploration_fact',
+        'exploration_hypothesis',
+        'exploration_fact_evidence',
+        'exploration_hypothesis_fact'
+    ] LOOP
+        IF to_regclass(format('public.%I', application_table)) IS NULL THEN
+            RAISE EXCEPTION
+                'Restore compatibility failed: required application table public.% is missing',
+                application_table;
+        END IF;
+
+        FOREACH timestamp_column IN ARRAY ARRAY['created_at', 'updated_at'] LOOP
+            SELECT attribute.atttypid, pg_get_expr(default_value.adbin, default_value.adrelid)
+              INTO timestamp_type, timestamp_default
+            FROM pg_attribute AS attribute
+            LEFT JOIN pg_attrdef AS default_value
+              ON default_value.adrelid = attribute.attrelid
+             AND default_value.adnum = attribute.attnum
+            WHERE attribute.attrelid = to_regclass(format('public.%I', application_table))
+              AND attribute.attname = timestamp_column
+              AND attribute.attnum > 0
+              AND NOT attribute.attisdropped;
+
+            IF FOUND THEN
+                IF timestamp_type <> 'timestamptz'::regtype THEN
+                    RAISE EXCEPTION
+                        'Restore compatibility failed: public.%.% must be TIMESTAMPTZ, found %',
+                        application_table,
+                        timestamp_column,
+                        format_type(timestamp_type, NULL);
+                END IF;
+                IF timestamp_default IS NOT NULL
+                   AND lower(btrim(timestamp_default)) <> 'now()' THEN
+                    RAISE EXCEPTION
+                        'Restore compatibility failed: public.%.% has unsupported default expression %; expected now() or no default',
+                        application_table,
+                        timestamp_column,
+                        timestamp_default;
+                END IF;
+            END IF;
+        END LOOP;
+    END LOOP;
+
+    -- Use one transaction-time baseline for missing creation times. Repair
+    -- only NULL values, deriving updated_at from the row's creation time.
+    FOREACH application_table IN ARRAY ARRAY[
+        'campaign',
+        'campaign_target',
+        'research_company',
+        'research_run',
+        'research_evidence',
+        'research_company_qualification',
+        'exploration',
+        'exploration_obligation',
+        'exploration_run',
+        'workflow_execution',
+        'exploration_company',
+        'exploration_evidence',
+        'exploration_fact',
+        'exploration_hypothesis',
+        'exploration_fact_evidence',
+        'exploration_hypothesis_fact'
+    ] LOOP
+        FOREACH timestamp_column IN ARRAY ARRAY['created_at', 'updated_at'] LOOP
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_attribute
+                WHERE attrelid = to_regclass(format('public.%I', application_table))
+                  AND attname = timestamp_column
+                  AND attnum > 0
+                  AND NOT attisdropped
+            ) THEN
+                EXECUTE format(
+                    'ALTER TABLE public.%I ADD COLUMN %I TIMESTAMPTZ',
+                    application_table,
+                    timestamp_column
+                );
+            END IF;
+        END LOOP;
+
+        EXECUTE format(
+            'UPDATE public.%I SET created_at = $1 WHERE created_at IS NULL',
+            application_table
+        ) USING baseline;
+        EXECUTE format(
+            'UPDATE public.%I SET updated_at = created_at WHERE updated_at IS NULL',
+            application_table
+        );
+        EXECUTE format(
+            'ALTER TABLE public.%I ALTER COLUMN created_at SET DEFAULT now(), ALTER COLUMN created_at SET NOT NULL, ALTER COLUMN updated_at SET DEFAULT now(), ALTER COLUMN updated_at SET NOT NULL',
+            application_table
+        );
+    END LOOP;
+
     IF to_regclass('public.exploration') IS NULL THEN
         RAISE EXCEPTION 'Restore compatibility failed: public.exploration table is missing';
     END IF;

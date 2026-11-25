@@ -103,6 +103,12 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
     )
     op.create_table(
         "campaign_target",
@@ -125,6 +131,12 @@ def upgrade() -> None:
         sa.Column("status", sa.String()),
         sa.Column(
             "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),
             nullable=False,
@@ -168,6 +180,12 @@ def upgrade() -> None:
         ),
         sa.Column(
             "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),
             nullable=False,
@@ -217,6 +235,12 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.UniqueConstraint(
             "research_run_id",
             "company_id",
@@ -259,6 +283,12 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(
             ["exploration_id"],
             ["exploration.id"],
@@ -284,6 +314,18 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("completed_at", sa.DateTime(timezone=True)),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(
             ["exploration_id"],
             ["exploration.id"],
@@ -307,6 +349,18 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("exploration_run_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("company_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(
             ["exploration_run_id"],
             ["exploration_run.id"],
@@ -347,6 +401,12 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(
             ["exploration_company_id"],
             ["exploration_company.id"],
@@ -382,6 +442,12 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(
             ["exploration_company_id"],
             ["exploration_company.id"],
@@ -407,6 +473,12 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(
             ["exploration_company_id"],
             ["exploration_company.id"],
@@ -424,6 +496,18 @@ def upgrade() -> None:
         sa.Column("exploration_fact_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column(
             "exploration_evidence_id", postgresql.UUID(as_uuid=True), nullable=False
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
         ),
         sa.ForeignKeyConstraint(
             ["exploration_fact_id"],
@@ -452,6 +536,18 @@ def upgrade() -> None:
             "exploration_hypothesis_id", postgresql.UUID(as_uuid=True), nullable=False
         ),
         sa.Column("exploration_fact_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(
             ["exploration_hypothesis_id"],
             ["exploration_hypothesis.id"],
@@ -483,6 +579,18 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime(timezone=True)),
         sa.Column("heartbeat_at", sa.DateTime(timezone=True)),
         sa.Column("completed_at", sa.DateTime(timezone=True)),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id", name="workflow_execution_pkey"),
         sa.UniqueConstraint(
             "workflow_type", "run_id", name="uq_workflow_execution_type_run"

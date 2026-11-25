@@ -382,11 +382,27 @@ You may pass either the backup directory or its `database.dump` file. The manife
 checksum, custom archive, and PostgreSQL major version are checked before creating
 the target. Alembic revision and Git commit are informational; an older valid backup
 is not rejected merely because this checkout has advanced. Restore does not run
-migrations. The restore runs in one PostgreSQL transaction and stops on the first
+migrations. Manifest revision metadata remains informational; after restore the
+physical `alembic_version` must be the recognized `0001_initial_schema` revision.
+The restore runs in one PostgreSQL transaction and stops on the first
 error. If it fails, schema/data changes roll back and the newly created empty target
 database remains for inspection; choose a different fresh target for the next
 attempt. The source and any existing database are never dropped, replaced, or
-cleaned.
+cleaned. After `pg_restore` succeeds, the existing compatibility step runs in its
+own transaction. It repairs missing timestamp columns on the 16 application tables
+and retains the existing legacy status/name handling. A compatibility failure is
+reported and leaves the restored target in place for inspection; its compatibility
+transaction rolls back.
+
+Timestamp reconciliation is independent of the archive's schema stamp. Historical
+archives stamped `0001_initial_schema` are reconciled to the current timestamp
+shape without rerunning Alembic. Unknown or removed revisions, including
+`0002_timestamp_standardization`, fail closed and require deliberate revision
+reconciliation. The compatibility step preserves non-NULL timestamp values; where
+creation time is unavailable it uses one restoration-time baseline, and fills a
+missing update time from the row's creation time. These fallback values are not
+claims about historical event times. This compatibility path is temporary and can
+be removed after historical backups are retired and replaced.
 
 ### Verify the restored data
 
@@ -421,8 +437,10 @@ Compose configuration is this repository's PostgreSQL 16 setup with its persiste
 `postgres_data` volume, and refuses to continue while `app` or `worker` is running.
 It starts only `postgres` if needed, waits for readiness, and refuses if the primary
 database contains any user-created objects or Alembic state. An initialized schema is
-refused even when its tables contain no application rows. The restore uses one
-transaction and performs schema/catalog checks afterward without running migrations.
+refused even when its tables contain no application rows. The archive restore uses
+one transaction, then the compatibility transaction reconciles historical timestamp
+columns and performs the existing legacy schema handling. Schema/catalog checks run
+afterward without applying Alembic migrations.
 If recovery started PostgreSQL, it stops only that service afterward; the PostgreSQL
 data volume is retained. If PostgreSQL was already running, its state is preserved.
 The command never starts the application or worker and never removes volumes. A

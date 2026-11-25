@@ -307,6 +307,26 @@ def test_restore_accepts_legacy_revision_without_checkout_revision_gate(
     assert restore_index < cleanup_index
 
 
+def test_current_format_restore_still_runs_compatibility_after_archive_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    postgres = FakePostgres()
+    monkeypatch.setattr(backup.ComposePostgres, "connect", lambda: postgres)
+    directory = _write_backup(tmp_path / "current", old_fields=False)
+
+    backup.restore_backup(
+        backup=str(directory), target_database="virtual_company_restore_current"
+    )
+
+    assert postgres.commands.index("restore:virtual_company_restore_current") < (
+        postgres.commands.index(
+            "reconcile_restored_schema:virtual_company_restore_current"
+        )
+    )
+    assert postgres.campaign_status_present is False
+    assert postgres.exploration_status_present is False
+
+
 @pytest.mark.parametrize(
     ("campaign_present", "exploration_present"),
     [(True, True), (True, False), (False, True), (False, False)],
@@ -355,6 +375,8 @@ def test_restore_compatibility_failure_propagates_and_does_not_report_success(
         "reconcile_restored_schema:virtual_company_restore_sql_error"
         in postgres.commands
     )
+    assert postgres.campaign_status_present is True
+    assert postgres.exploration_status_present is True
     assert "Database restored:" not in capsys.readouterr().out
 
 
@@ -502,6 +524,45 @@ def test_compatibility_uses_configured_psql_and_transactional_sql(
     assert "SELECT EXISTS (SELECT 1 FROM public.exploration)" in sql
     assert "IF has_explorations THEN" in sql
     assert "execution.workflow_type = 'exploration'" in sql
+    assert "restored_revision <> '0001_initial_schema'" in sql
+    assert "alembic_version has no revision" in sql
+    assert "inspect and reconcile revision metadata deliberately" in sql
+    assert "transaction_timestamp()" in sql
+    assert "TIMESTAMPTZ" in sql
+    assert "timestamp_type <> 'timestamptz'::regtype" in sql
+    assert "unsupported default expression" in sql
+    assert "lower(btrim(timestamp_default)) <> 'now()'" in sql
+    assert "required application table public.% is missing" in sql
+    assert "SET created_at = $1 WHERE created_at IS NULL" in sql
+    assert "SET updated_at = created_at WHERE updated_at IS NULL" in sql
+    assert "ALTER COLUMN created_at SET DEFAULT now()" in sql
+    assert "ALTER COLUMN updated_at SET DEFAULT now()" in sql
+    assert "ALTER COLUMN created_at SET NOT NULL" in sql
+    assert "ALTER COLUMN updated_at SET NOT NULL" in sql
+    assert "UPDATE public.alembic_version" not in sql
+    timestamp_reconciliation = sql.split(
+        "    IF to_regclass('public.exploration') IS NULL THEN", maxsplit=1
+    )[0]
+    assert "DELETE FROM" not in timestamp_reconciliation
+    for table_name in (
+        "campaign",
+        "campaign_target",
+        "research_company",
+        "research_run",
+        "research_evidence",
+        "research_company_qualification",
+        "exploration",
+        "exploration_obligation",
+        "exploration_run",
+        "workflow_execution",
+        "exploration_company",
+        "exploration_evidence",
+        "exploration_fact",
+        "exploration_hypothesis",
+        "exploration_fact_evidence",
+        "exploration_hypothesis_fact",
+    ):
+        assert f"'{table_name}'" in sql
     assert sql.index("unexpected_dependency IS NOT NULL") < sql.index(
         "DELETE FROM public.exploration_fact_evidence"
     )

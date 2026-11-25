@@ -88,6 +88,7 @@ async def test_claim_is_conditional_update_and_returns_claimed_run():
     sql = str(statement.compile(dialect=postgresql.dialect()))
     assert "UPDATE exploration_run" in sql
     assert "exploration_run.status = %(status_1)s" in sql
+    assert "updated_at=now()" in sql
     assert "RETURNING exploration_run" in sql
     assert session.commit.await_count == 0
     assert session.rollback.await_count == 0
@@ -128,6 +129,7 @@ async def test_transition_updates_status_and_execution_timestamp():
     sql = str(compiled)
     assert "UPDATE exploration_run" in sql
     assert "started_at" in sql
+    assert "updated_at" in sql
     assert "queued" in repr(compiled.params).lower()
     assert session.commit.await_count == 0
     assert session.rollback.await_count == 0
@@ -151,9 +153,7 @@ async def test_transition_has_only_expected_predecessors(target, allowed):
 
     await ExplorationRunRepository(session).transition(run_id, target)
 
-    compiled = session.execute.await_args.args[0].compile(
-        dialect=postgresql.dialect()
-    )
+    compiled = session.execute.await_args.args[0].compile(dialect=postgresql.dialect())
     for status in allowed:
         assert status.lower() in repr(compiled.params).lower()
 

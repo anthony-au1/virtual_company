@@ -1,5 +1,23 @@
 # Database Schema
 
+## Standard timestamps and restored schemas
+
+Every application-owned table, including association tables, has
+`created_at` and `updated_at` as `TIMESTAMPTZ NOT NULL DEFAULT now()`. ORM
+updates use SQLAlchemy `onupdate`; explicit Core, bulk, and UPSERT write paths
+set `updated_at` directly. Arbitrary SQL writers must maintain `updated_at`
+themselves because no PostgreSQL trigger is installed.
+
+The single initial Alembic revision defines the complete current schema for a
+fresh database. Historical full backups stamped with `0001_initial_schema` may
+have older physical columns; the restore and recovery compatibility step
+reconciles timestamps independently of that revision stamp. It preserves
+non-NULL timestamp values, uses one restoration-time baseline for missing
+creation times, and fills missing update times from creation times. The
+baseline does not represent a known historical event time. Unknown or removed
+Alembic revisions fail closed and are never rewritten. This compatibility is
+temporary and is intended to be removed after historical backups are retired.
+
 ## Research entities
 
 These tables persist entities owned by the Research workflow.
@@ -59,6 +77,7 @@ Table: `campaign_target`
 | `score`       | NUMERIC         |      YES | Optional score                                                 |
 | `status`      | VARCHAR         |      YES | Nullable unconstrained string; no DB enum/check defines values |
 | `created_at`  | TIMESTAMPTZ     |       NO | Creation time; server default `now()`                          |
+| `updated_at`  | TIMESTAMPTZ     |       NO | Last update time; server default `now()`                       |
 
 Constraints:
 
@@ -83,6 +102,7 @@ Table: research_evidence
 | `confidence`      | NUMERIC(4,3)    |      YES | agent confidence                                |
 | `observed_at`     | TIMESTAMPTZ     |       NO | when information was found                      |
 | `created_at`      | TIMESTAMPTZ     |       NO | when evidence was saved                         |
+| `updated_at`      | TIMESTAMPTZ     |       NO | last update time                                |
 
 Indexes:
 
@@ -103,6 +123,7 @@ Table: research_run
 | `error`           | TEXT            |      YES | error text                                  |
 | `companies_found` | INTEGER         |       NO | companies found                             |
 | `created_at`      | TIMESTAMPTZ     |       NO | Run record creation time                    |
+| `updated_at`      | TIMESTAMPTZ     |       NO | Last update time                            |
 
 Current code uses these business-run values:
 
@@ -133,6 +154,7 @@ Table: `research_company_qualification`
 | `status`           | VARCHAR(30)     | NO       | QUALIFIED, NOT_QUALIFIED, INSUFFICIENT_EVIDENCE |
 | `criteria_results` | JSONB           | NO       | Object containing a criteria array              |
 | `created_at`       | TIMESTAMPTZ     | NO       | Database timestamp, default now()               |
+| `updated_at`       | TIMESTAMPTZ     | NO       | Last update timestamp, default now()            |
 
 Constraints:
 
@@ -263,6 +285,7 @@ Evidence when usable search, fetch, and extraction outputs exist.
 | `exploration_id` | UUID            |       NO | Owning Exploration                                 |
 | `description`    | TEXT            |       NO | Shared company-investigation question or condition |
 | `created_at`     | TIMESTAMPTZ     |       NO | Creation time                                      |
+| `updated_at`     | TIMESTAMPTZ     |       NO | Last update time                                   |
 
 Constraints:
 
@@ -292,6 +315,8 @@ company-by-obligation research execution.
 | `status`          | VARCHAR(30)     |       NO | Application lifecycle string                   |
 | `started_at`      | TIMESTAMPTZ     |       NO | Run row creation time (server default `now()`) |
 | `completed_at`    | TIMESTAMPTZ     |      YES | Completion time                                |
+| `created_at`      | TIMESTAMPTZ     |       NO | Row creation time                              |
+| `updated_at`      | TIMESTAMPTZ     |       NO | Last row update time                           |
 
 Constraints:
 
@@ -328,6 +353,8 @@ Exploration. It carries no duplicate company identity or profile data.
 | `id`                 | UUID            |       NO | Exploration-company ID     |
 | `exploration_run_id` | UUID            |       NO | Exploration run            |
 | `company_id`         | UUID            |       NO | Related `research_company` |
+| `created_at`         | TIMESTAMPTZ     |       NO | Row creation time          |
+| `updated_at`         | TIMESTAMPTZ     |       NO | Last row update time       |
 
 Constraints:
 
@@ -370,6 +397,7 @@ Evidence is an immutable derived artifact for MVP.
 | `requested_url`             | TEXT            |      YES | Original URL when redirected      |
 | `source_title`              | TEXT            |      YES | Title from fetched page           |
 | `created_at`                | TIMESTAMPTZ     |       NO | When evidence was saved           |
+| `updated_at`                | TIMESTAMPTZ     |       NO | Last update time                  |
 
 Constraints:
 
@@ -400,6 +428,7 @@ combine Evidence collected for different Obligations.
 | `exploration_company_id` | UUID            |       NO | Owning ExplorationCompany |
 | `statement`              | TEXT            |       NO | Factual statement         |
 | `created_at`             | TIMESTAMPTZ     |       NO | Creation time             |
+| `updated_at`             | TIMESTAMPTZ     |       NO | Last update time          |
 
 Constraints:
 
@@ -421,6 +450,8 @@ multiple Facts.
 |---------------------------|-----------------|---------:|---------------------|
 | `exploration_fact_id`     | UUID            |       NO | Related Fact        |
 | `exploration_evidence_id` | UUID            |       NO | Supporting Evidence |
+| `created_at`              | TIMESTAMPTZ     |       NO | Link creation time  |
+| `updated_at`              | TIMESTAMPTZ     |       NO | Link update time    |
 
 Constraints:
 
@@ -447,6 +478,7 @@ ultimately originating from different Obligations.
 | `exploration_company_id` | UUID            |       NO | Owning ExplorationCompany |
 | `statement`              | TEXT            |       NO | Inferred statement        |
 | `created_at`             | TIMESTAMPTZ     |       NO | Creation time             |
+| `updated_at`             | TIMESTAMPTZ     |       NO | Last update time          |
 
 Constraints:
 
@@ -459,10 +491,10 @@ Indexes:
 - `ix_exploration_hypothesis_exploration_company_id`
   (`exploration_company_id`)
 
-No confidence, score, status, or update timestamp is modeled for Evidence,
-Fact, or Hypothesis. Their semantic content and ownership are immutable after
-creation. No semantic update API is provided. Deletion remains restrictive
-and no graph-wide deletion operation is defined.
+No confidence, score, or status is modeled for Evidence, Fact, or Hypothesis.
+Their semantic content and ownership are immutable after creation, and no
+semantic update API is provided. Deletion remains restrictive and no graph-wide
+deletion operation is defined.
 
 Table: `exploration_hypothesis_fact`
 
@@ -474,6 +506,8 @@ Hypotheses.
 |-----------------------------|-----------------|---------:|--------------------|
 | `exploration_hypothesis_id` | UUID            |       NO | Related Hypothesis |
 | `exploration_fact_id`       | UUID            |       NO | Supporting Fact    |
+| `created_at`                | TIMESTAMPTZ     |       NO | Link creation time |
+| `updated_at`                | TIMESTAMPTZ     |       NO | Link update time   |
 
 Constraints:
 
@@ -571,6 +605,8 @@ referenced business run through the repository.
 | `started_at`    | TIMESTAMPTZ     |      YES | Worker claim time                                      |
 | `heartbeat_at`  | TIMESTAMPTZ     |      YES | Last worker liveness update                            |
 | `completed_at`  | TIMESTAMPTZ     |      YES | Terminal transition time                               |
+| `created_at`    | TIMESTAMPTZ     |       NO | Execution row creation time                            |
+| `updated_at`    | TIMESTAMPTZ     |       NO | Last execution row update time                         |
 
 Indexes are the unique `(workflow_type, run_id)` constraint plus `(status, queued_at)` and `(status, heartbeat_at)` for
 stale scans. Claim changes QUEUED to RUNNING atomically and uses the execution UUID for heartbeat and terminal fencing.
