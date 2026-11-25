@@ -34,16 +34,8 @@ work. OpenTelemetry instrumentation exists but README documents that there is
 no configured span exporter or metric reader in the current setup; Langfuse is
 optional.
 
-No confirmed runtime P0/P1 defect was established by this documentation audit.
-The stale Exploration descriptions and status inaccuracies in the previous
-schema guide were documentation defects; they are corrected in this knowledge
-base. No live production service, deployed database, or provider billing was
-examined.
-
 ## Historical reports, decisions, and plans
 
-- The repository's prior `VIRTUAL-COMPANY-AGENT-DOCUMENTATION-AUDIT.md` was a
-  proposal and audit input. It is not a higher authority than current code.
 - Root-level Exploration implementation/audit reports remain historical
   artifacts. They are not canonical current specifications.
 - The task framing identifies Engagement as the next workflow focus. That

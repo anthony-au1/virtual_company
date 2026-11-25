@@ -21,8 +21,8 @@ from virtual_company.services.exploration_evidence_extractor import (
 )
 from virtual_company.services.exploration_fetch import (
     ExplorationFetchBatchResult,
-    ExplorationFetchFailureCategory,
     ExplorationFetchedPage,
+    ExplorationFetchFailureCategory,
     ExplorationFetchOutcome,
     ExplorationFetchResult,
 )
@@ -665,8 +665,6 @@ async def test_final_status_tracks_processing_completeness_not_fetch_outcomes(
     assert generation_inputs["context"] == "Assess strategic fit"
     assert len(generation_inputs["facts"]) == 1
     assert generation_inputs["facts"][0].statement == "Company has relevant products."
-    assert len(generation_inputs["facts"]) == 1
-    assert tuple(evidence_ids) == tuple(item.id for item in obligations) if False else True
     assert run.status == "RUNNING"
     assert tracker.active == 0
 

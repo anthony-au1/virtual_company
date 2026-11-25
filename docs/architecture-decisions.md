@@ -64,7 +64,9 @@ or decision log was found to substantiate unrecorded history.
   environment, not documentation.
 - **Status:** Implemented; exact model/role defaults are configuration-sensitive.
 - **Evidence:** `llm/base.py`, `llm/registry.py`, `llm/roles.py`,
-  `llm/providers/`, `config.py`, `tests/llm/`.
+  `src/virtual_company/llm/openai_provider.py`,
+  `src/virtual_company/llm/anthropic_provider.py`, `config.py`,
+  `tests/llm/`.
 
 ## Deterministic qualification after semantic extraction
 
